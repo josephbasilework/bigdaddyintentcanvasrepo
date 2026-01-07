@@ -8,6 +8,19 @@ from app.schemas.backup import (
     ManualBackupRequest,
     RestoreResponse,
 )
+from app.schemas.mcp import (
+    GoogleCalendarEventRequest,
+    GoogleCalendarEventResponse,
+    MCPSecurityCheckRequest,
+    MCPSecurityCheckResponse,
+    MCPServerListResponse,
+    MCPServerRegisterRequest,
+    MCPServerResponse,
+    MCPServerUpdateRequest,
+    MCPToolExecuteRequest,
+    MCPToolExecuteResponse,
+    MCPToolsListResponse,
+)
 from app.schemas.preferences import (
     DefaultPreferencesResponse,
     PreferencesData,
@@ -30,4 +43,16 @@ __all__ = [
     "RestoreResponse",
     "BackupCreatedResponse",
     "ErrorResponse",
+    # MCP schemas
+    "MCPServerRegisterRequest",
+    "MCPServerResponse",
+    "MCPServerListResponse",
+    "MCPServerUpdateRequest",
+    "MCPToolExecuteRequest",
+    "MCPToolExecuteResponse",
+    "MCPToolsListResponse",
+    "MCPSecurityCheckRequest",
+    "MCPSecurityCheckResponse",
+    "GoogleCalendarEventRequest",
+    "GoogleCalendarEventResponse",
 ]
