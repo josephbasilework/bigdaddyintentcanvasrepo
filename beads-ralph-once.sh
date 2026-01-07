@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 set -e
 
 if [ -z "$1" ]; then
@@ -10,7 +11,7 @@ iterations=$1
 for ((i=0; i<iterations; i++)); do
   echo "Iteration $i"
   echo "--------------------------------"
-  result=$(claude --dangerously-skip-permissions --permission-mode bypassPermissions \
+  result=$(zai --dangerously-skip-permissions --permission-mode bypassPermissions \
 -p "1. Run \`bd ready\` to grab the next highest priority task that's ready to be worked on. Note the task ID from the output. \
 2. Mark the task as in progress by running \`bd update <TASK_ID> --status in_progress\` (replace <TASK_ID> with the actual ID from step 1, e.g. bd update abc123 --status in_progress) \
 3. Work on the task until it's complete. Make sure to write tests, lint your code, commit your code and make sure it's secure. \
@@ -19,6 +20,8 @@ Be thoughtful about your changes, keeping the code clean & maintainable. \
 5. Run \`bd sync\` to sync the changes with the git remote. \
 ONLY WORK ON A SINGLE TASK. \
 ultrathink \
+WORKING MEMORY: Use the TodoWrite tool to maintain a todo list that augments your working memory. Track subtasks, acceptance criteria progress, and any blockers. Update it as you work. \
+SUBAGENTS: Spawn subagents (Task tool) as needed to observe, research, explore the codebase, or report back on specific concerns. Use them for parallel investigation when it would speed up your work. \
 If, while implementing the task, you notice all the tasks are complete and there are no ready tasks, return the string <promise>ALL BEADS TASKS COMPLETED</promise>"
   )
 
