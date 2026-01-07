@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from app.api.backup import router as backup_router
 from app.api.context import router as context_router
 from app.api.health import router as health_router
+from app.api.jobs import router as jobs_router
 from app.api.mcp import router as mcp_router
 from app.api.preferences import router as preferences_router
 from app.api.workspace import router as workspace_router
@@ -139,6 +140,7 @@ def create_app() -> FastAPI:
     app.include_router(preferences_router, tags=["preferences"])
     app.include_router(backup_router, tags=["backup"])
     app.include_router(mcp_router, tags=["mcp"])
+    app.include_router(jobs_router, tags=["jobs"])
 
     @app.get("/")
     async def root() -> dict[str, object]:

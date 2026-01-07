@@ -14,7 +14,8 @@ from pydantic import BaseModel, Field
 
 from app.agents.research_agent import ResearchReport, get_research_agent
 from app.gateway.client import GatewayClient, get_gateway_client
-from app.jobs.base import JobResult, get_redis_settings
+from app.jobs.base import JobResult, JobType, get_redis_settings
+from app.jobs.progress import progress_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -134,20 +135,43 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
         JobResult with research findings or error.
     """
     job_id = ctx.get("job_id", str(uuid.uuid4()))
+    user_id = ctx.get("user_id")
+    workspace_id = ctx.get("workspace_id")
+
+    # Create job in progress tracker
+    await progress_tracker.create_job(
+        job_id=job_id,
+        job_type=JobType.DEEP_RESEARCH,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        parameters={"query": query, "depth": depth},
+    )
+
     logger.info(f"[{job_id}] Starting deep research job: query='{query}', depth={depth}")
 
     try:
         # Select perspectives based on depth
         perspective_names = list(DEFAULT_PERSPECTIVES.keys())
         selected_perspectives = perspective_names[: min(depth, len(perspective_names))]
+        total_steps = len(selected_perspectives) + 2  # perspectives + web research + synthesis
 
         logger.info(f"[{job_id}] Gathering perspectives: {selected_perspectives}")
 
         # Step 1: Gather research from each perspective
         perspective_results = []
         gateway = get_gateway_client()
-        for persp_name in selected_perspectives:
+
+        for idx, persp_name in enumerate(selected_perspectives, start=1):
             persp_agent = DEFAULT_PERSPECTIVES[persp_name]
+
+            # Update progress
+            await progress_tracker.update_progress(
+                job_id=job_id,
+                progress_percent=(idx / total_steps) * 100,
+                current_step=f"Gathering {persp_agent.name} perspective",
+                step_number=idx,
+                steps_total=total_steps,
+            )
 
             # Generate perspective-specific analysis using Gateway
             content = await _generate_with_gateway(
@@ -169,6 +193,15 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
             logger.info(f"[{job_id}] Completed {persp_name} perspective analysis")
 
         # Step 2: Conduct web research using ResearchAgent
+        web_research_step = len(selected_perspectives) + 1
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=(web_research_step / total_steps) * 100,
+            current_step="Conducting web research",
+            step_number=web_research_step,
+            steps_total=total_steps,
+        )
+
         logger.info(f"[{job_id}] Conducting web research")
         research_agent = get_research_agent()
         research_report: ResearchReport = await research_agent.research(
@@ -176,6 +209,15 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
         )
 
         # Step 3: Synthesize all findings
+        synthesis_step = total_steps
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=(synthesis_step / total_steps) * 100,
+            current_step="Synthesizing findings",
+            step_number=synthesis_step,
+            steps_total=total_steps,
+        )
+
         logger.info(f"[{job_id}] Synthesizing findings")
 
         # Build synthesis prompt
@@ -262,10 +304,18 @@ Return your response as a JSON object with the following structure:
         }
 
         logger.info(f"[{job_id}] Deep research completed successfully")
+
+        # Mark job as complete
+        await progress_tracker.complete_job(job_id=job_id, result_data=result_data)
+
         return JobResult(success=True, data=result_data)
 
     except Exception as e:
         logger.error(f"[{job_id}] Deep research failed: {e}", exc_info=True)
+
+        # Mark job as failed
+        await progress_tracker.fail_job(job_id=job_id, error_message=str(e))
+
         return JobResult(
             success=False, error=f"Deep research failed: {str(e)}", metadata={"job_id": job_id}
         )
@@ -288,19 +338,41 @@ async def perspective_gather_job(
         JobResult with gathered perspective data.
     """
     job_id = ctx.get("job_id", str(uuid.uuid4()))
+    user_id = ctx.get("user_id")
+    workspace_id = ctx.get("workspace_id")
+
+    # Create job in progress tracker
+    await progress_tracker.create_job(
+        job_id=job_id,
+        job_type=JobType.PERSPECTIVE_GATHER,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        parameters={"query": query, "perspectives": perspectives},
+    )
+
     logger.info(f"[{job_id}] Gathering perspectives: {perspectives}")
 
     try:
         results = []
         gateway = get_gateway_client()
+        total_steps = len(perspectives)
 
-        for persp_name in perspectives:
+        for idx, persp_name in enumerate(perspectives, start=1):
             # Get perspective configuration
             if persp_name not in DEFAULT_PERSPECTIVES:
                 logger.warning(f"[{job_id}] Unknown perspective: {persp_name}, skipping")
                 continue
 
             persp_agent = DEFAULT_PERSPECTIVES[persp_name]
+
+            # Update progress
+            await progress_tracker.update_progress(
+                job_id=job_id,
+                progress_percent=(idx / total_steps) * 100,
+                current_step=f"Gathering {persp_agent.name} perspective",
+                step_number=idx,
+                steps_total=total_steps,
+            )
 
             # Generate perspective-specific analysis using Gateway
             content = await _generate_with_gateway(
@@ -329,10 +401,18 @@ async def perspective_gather_job(
         }
 
         logger.info(f"[{job_id}] Perspective gathering completed successfully")
+
+        # Mark job as complete
+        await progress_tracker.complete_job(job_id=job_id, result_data=result_data)
+
         return JobResult(success=True, data=result_data)
 
     except Exception as e:
         logger.error(f"[{job_id}] Perspective gathering failed: {e}", exc_info=True)
+
+        # Mark job as failed
+        await progress_tracker.fail_job(job_id=job_id, error_message=str(e))
+
         return JobResult(
             success=False, error=f"Perspective gathering failed: {str(e)}", metadata={"job_id": job_id}
         )
@@ -358,6 +438,18 @@ async def synthesis_job(
         ValueError: If perspective_results is empty.
     """
     job_id = ctx.get("job_id", str(uuid.uuid4()))
+    user_id = ctx.get("user_id")
+    workspace_id = ctx.get("workspace_id")
+
+    # Create job in progress tracker
+    await progress_tracker.create_job(
+        job_id=job_id,
+        job_type=JobType.SYNTHESIS,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        parameters={"query": query, "perspective_count": len(perspective_results)},
+    )
+
     logger.info(f"[{job_id}] Synthesizing {len(perspective_results)} perspective results")
 
     # Validate input before try/catch to allow ValueError to propagate
@@ -365,6 +457,14 @@ async def synthesis_job(
         raise ValueError("No perspective results to synthesize")
 
     try:
+        # Update progress - starting synthesis
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=10,
+            current_step="Analyzing perspective results",
+            step_number=1,
+            steps_total=2,
+        )
 
         # Build perspectives summary
         perspectives_text = "\n\n".join(
@@ -402,6 +502,15 @@ Return your response as a JSON object with the following structure:
 
 Ensure your response is valid JSON."""
 
+        # Update progress - generating synthesis
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=50,
+            current_step="Generating synthesis",
+            step_number=2,
+            steps_total=2,
+        )
+
         gateway = get_gateway_client()
         content = await _generate_with_gateway(
             gateway=gateway,
@@ -438,10 +547,18 @@ Ensure your response is valid JSON."""
         }
 
         logger.info(f"[{job_id}] Synthesis completed successfully")
+
+        # Mark job as complete
+        await progress_tracker.complete_job(job_id=job_id, result_data=result_data)
+
         return JobResult(success=True, data=result_data)
 
     except Exception as e:
         logger.error(f"[{job_id}] Synthesis failed: {e}", exc_info=True)
+
+        # Mark job as failed
+        await progress_tracker.fail_job(job_id=job_id, error_message=str(e))
+
         return JobResult(
             success=False, error=f"Synthesis failed: {str(e)}", metadata={"job_id": job_id}
         )
@@ -463,9 +580,29 @@ async def export_job(
         JobResult with export file path or error.
     """
     job_id = ctx.get("job_id", str(uuid.uuid4()))
+    user_id = ctx.get("user_id")
+
+    # Create job in progress tracker
+    await progress_tracker.create_job(
+        job_id=job_id,
+        job_type=JobType.EXPORT,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        parameters={"export_format": export_format},
+    )
+
     logger.info(f"[{job_id}] Exporting workspace {workspace_id} as {export_format}")
 
     try:
+        # Update progress - starting export
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=50,
+            current_step="Exporting workspace",
+            step_number=1,
+            steps_total=1,
+        )
+
         # Simulate export
         await asyncio.sleep(1)
 
@@ -477,10 +614,18 @@ async def export_job(
         }
 
         logger.info(f"[{job_id}] Export completed")
+
+        # Mark job as complete
+        await progress_tracker.complete_job(job_id=job_id, result_data=result_data)
+
         return JobResult(success=True, data=result_data)
 
     except Exception as e:
         logger.error(f"[{job_id}] Export failed: {e}")
+
+        # Mark job as failed
+        await progress_tracker.fail_job(job_id=job_id, error_message=str(e))
+
         return JobResult(success=False, error=str(e))
 
 
