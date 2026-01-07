@@ -23,24 +23,7 @@ export function Canvas({ children }: CanvasProps) {
         initialScale={1}
         minScale={0.1}
         maxScale={10}
-        initialPositionX={0}
-        initialPositionY={0}
         limitToBounds={false}
-        panning={{
-          disabled: false,
-          activationKeys: [],
-          ignoreKeyEvents: false,
-        }}
-        doubleClick={{
-          disabled: false,
-          step: 0.7,
-          mode: "zoomIn",
-        }}
-        zooming={{
-          disabled: false,
-          step: 0.1,
-          limitsOnWheel: true,
-        }}
       >
         <TransformComponent
           wrapperStyle={{
