@@ -24,6 +24,46 @@ from app.jobs.retry import (
 logger = logging.getLogger(__name__)
 
 
+class JobCancelledError(Exception):
+    """Exception raised when a job is cancelled during execution.
+
+    This exception is used to signal cooperative cancellation from within
+    worker functions. It's caught at the top level of job functions to
+    ensure proper cleanup and status updates.
+    """
+
+    pass
+
+
+async def check_job_cancelled(job_id: str) -> None:
+    """Check if a job has been cancelled and raise an exception if so.
+
+    This function polls the database for the current job status.
+    If the status is "cancelled", it raises JobCancelledError to signal
+    the worker function to stop processing.
+
+    Args:
+        job_id: The ARQ job ID to check
+
+    Raises:
+        JobCancelledError: If the job status is "cancelled"
+
+    Example:
+        ```python
+        async def my_job(ctx: dict[str, Any], param: str) -> JobResult:
+            job_id = ctx.get("job_id")
+            for item in items:
+                await check_job_cancelled(job_id)  # Raises if cancelled
+                # Process item...
+            return JobResult(success=True)
+        ```
+    """
+    job = await progress_tracker.get_job(job_id)
+    if job and job.status == "cancelled":
+        logger.info(f"[{job_id}] Job cancellation detected, stopping execution")
+        raise JobCancelledError(f"Job {job_id} was cancelled")
+
+
 async def _generate_with_gateway(
     gateway: GatewayClient,
     system_prompt: str,
@@ -162,6 +202,9 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
         # Could restore state from checkpoint.data here
 
     try:
+        # Check for cancellation before starting work
+        await check_job_cancelled(job_id)
+
         # Select perspectives based on depth
         perspective_names = list(DEFAULT_PERSPECTIVES.keys())
         selected_perspectives = perspective_names[: min(depth, len(perspective_names))]
@@ -174,6 +217,9 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
         gateway = get_gateway_client()
 
         for idx, persp_name in enumerate(selected_perspectives, start=1):
+            # Check for cancellation before each perspective
+            await check_job_cancelled(job_id)
+
             persp_agent = DEFAULT_PERSPECTIVES[persp_name]
 
             # Update progress
@@ -193,6 +239,9 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
                 model="openai/gpt-4o",
                 temperature=persp_agent.temperature,
             )
+
+            # Check for cancellation after LLM call (long operation)
+            await check_job_cancelled(job_id)
 
             perspective_results.append(
                 {
@@ -217,6 +266,10 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
 
         # Step 2: Conduct web research using ResearchAgent
         web_research_step = len(selected_perspectives) + 1
+
+        # Check for cancellation before web research
+        await check_job_cancelled(job_id)
+
         await progress_tracker.update_progress(
             job_id=job_id,
             progress_percent=(web_research_step / total_steps) * 100,
@@ -231,6 +284,9 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
             query, max_steps=depth
         )
 
+        # Check for cancellation after web research (long operation)
+        await check_job_cancelled(job_id)
+
         # Save checkpoint after web research
         await checkpoint_manager.save_checkpoint(
             job_id=job_id,
@@ -241,6 +297,10 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
 
         # Step 3: Judge and synthesize using LLM-as-Judge workflow
         judge_step = total_steps
+
+        # Check for cancellation before synthesis
+        await check_job_cancelled(job_id)
+
         await progress_tracker.update_progress(
             job_id=job_id,
             progress_percent=(judge_step / total_steps) * 100,
@@ -276,6 +336,14 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
 
         return JobResult(success=True, data=result_data)
 
+    except JobCancelledError:
+        logger.info(f"[{job_id}] Deep research job was cancelled")
+        # Status already set to cancelled by the API, just need to return
+        return JobResult(
+            success=False,
+            error="Job was cancelled",
+            metadata={"job_id": job_id, "cancelled": True},
+        )
     except Exception as e:
         logger.error(f"[{job_id}] Deep research failed: {e}", exc_info=True)
 
@@ -319,11 +387,17 @@ async def perspective_gather_job(
     logger.info(f"[{job_id}] Gathering perspectives: {perspectives}")
 
     try:
+        # Check for cancellation before starting work
+        await check_job_cancelled(job_id)
+
         results = []
         gateway = get_gateway_client()
         total_steps = len(perspectives)
 
         for idx, persp_name in enumerate(perspectives, start=1):
+            # Check for cancellation before each perspective
+            await check_job_cancelled(job_id)
+
             # Get perspective configuration
             if persp_name not in DEFAULT_PERSPECTIVES:
                 logger.warning(f"[{job_id}] Unknown perspective: {persp_name}, skipping")
@@ -349,6 +423,9 @@ async def perspective_gather_job(
                 temperature=persp_agent.temperature,
             )
 
+            # Check for cancellation after LLM call (long operation)
+            await check_job_cancelled(job_id)
+
             results.append(
                 {
                     "name": persp_name,
@@ -373,6 +450,13 @@ async def perspective_gather_job(
 
         return JobResult(success=True, data=result_data)
 
+    except JobCancelledError:
+        logger.info(f"[{job_id}] Perspective gathering job was cancelled")
+        return JobResult(
+            success=False,
+            error="Job was cancelled",
+            metadata={"job_id": job_id, "cancelled": True},
+        )
     except Exception as e:
         logger.error(f"[{job_id}] Perspective gathering failed: {e}", exc_info=True)
 
@@ -423,6 +507,9 @@ async def synthesis_job(
         raise ValueError("No perspective results to synthesize")
 
     try:
+        # Check for cancellation before starting work
+        await check_job_cancelled(job_id)
+
         # Update progress - starting evaluation
         await progress_tracker.update_progress(
             job_id=job_id,
@@ -438,6 +525,9 @@ async def synthesis_job(
             query=query,
             perspective_results=perspective_results,
         )
+
+        # Check for cancellation after judge synthesis (long operation)
+        await check_job_cancelled(job_id)
 
         # Update progress - synthesis complete
         await progress_tracker.update_progress(
@@ -463,6 +553,13 @@ async def synthesis_job(
 
         return JobResult(success=True, data=result_data)
 
+    except JobCancelledError:
+        logger.info(f"[{job_id}] Synthesis job was cancelled")
+        return JobResult(
+            success=False,
+            error="Job was cancelled",
+            metadata={"job_id": job_id, "cancelled": True},
+        )
     except Exception as e:
         logger.error(f"[{job_id}] Synthesis failed: {e}", exc_info=True)
 
@@ -504,6 +601,9 @@ async def export_job(
     logger.info(f"[{job_id}] Exporting workspace {workspace_id} as {export_format}")
 
     try:
+        # Check for cancellation before starting work
+        await check_job_cancelled(job_id)
+
         # Update progress - starting export
         await progress_tracker.update_progress(
             job_id=job_id,
@@ -513,8 +613,11 @@ async def export_job(
             steps_total=1,
         )
 
-        # Simulate export
+        # Simulate export (could be a long operation)
         await asyncio.sleep(1)
+
+        # Check for cancellation after export operation
+        await check_job_cancelled(job_id)
 
         result_data = {
             "workspace_id": workspace_id,
@@ -530,6 +633,13 @@ async def export_job(
 
         return JobResult(success=True, data=result_data)
 
+    except JobCancelledError:
+        logger.info(f"[{job_id}] Export job was cancelled")
+        return JobResult(
+            success=False,
+            error="Job was cancelled",
+            metadata={"job_id": job_id, "cancelled": True},
+        )
     except Exception as e:
         logger.error(f"[{job_id}] Export failed: {e}")
 
