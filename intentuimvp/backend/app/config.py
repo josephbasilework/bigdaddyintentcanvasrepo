@@ -47,6 +47,12 @@ class Settings(BaseSettings):
         default=["http://localhost:3000"], description="CORS allowed origins"
     )
 
+    # Database
+    database_url: str = Field(
+        default="sqlite:///./intentui.db",
+        description="Database connection URL (PostgreSQL or SQLite)",
+    )
+
     @field_validator("pydantic_gateway_api_key")
     @classmethod
     def validate_gateway_api_key(cls, v: str) -> str:

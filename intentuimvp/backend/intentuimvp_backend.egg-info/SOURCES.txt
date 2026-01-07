@@ -3,9 +3,12 @@ app/__init__.py
 app/config.py
 app/main.py
 app/agents/__init__.py
+app/agents/base.py
 app/api/__init__.py
+app/api/health.py
 app/context/__init__.py
 app/gateway/__init__.py
+app/gateway/client.py
 app/jobs/__init__.py
 app/mcp/__init__.py
 intentuimvp_backend.egg-info/PKG-INFO
@@ -13,3 +16,5 @@ intentuimvp_backend.egg-info/SOURCES.txt
 intentuimvp_backend.egg-info/dependency_links.txt
 intentuimvp_backend.egg-info/requires.txt
 intentuimvp_backend.egg-info/top_level.txt
+migrations/env.py
+migrations/versions/1a37d9c1fbf0_initial_schema_canvas_and_node_tables.py
