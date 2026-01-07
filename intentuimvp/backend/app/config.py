@@ -68,6 +68,20 @@ class Settings(BaseSettings):
         default=True, description="Enable automatic daily backups"
     )
 
+    # Redis (for job queue)
+    redis_host: str = Field(
+        default="localhost", description="Redis host for job queue"
+    )
+    redis_port: int = Field(
+        default=6379, description="Redis port for job queue"
+    )
+    redis_db: int = Field(
+        default=0, description="Redis database number for job queue"
+    )
+    redis_password: str = Field(
+        default="", description="Redis password (optional)"
+    )
+
     @field_validator("pydantic_gateway_api_key")
     @classmethod
     def validate_gateway_api_key(cls, v: str) -> str:
