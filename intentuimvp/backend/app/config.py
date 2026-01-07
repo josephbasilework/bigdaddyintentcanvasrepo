@@ -53,6 +53,21 @@ class Settings(BaseSettings):
         description="Database connection URL (PostgreSQL or SQLite)",
     )
 
+    # Backup
+    backup_encryption_key: str = Field(
+        default="",
+        description="Fernet encryption key for backup data (base64 encoded)",
+    )
+    backup_retention_days: int = Field(
+        default=30, description="Number of days to retain backups"
+    )
+    backup_schedule_hour: int = Field(
+        default=2, ge=0, le=23, description="Hour to run daily backup (0-23)"
+    )
+    backup_enabled: bool = Field(
+        default=True, description="Enable automatic daily backups"
+    )
+
     @field_validator("pydantic_gateway_api_key")
     @classmethod
     def validate_gateway_api_key(cls, v: str) -> str:

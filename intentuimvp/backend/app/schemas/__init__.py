@@ -1,5 +1,13 @@
 """Pydantic schemas for API request/response models."""
 
+from app.schemas.backup import (
+    BackupCreatedResponse,
+    BackupInfo,
+    BackupListResponse,
+    ErrorResponse,
+    ManualBackupRequest,
+    RestoreResponse,
+)
 from app.schemas.preferences import (
     DefaultPreferencesResponse,
     PreferencesData,
@@ -16,4 +24,10 @@ __all__ = [
     "PreferencesResponse",
     "PreferencesSaveRequest",
     "DefaultPreferencesResponse",
+    "BackupInfo",
+    "ManualBackupRequest",
+    "BackupListResponse",
+    "RestoreResponse",
+    "BackupCreatedResponse",
+    "ErrorResponse",
 ]
