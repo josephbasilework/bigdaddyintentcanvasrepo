@@ -12,6 +12,14 @@ export interface CanvasNode {
   metadata?: Record<string, unknown>;
 }
 
+export interface CanvasEdge {
+  id: string;
+  sourceNodeId: string;
+  targetNodeId: string;
+  label?: string;
+  type?: 'solid' | 'dashed' | 'dotted';
+}
+
 export interface CanvasDocument {
   id: string;
   nodeId: string;
@@ -25,6 +33,7 @@ export interface CanvasDocument {
 interface CanvasState {
   // State
   nodes: CanvasNode[];
+  edges: CanvasEdge[];
   documents: CanvasDocument[];
   selectedNodeId: string | null;
 
@@ -35,12 +44,17 @@ interface CanvasState {
   selectNode: (nodeId: string | null) => void;
   updateNode: (nodeId: string, updates: Partial<CanvasNode>) => void;
   clearSelection: () => void;
+  setNodes: (nodes: CanvasNode[]) => void;
+  addEdge: (edge: Omit<CanvasEdge, 'id'>) => string;
+  removeEdge: (edgeId: string) => void;
+  setEdges: (edges: CanvasEdge[]) => void;
 }
 
 // Create the store
 export const useCanvasStore = create<CanvasState>((set) => ({
   // Initial state
   nodes: [],
+  edges: [],
   documents: [],
   selectedNodeId: null,
 
@@ -61,6 +75,9 @@ export const useCanvasStore = create<CanvasState>((set) => ({
   removeNode: (nodeId) => {
     set((state) => ({
       nodes: state.nodes.filter((node) => node.id !== nodeId),
+      edges: state.edges.filter(
+        (edge) => edge.sourceNodeId !== nodeId && edge.targetNodeId !== nodeId
+      ),
       documents: state.documents.filter((doc) => doc.nodeId !== nodeId),
       selectedNodeId: state.selectedNodeId === nodeId ? null : state.selectedNodeId,
     }));
@@ -94,5 +111,35 @@ export const useCanvasStore = create<CanvasState>((set) => ({
   // Clear selection
   clearSelection: () => {
     set({ selectedNodeId: null });
+  },
+
+  // Set all nodes (for bulk loading)
+  setNodes: (nodes) => {
+    set({ nodes });
+  },
+
+  // Add an edge between two nodes
+  addEdge: (edge) => {
+    const id = `edge-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const newEdge: CanvasEdge = {
+      ...edge,
+      id,
+    };
+    set((state) => ({
+      edges: [...state.edges, newEdge],
+    }));
+    return id;
+  },
+
+  // Remove an edge
+  removeEdge: (edgeId) => {
+    set((state) => ({
+      edges: state.edges.filter((edge) => edge.id !== edgeId),
+    }));
+  },
+
+  // Set all edges (for bulk loading)
+  setEdges: (edges) => {
+    set({ edges });
   },
 }));

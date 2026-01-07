@@ -1,12 +1,38 @@
 """Repository for canvas and node operations."""
 
+import json
+import random
+import string
+import time
 from logging import getLogger
 
 from sqlalchemy.orm import Session
 
-from app.models.canvas import Canvas, Node
+from app.models.canvas import Canvas, Edge, Node
 
 logger = getLogger(__name__)
+
+
+def _generate_node_id() -> str:
+    """Generate a unique node ID.
+
+    Returns:
+        A unique node ID string
+    """
+    timestamp = int(time.time() * 1000)
+    random_str = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+    return f"node-{timestamp}-{random_str}"
+
+
+def _generate_edge_id() -> str:
+    """Generate a unique edge ID.
+
+    Returns:
+        A unique edge ID string
+    """
+    timestamp = int(time.time() * 1000)
+    random_str = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+    return f"edge-{timestamp}-{random_str}"
 
 
 class CanvasRepository:
@@ -74,14 +100,14 @@ class CanvasRepository:
         canvas_data: dict,
         canvas_name: str = "default",
     ) -> Canvas:
-        """Save or update canvas with nodes.
+        """Save or update canvas with nodes and edges.
 
         Creates a new canvas or updates an existing one. Replaces all nodes
-        with the provided node data.
+        and edges with the provided data.
 
         Args:
             user_id: User identifier
-            canvas_data: Canvas state with nodes
+            canvas_data: Canvas state with nodes and edges
             canvas_name: Canvas name
 
         Returns:
@@ -96,25 +122,64 @@ class CanvasRepository:
             self.db.add(canvas)
             self.db.flush()  # Get the ID before adding nodes
         else:
-            # Delete existing nodes (cascade delete)
+            # Delete existing nodes and edges (cascade delete)
             self.db.query(Node).filter(Node.canvas_id == canvas.id).delete()
+            self.db.query(Edge).filter(Edge.canvas_id == canvas.id).delete()
             canvas.name = canvas_name
 
         # Add new nodes
         nodes_data = canvas_data.get("nodes", [])
         for node_data in nodes_data:
+            # Generate node_id if not provided
+            node_id = node_data.get("id", "")
+            if not node_id:
+                node_id = _generate_node_id()
+
+            # Get title from either "title" or "label" for backwards compatibility
+            title = node_data.get("title") or node_data.get("label", "")
+
+            # Convert metadata to JSON string if present
+            node_metadata = None
+            if node_data.get("metadata"):
+                node_metadata = json.dumps(node_data["metadata"])
+
             node = Node(
+                node_id=node_id,
                 canvas_id=canvas.id,
-                label=node_data.get("label", ""),
+                type=node_data.get("type", "text"),
+                title=title,
+                content=node_data.get("content"),
+                node_metadata=node_metadata,
                 x=node_data.get("x", 0),
                 y=node_data.get("y", 0),
                 z=node_data.get("z", 0),
             )
             self.db.add(node)
 
+        # Add new edges
+        edges_data = canvas_data.get("edges", [])
+        for edge_data in edges_data:
+            # Generate edge_id if not provided
+            edge_id = edge_data.get("id", "")
+            if not edge_id:
+                edge_id = _generate_edge_id()
+
+            edge = Edge(
+                edge_id=edge_id,
+                canvas_id=canvas.id,
+                source_node_id=edge_data.get("sourceNodeId", ""),
+                target_node_id=edge_data.get("targetNodeId", ""),
+                label=edge_data.get("label"),
+                type=edge_data.get("type", "solid"),
+            )
+            self.db.add(edge)
+
         self.db.commit()
         self.db.refresh(canvas)
-        logger.info(f"Saved canvas {canvas.id} for user {user_id} with {len(nodes_data)} nodes")
+        logger.info(
+            f"Saved canvas {canvas.id} for user {user_id} "
+            f"with {len(nodes_data)} nodes and {len(edges_data)} edges"
+        )
         return canvas
 
     def delete_canvas(self, canvas_id: int) -> bool:

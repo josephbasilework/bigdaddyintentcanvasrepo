@@ -1,6 +1,6 @@
 "use client";
 
-import { Canvas } from "@/components/Canvas/Canvas";
+import { Canvas, CanvasWorkspace } from "@/components/Canvas";
 import { FloatingInput } from "@/components/ContextInput/FloatingInput";
 import { AssumptionsPanel } from "@/components/Assumptions";
 import type { Assumption } from "@/components/Assumptions";
@@ -85,6 +85,7 @@ export default function Home() {
 
   return (
     <Canvas>
+      <CanvasWorkspace />
       <FloatingInput onSubmit={handleCommandSubmit} placeholder="Type a command..." />
       {commands.length > 0 && (
         <div style={{ position: "absolute", top: "20px", left: "20px", color: "#fff" }}>
