@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.health import router as health_router
 from app.config import get_settings
+from app.ws import router as ws_router
 
 settings = get_settings()
 
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
 
     # API routers
     app.include_router(health_router, tags=["health"])
+    app.include_router(ws_router, tags=["websocket"])
 
     @app.get("/")
     async def root() -> dict[str, object]:
