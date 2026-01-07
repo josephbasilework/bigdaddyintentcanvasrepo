@@ -7,14 +7,110 @@ Jobs are defined as async functions that receive job context and parameters.
 import asyncio
 import logging
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
-from arq import cron
+from pydantic import BaseModel, Field
 
+from app.agents.research_agent import ResearchReport, get_research_agent
+from app.gateway.client import GatewayClient, get_gateway_client
 from app.jobs.base import JobResult, get_redis_settings
 
 logger = logging.getLogger(__name__)
+
+
+async def _generate_with_gateway(
+    gateway: GatewayClient,
+    system_prompt: str,
+    user_prompt: str,
+    model: str = "openai/gpt-4o",
+    temperature: float = 0.7,
+) -> str:
+    """Generate a completion using the Gateway client.
+
+    Args:
+        gateway: Gateway client instance
+        system_prompt: System prompt for the LLM
+        user_prompt: User prompt for the LLM
+        model: Model identifier
+        temperature: Sampling temperature
+
+    Returns:
+        Generated content as string
+    """
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    response = await gateway.generate(
+        model=model, messages=messages, temperature=temperature
+    )
+    return response.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+
+# Perspective models for multi-agent research
+
+
+class PerspectiveAgent(BaseModel):
+    """Definition of a research perspective agent."""
+
+    name: str = Field(description="Name of the perspective")
+    system_prompt: str = Field(description="System prompt for this perspective")
+    temperature: float = Field(default=0.7, ge=0.0, le=1.0, description="Temperature for this agent")
+
+
+# Predefined research perspectives
+DEFAULT_PERSPECTIVES: dict[str, PerspectiveAgent] = {
+    "technical": PerspectiveAgent(
+        name="technical",
+        system_prompt="""You are a Technical Research Analyst. Your role is to:
+- Analyze technical feasibility, implementation details, and architectural considerations
+- Identify key technologies, frameworks, and tools involved
+- Assess technical risks, challenges, and dependencies
+- Consider scalability, performance, and security implications
+- Evaluate technical debt and maintenance considerations
+
+Focus on the HOW and WHAT from a technical standpoint.""",
+        temperature=0.5,
+    ),
+    "business": PerspectiveAgent(
+        name="business",
+        system_prompt="""You are a Business Strategy Analyst. Your role is to:
+- Analyze business value, ROI, and market potential
+- Identify target customers, use cases, and revenue models
+- Assess competitive landscape and differentiation opportunities
+- Consider regulatory, legal, and compliance implications
+- Evaluate operational impact and resource requirements
+
+Focus on the WHY and WHO from a business standpoint.""",
+        temperature=0.6,
+    ),
+    "ethical": PerspectiveAgent(
+        name="ethical",
+        system_prompt="""You are an Ethics and Society Analyst. Your role is to:
+- Identify ethical implications and moral considerations
+- Assess societal impact, fairness, and equity concerns
+- Consider privacy, consent, and data protection
+- Evaluate environmental sustainability implications
+- Identify potential misuse cases and mitigation strategies
+
+Focus on the SHOULD and COULD from an ethical standpoint.""",
+        temperature=0.7,
+    ),
+    "user": PerspectiveAgent(
+        name="user",
+        system_prompt="""You are a User Experience Advocate. Your role is to:
+- Analyze user needs, pain points, and experience expectations
+- Assess accessibility, usability, and learnability
+- Consider user workflows and interaction patterns
+- Identify potential friction points and delight opportunities
+- Evaluate onboarding, documentation, and support needs
+
+Focus on the USER from an experiential standpoint.""",
+        temperature=0.6,
+    ),
+}
 
 
 # Job functions
@@ -23,6 +119,11 @@ logger = logging.getLogger(__name__)
 
 async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> JobResult:
     """Execute a deep research job across multiple perspectives.
+
+    This job orchestrates multi-perspective research by:
+    1. Gathering information from different analytical perspectives
+    2. Synthesizing findings into a comprehensive report
+    3. Using ResearchAgent for web search and information gathering
 
     Args:
         ctx: ARQ execution context (contains job_id, etc.)
@@ -36,26 +137,138 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
     logger.info(f"[{job_id}] Starting deep research job: query='{query}', depth={depth}")
 
     try:
-        # Simulate research work (placeholder for actual implementation)
-        await asyncio.sleep(2)
+        # Select perspectives based on depth
+        perspective_names = list(DEFAULT_PERSPECTIVES.keys())
+        selected_perspectives = perspective_names[: min(depth, len(perspective_names))]
 
+        logger.info(f"[{job_id}] Gathering perspectives: {selected_perspectives}")
+
+        # Step 1: Gather research from each perspective
+        perspective_results = []
+        gateway = get_gateway_client()
+        for persp_name in selected_perspectives:
+            persp_agent = DEFAULT_PERSPECTIVES[persp_name]
+
+            # Generate perspective-specific analysis using Gateway
+            content = await _generate_with_gateway(
+                gateway=gateway,
+                system_prompt=persp_agent.system_prompt,
+                user_prompt=f"Analyze the following research query from your perspective: {query}\n\nProvide a comprehensive analysis including key findings, concerns, and recommendations.",
+                model="openai/gpt-4o",
+                temperature=persp_agent.temperature,
+            )
+
+            perspective_results.append(
+                {
+                    "perspective": persp_name,
+                    "name": persp_agent.name,
+                    "analysis": content,
+                    "temperature": persp_agent.temperature,
+                }
+            )
+            logger.info(f"[{job_id}] Completed {persp_name} perspective analysis")
+
+        # Step 2: Conduct web research using ResearchAgent
+        logger.info(f"[{job_id}] Conducting web research")
+        research_agent = get_research_agent()
+        research_report: ResearchReport = await research_agent.research(
+            query, max_steps=depth
+        )
+
+        # Step 3: Synthesize all findings
+        logger.info(f"[{job_id}] Synthesizing findings")
+
+        # Build synthesis prompt
+        perspectives_text = "\n\n".join(
+            [
+                f"## {str(p.get('name', '')).upper()} PERSPECTIVE\n{p.get('analysis', '')}"
+                for p in perspective_results
+            ]
+        )
+
+        research_text = f"""## WEB RESEARCH
+**Summary**: {research_report.summary}
+
+**Key Points**:
+{chr(10).join(f"- {kp}" for kp in research_report.key_points)}
+
+**Detailed Findings**: {research_report.detailed_findings}
+"""
+
+        synthesis_prompt = f"""You are a Research Synthesis Specialist. Your task is to synthesize findings from multiple analytical perspectives and web research into a comprehensive, actionable report.
+
+**Research Query**: {query}
+
+**Perspectives Analysis**:
+{perspectives_text}
+
+**Web Research Findings**:
+{research_text}
+
+Please provide a synthesis that includes:
+1. **Executive Summary** (2-3 paragraphs)
+2. **Key Insights** (5-7 bullet points combining perspectives)
+3. **Recommendations** (actionable next steps)
+4. **Confidence Assessment** (0-1 scale with rationale)
+5. **Identified Risks** (by perspective)
+6. **Open Questions** (areas requiring further investigation)
+
+Return your response as a JSON object with the following structure:
+{{
+  "executive_summary": "...",
+  "key_insights": ["...", "..."],
+  "recommendations": ["...", "..."],
+  "confidence": 0.85,
+  "confidence_rationale": "...",
+  "risks": [{{"perspective": "...", "risk": "..."}}, ...],
+  "open_questions": ["...", "..."]
+}}"""
+
+        synthesis_content = await _generate_with_gateway(
+            gateway=gateway,
+            system_prompt="You are a Research Synthesis Specialist. Always respond with valid JSON.",
+            user_prompt=synthesis_prompt,
+            model="openai/gpt-4o",
+            temperature=0.5,
+        )
+
+        # Parse JSON response
+        import json
+
+        try:
+            synthesis_data = json.loads(synthesis_content)
+        except json.JSONDecodeError:
+            # Fallback if JSON parsing fails
+            logger.warning(f"[{job_id}] Failed to parse synthesis JSON, using structured fallback")
+            synthesis_data = {
+                "executive_summary": synthesis_content[:500],
+                "key_insights": ["Synthesis completed"],
+                "recommendations": ["Review findings"],
+                "confidence": 0.6,
+                "confidence_rationale": "Structured parsing failed",
+                "risks": [],
+                "open_questions": [],
+            }
+
+        # Compile final result
         result_data = {
             "query": query,
             "depth": depth,
-            "findings": [
-                {"perspective": "technical", "summary": "Technical analysis..."},
-                {"perspective": "business", "summary": "Business impact..."},
-                {"perspective": "ethical", "summary": "Ethical considerations..."},
-            ],
-            "timestamp": datetime.utcnow().isoformat(),
+            "perspectives": perspective_results,
+            "web_research": research_report.model_dump(),
+            "synthesis": synthesis_data,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "job_id": job_id,
         }
 
         logger.info(f"[{job_id}] Deep research completed successfully")
         return JobResult(success=True, data=result_data)
 
     except Exception as e:
-        logger.error(f"[{job_id}] Deep research failed: {e}")
-        return JobResult(success=False, error=str(e))
+        logger.error(f"[{job_id}] Deep research failed: {e}", exc_info=True)
+        return JobResult(
+            success=False, error=f"Deep research failed: {str(e)}", metadata={"job_id": job_id}
+        )
 
 
 async def perspective_gather_job(
@@ -63,10 +276,13 @@ async def perspective_gather_job(
 ) -> JobResult:
     """Gather information from multiple perspectives.
 
+    This job conducts focused analysis from specified analytical perspectives
+    using specialized agent personas for each viewpoint.
+
     Args:
         ctx: ARQ execution context
         query: Research query
-        perspectives: List of perspective names to gather
+        perspectives: List of perspective names to gather (e.g., ["technical", "business"])
 
     Returns:
         JobResult with gathered perspective data.
@@ -75,30 +291,60 @@ async def perspective_gather_job(
     logger.info(f"[{job_id}] Gathering perspectives: {perspectives}")
 
     try:
-        # Simulate perspective gathering
-        await asyncio.sleep(1)
+        results = []
+        gateway = get_gateway_client()
+
+        for persp_name in perspectives:
+            # Get perspective configuration
+            if persp_name not in DEFAULT_PERSPECTIVES:
+                logger.warning(f"[{job_id}] Unknown perspective: {persp_name}, skipping")
+                continue
+
+            persp_agent = DEFAULT_PERSPECTIVES[persp_name]
+
+            # Generate perspective-specific analysis using Gateway
+            content = await _generate_with_gateway(
+                gateway=gateway,
+                system_prompt=persp_agent.system_prompt,
+                user_prompt=f"Analyze the following research query from your perspective: {query}\n\nProvide a comprehensive analysis including:\n- Key findings relevant to your perspective\n- Concerns or risks\n- Recommendations\n- Related questions to consider",
+                model="openai/gpt-4o",
+                temperature=persp_agent.temperature,
+            )
+
+            results.append(
+                {
+                    "name": persp_name,
+                    "display_name": persp_agent.name,
+                    "analysis": content,
+                    "temperature": persp_agent.temperature,
+                }
+            )
+            logger.info(f"[{job_id}] Completed {persp_name} perspective")
 
         result_data = {
             "query": query,
-            "perspectives": [
-                {"name": p, "data": f"Analysis from {p} perspective..."}
-                for p in perspectives
-            ],
-            "timestamp": datetime.utcnow().isoformat(),
+            "perspectives": results,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "job_id": job_id,
         }
 
-        logger.info(f"[{job_id}] Perspective gathering completed")
+        logger.info(f"[{job_id}] Perspective gathering completed successfully")
         return JobResult(success=True, data=result_data)
 
     except Exception as e:
-        logger.error(f"[{job_id}] Perspective gathering failed: {e}")
-        return JobResult(success=False, error=str(e))
+        logger.error(f"[{job_id}] Perspective gathering failed: {e}", exc_info=True)
+        return JobResult(
+            success=False, error=f"Perspective gathering failed: {str(e)}", metadata={"job_id": job_id}
+        )
 
 
 async def synthesis_job(
     ctx: dict[str, Any], query: str, perspective_results: list[dict[str, Any]]
 ) -> JobResult:
     """Synthesize results from multiple perspectives.
+
+    This job takes results from multiple perspective analyses and synthesizes
+    them into a comprehensive, actionable report.
 
     Args:
         ctx: ARQ execution context
@@ -107,27 +353,98 @@ async def synthesis_job(
 
     Returns:
         JobResult with synthesized findings.
+
+    Raises:
+        ValueError: If perspective_results is empty.
     """
     job_id = ctx.get("job_id", str(uuid.uuid4()))
     logger.info(f"[{job_id}] Synthesizing {len(perspective_results)} perspective results")
 
+    # Validate input before try/catch to allow ValueError to propagate
+    if not perspective_results:
+        raise ValueError("No perspective results to synthesize")
+
     try:
-        # Simulate synthesis
-        await asyncio.sleep(1)
+
+        # Build perspectives summary
+        perspectives_text = "\n\n".join(
+            [
+                f"## {p.get('display_name', p.get('name', 'Unknown')).upper()}\n{p.get('analysis', '')}"
+                for p in perspective_results
+            ]
+        )
+
+        synthesis_prompt = f"""You are a Research Synthesis Specialist. Your task is to synthesize findings from multiple analytical perspectives into a comprehensive, actionable report.
+
+**Research Query**: {query}
+
+**Perspectives Analysis**:
+{perspectives_text}
+
+Please provide a synthesis that includes:
+1. **Executive Summary** (2-3 paragraphs)
+2. **Key Insights** (5-7 bullet points combining perspectives)
+3. **Recommendations** (actionable next steps)
+4. **Confidence Assessment** (0-1 scale with rationale)
+5. **Identified Risks** (by perspective)
+6. **Open Questions** (areas requiring further investigation)
+
+Return your response as a JSON object with the following structure:
+{{
+  "executive_summary": "...",
+  "key_insights": ["...", "..."],
+  "recommendations": ["...", "..."],
+  "confidence": 0.85,
+  "confidence_rationale": "...",
+  "risks": [{{"perspective": "...", "risk": "..."}}, ...],
+  "open_questions": ["...", "..."]
+}}
+
+Ensure your response is valid JSON."""
+
+        gateway = get_gateway_client()
+        content = await _generate_with_gateway(
+            gateway=gateway,
+            system_prompt="You are a Research Synthesis Specialist. Always respond with valid JSON.",
+            user_prompt=synthesis_prompt,
+            model="openai/gpt-4o",
+            temperature=0.5,
+        )
+
+        # Parse JSON response
+        import json
+
+        try:
+            synthesis_data = json.loads(content)
+        except json.JSONDecodeError:
+            # Fallback if JSON parsing fails
+            logger.warning(f"[{job_id}] Failed to parse synthesis JSON, using structured fallback")
+            synthesis_data = {
+                "executive_summary": content[:500],
+                "key_insights": ["Synthesis completed"],
+                "recommendations": ["Review findings"],
+                "confidence": 0.6,
+                "confidence_rationale": "Structured parsing failed",
+                "risks": [],
+                "open_questions": [],
+            }
 
         result_data = {
             "query": query,
-            "synthesis": "Synthesized analysis combining all perspectives...",
-            "confidence": 0.85,
-            "timestamp": datetime.utcnow().isoformat(),
+            "perspective_count": len(perspective_results),
+            "synthesis": synthesis_data,
+            "timestamp": datetime.now(UTC).isoformat(),
+            "job_id": job_id,
         }
 
-        logger.info(f"[{job_id}] Synthesis completed")
+        logger.info(f"[{job_id}] Synthesis completed successfully")
         return JobResult(success=True, data=result_data)
 
     except Exception as e:
-        logger.error(f"[{job_id}] Synthesis failed: {e}")
-        return JobResult(success=False, error=str(e))
+        logger.error(f"[{job_id}] Synthesis failed: {e}", exc_info=True)
+        return JobResult(
+            success=False, error=f"Synthesis failed: {str(e)}", metadata={"job_id": job_id}
+        )
 
 
 async def export_job(
@@ -156,7 +473,7 @@ async def export_job(
             "workspace_id": workspace_id,
             "format": export_format,
             "file_path": f"/exports/{workspace_id}.{export_format}",
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
 
         logger.info(f"[{job_id}] Export completed")
@@ -221,4 +538,3 @@ async def health_check_job(ctx: dict[str, Any]) -> None:
 # Note: Cron jobs can be added to WorkerSettings.cron_jobs list
 # Example: WorkerSettings.cron_jobs = [cron(health_check_job, minute={0})]
 # For now, cron jobs are configured separately
-
