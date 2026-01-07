@@ -4,6 +4,7 @@ Provides REST endpoints for:
 - Getting job status and details
 - Listing user jobs
 - Cancelling jobs
+- Retrying failed jobs
 - Getting job results
 - Job artifact storage and retrieval
 """
@@ -23,6 +24,7 @@ from app.jobs.artifact_storage import (
     StoredArtifact,
     get_artifact_storage,
 )
+from app.jobs.client import JobEnqueueError, retry_job
 from app.jobs.progress import progress_tracker
 from app.models.artifact import ArtifactType
 
@@ -93,6 +95,16 @@ class CancelJobResponse(BaseModel):
     """Cancel job response model."""
 
     success: bool
+    message: str
+
+
+class RetryJobResponse(BaseModel):
+    """Retry job response model."""
+
+    success: bool
+    original_job_id: str
+    new_job_id: str | None = None
+    retry_count: int
     message: str
 
 
@@ -173,6 +185,39 @@ async def cancel_job(job_id: str) -> CancelJobResponse:
         success=True,
         message=f"Job {job_id} cancelled successfully",
     )
+
+
+@router.post("/{job_id}/retry", response_model=RetryJobResponse)
+async def retry_job_endpoint(job_id: str) -> RetryJobResponse:
+    """Retry a failed job.
+
+    Re-enqueues a failed job with the same parameters.
+    The job will have a new job ID for the retry attempt.
+
+    Args:
+        job_id: ARQ job ID (UUID string) to retry
+
+    Returns:
+        Success status, new job ID, and message
+
+    Raises:
+        HTTPException: If job not found (404) or cannot be retried (400)
+    """
+    job = await progress_tracker.get_job(job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job {job_id} not found",
+        )
+
+    try:
+        result = await retry_job(job_id)
+        return RetryJobResponse(**result)
+    except JobEnqueueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
 
 @router.get("/stats/queue")

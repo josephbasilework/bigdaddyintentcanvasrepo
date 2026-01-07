@@ -3,6 +3,7 @@
 This module provides the interface for enqueueing jobs and checking their status.
 """
 
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -11,6 +12,7 @@ from typing import Any
 from arq import create_pool
 
 from app.jobs.base import JobType, get_redis_settings
+from app.jobs.retry import get_job_retry_state, increment_job_retry_count
 from app.jobs.worker import (
     deep_research_job,
     export_job,
@@ -235,6 +237,83 @@ async def cancel_job(job_id: str) -> bool:
     except Exception as e:
         logger.error(f"Failed to cancel job {job_id}: {e}")
         return False
+
+
+async def retry_job(job_id: str) -> dict[str, Any]:
+    """Manually retry a failed job.
+
+    Re-enqueues a failed job with the same parameters.
+    Increments retry count and preserves checkpoint data if available.
+
+    Args:
+        job_id: Job ID to retry
+
+    Returns:
+        Dict with success status, new job ID, and message
+
+    Raises:
+        JobEnqueueError: If the job cannot be retried or fails to enqueue
+    """
+    from sqlalchemy import select
+
+    from app.database import SessionLocal
+    from app.models.job import Job
+
+    # Check if job can be retried
+    retry_state = await get_job_retry_state(job_id)
+    if not retry_state:
+        raise JobEnqueueError(f"Job {job_id} not found")
+
+    if not retry_state["can_retry"]:
+        raise JobEnqueueError(
+            f"Job {job_id} cannot be retried. "
+            f"Status: {retry_state['status']}, "
+            f"Retry count: {retry_state['retry_count']}/{retry_state['max_attempts']}"
+        )
+
+    # Get job details to re-enqueue
+    db = SessionLocal()
+    try:
+        result = db.execute(select(Job).where(Job.job_id == job_id))
+        job = result.scalar_one_or_none()
+
+        if not job:
+            raise JobEnqueueError(f"Job {job_id} not found in database")
+
+        # Parse parameters
+        parameters = {}
+        if job.parameters:
+            try:
+                parameters = json.loads(job.parameters)
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse job parameters for {job_id}")
+
+        # Increment retry count before re-enqueueing
+        await increment_job_retry_count(job_id)
+
+        # Re-enqueue the job with the same parameters
+        new_job_id = await enqueue_job(
+            job_type=JobType(job.job_type),
+            job_data=parameters,
+            user_id=job.user_id,
+            workspace_id=job.workspace_id,
+        )
+
+        logger.info(f"Job {job_id} re-enqueued as {new_job_id}")
+
+        return {
+            "success": True,
+            "original_job_id": job_id,
+            "new_job_id": new_job_id,
+            "retry_count": retry_state["retry_count"] + 1,
+            "message": f"Job re-enqueued as {new_job_id}",
+        }
+
+    except Exception as e:
+        logger.error(f"Failed to retry job {job_id}: {e}")
+        raise JobEnqueueError(f"Failed to retry job: {e}") from e
+    finally:
+        db.close()
 
 
 async def get_queue_stats() -> dict[str, Any]:

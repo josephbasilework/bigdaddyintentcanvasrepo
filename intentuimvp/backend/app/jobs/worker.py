@@ -17,6 +17,9 @@ from app.agents.research_agent import ResearchReport, get_research_agent
 from app.gateway.client import GatewayClient, get_gateway_client
 from app.jobs.base import JobResult, JobType, get_redis_settings
 from app.jobs.progress import progress_tracker
+from app.jobs.retry import (
+    checkpoint_manager,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +153,14 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
 
     logger.info(f"[{job_id}] Starting deep research job: query='{query}', depth={depth}")
 
+    # Check for existing checkpoint (recovery scenario)
+    checkpoint = await checkpoint_manager.load_checkpoint(job_id)
+    if checkpoint:
+        logger.info(
+            f"[{job_id}] Resuming from checkpoint: {checkpoint.step_name} (step {checkpoint.step_number})"
+        )
+        # Could restore state from checkpoint.data here
+
     try:
         # Select perspectives based on depth
         perspective_names = list(DEFAULT_PERSPECTIVES.keys())
@@ -193,6 +204,17 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
             )
             logger.info(f"[{job_id}] Completed {persp_name} perspective analysis")
 
+            # Save checkpoint after each perspective
+            await checkpoint_manager.save_checkpoint(
+                job_id=job_id,
+                step_name=f"perspective_{persp_name}",
+                step_number=idx,
+                data={
+                    "perspective_results": perspective_results,
+                    "current_perspective": persp_name,
+                },
+            )
+
         # Step 2: Conduct web research using ResearchAgent
         web_research_step = len(selected_perspectives) + 1
         await progress_tracker.update_progress(
@@ -207,6 +229,14 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
         research_agent = get_research_agent()
         research_report: ResearchReport = await research_agent.research(
             query, max_steps=depth
+        )
+
+        # Save checkpoint after web research
+        await checkpoint_manager.save_checkpoint(
+            job_id=job_id,
+            step_name="web_research",
+            step_number=web_research_step,
+            data={"research_report": research_report.model_dump()},
         )
 
         # Step 3: Judge and synthesize using LLM-as-Judge workflow
