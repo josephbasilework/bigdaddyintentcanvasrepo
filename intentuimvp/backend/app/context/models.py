@@ -3,7 +3,52 @@
 Defines the payloads and decision structures used by the context router.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Literal
+
+
+class AssumptionCategory(str, Enum):
+    """Categories of assumptions extracted by agents."""
+
+    CONTEXT = "context"
+    INTENT = "intent"
+    PARAMETER = "parameter"
+    OTHER = "other"
+
+
+@dataclass
+class Assumption:
+    """An assumption extracted by an agent that needs user confirmation.
+
+    Attributes:
+        id: Unique identifier for this assumption.
+        text: The assumption text extracted by the agent.
+        confidence: Confidence score (0-1) for this assumption.
+        category: The category/type of assumption.
+        explanation: Optional explanation of why this assumption was made.
+    """
+
+    id: str
+    text: str
+    confidence: float
+    category: Literal["context", "intent", "parameter", "other"]
+    explanation: str | None = None
+
+    def __post_init__(self) -> None:
+        """Validate assumption data."""
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("Confidence must be between 0 and 1")
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "id": self.id,
+            "text": self.text,
+            "confidence": self.confidence,
+            "category": self.category,
+            "explanation": self.explanation,
+        }
 
 
 @dataclass
@@ -33,14 +78,29 @@ class RoutingDecision:
         confidence: Confidence score for this routing decision (0-1).
         payload: The original context payload plus any routing metadata.
         reason: Human-readable explanation for the routing decision.
+        assumptions: Optional list of assumptions that need user confirmation.
     """
 
     handler: str
     confidence: float
     payload: ContextPayload
     reason: str
+    assumptions: list[Assumption] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Validate routing decision."""
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("Confidence must be between 0 and 1")
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "handler": self.handler,
+            "confidence": self.confidence,
+            "payload": {
+                "text": self.payload.text,
+                "attachments": self.payload.attachments,
+            },
+            "reason": self.reason,
+            "assumptions": [a.to_dict() for a in self.assumptions],
+        }
