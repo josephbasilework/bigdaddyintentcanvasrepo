@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.context import router as context_router
 from app.api.health import router as health_router
 from app.config import get_settings
 from app.ws import router as ws_router
@@ -53,6 +54,7 @@ def create_app() -> FastAPI:
     # API routers
     app.include_router(health_router, tags=["health"])
     app.include_router(ws_router, tags=["websocket"])
+    app.include_router(context_router, tags=["context"])
 
     @app.get("/")
     async def root() -> dict[str, object]:
