@@ -29,6 +29,13 @@ export interface CanvasDocument {
   updatedAt: Date;
 }
 
+// History snapshot type
+interface CanvasSnapshot {
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  documents: CanvasDocument[];
+}
+
 // Store state interface
 interface CanvasState {
   // State
@@ -36,6 +43,10 @@ interface CanvasState {
   edges: CanvasEdge[];
   documents: CanvasDocument[];
   selectedNodeId: string | null;
+
+  // History state
+  past: CanvasSnapshot[];
+  future: CanvasSnapshot[];
 
   // Actions
   addNode: (node: Omit<CanvasNode, 'id'>) => string;
@@ -48,98 +59,195 @@ interface CanvasState {
   addEdge: (edge: Omit<CanvasEdge, 'id'>) => string;
   removeEdge: (edgeId: string) => void;
   setEdges: (edges: CanvasEdge[]) => void;
+
+  // History actions
+  undo: () => void;
+  redo: () => void;
+  canUndo: () => boolean;
+  canRedo: () => boolean;
+  clearHistory: () => void;
 }
 
 // Create the store
-export const useCanvasStore = create<CanvasState>((set) => ({
-  // Initial state
-  nodes: [],
-  edges: [],
-  documents: [],
-  selectedNodeId: null,
-
-  // Add a new node to the canvas
-  addNode: (node) => {
-    const id = `node-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    const newNode: CanvasNode = {
-      ...node,
-      id,
+export const useCanvasStore = create<CanvasState>((set, get) => {
+  // Helper to record history (excluding setNodes/setEdges which are for bulk loading)
+  const recordHistory = () => {
+    const state = get();
+    return {
+      nodes: state.nodes,
+      edges: state.edges,
+      documents: state.documents,
     };
-    set((state) => ({
-      nodes: [...state.nodes, newNode],
-    }));
-    return id;
-  },
+  };
 
-  // Remove a node from the canvas
-  removeNode: (nodeId) => {
-    set((state) => ({
-      nodes: state.nodes.filter((node) => node.id !== nodeId),
-      edges: state.edges.filter(
-        (edge) => edge.sourceNodeId !== nodeId && edge.targetNodeId !== nodeId
-      ),
-      documents: state.documents.filter((doc) => doc.nodeId !== nodeId),
-      selectedNodeId: state.selectedNodeId === nodeId ? null : state.selectedNodeId,
-    }));
-  },
+  // Helper to create history-aware setter
+  const withHistory = (updater: (state: CanvasState) => Partial<CanvasState>) => {
+    set((state) => {
+      const snapshot: CanvasSnapshot = {
+        nodes: state.nodes,
+        edges: state.edges,
+        documents: state.documents,
+      };
+      const update = updater(state);
+      return {
+        ...update,
+        past: [...state.past.slice(-49), snapshot], // Keep last 50
+        future: [], // Clear future on new action
+      };
+    });
+  };
 
-  // Update node position
-  updateNodePosition: (nodeId, x, y, z) => {
-    set((state) => ({
-      nodes: state.nodes.map((node) =>
-        node.id === nodeId
-          ? { ...node, x, y, ...(z !== undefined && { z }) }
-          : node
-      ),
-    }));
-  },
+  return {
+    // Initial state
+    nodes: [],
+    edges: [],
+    documents: [],
+    selectedNodeId: null,
+    past: [],
+    future: [],
 
-  // Select a node
-  selectNode: (nodeId) => {
-    set({ selectedNodeId: nodeId });
-  },
+    // Add a new node to the canvas
+    addNode: (node) => {
+      const id = `node-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const newNode: CanvasNode = {
+        ...node,
+        id,
+      };
+      withHistory((state) => ({
+        nodes: [...state.nodes, newNode],
+      }));
+      return id;
+    },
 
-  // Update node properties
-  updateNode: (nodeId, updates) => {
-    set((state) => ({
-      nodes: state.nodes.map((node) =>
-        node.id === nodeId ? { ...node, ...updates } : node
-      ),
-    }));
-  },
+    // Remove a node from the canvas
+    removeNode: (nodeId) => {
+      withHistory((state) => ({
+        nodes: state.nodes.filter((node) => node.id !== nodeId),
+        edges: state.edges.filter(
+          (edge) => edge.sourceNodeId !== nodeId && edge.targetNodeId !== nodeId
+        ),
+        documents: state.documents.filter((doc) => doc.nodeId !== nodeId),
+        selectedNodeId: state.selectedNodeId === nodeId ? null : state.selectedNodeId,
+      }));
+    },
 
-  // Clear selection
-  clearSelection: () => {
-    set({ selectedNodeId: null });
-  },
+    // Update node position
+    updateNodePosition: (nodeId, x, y, z) => {
+      withHistory((state) => ({
+        nodes: state.nodes.map((node) =>
+          node.id === nodeId
+            ? { ...node, x, y, ...(z !== undefined && { z }) }
+            : node
+        ),
+      }));
+    },
 
-  // Set all nodes (for bulk loading)
-  setNodes: (nodes) => {
-    set({ nodes });
-  },
+    // Select a node
+    selectNode: (nodeId) => {
+      set({ selectedNodeId: nodeId });
+    },
 
-  // Add an edge between two nodes
-  addEdge: (edge) => {
-    const id = `edge-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-    const newEdge: CanvasEdge = {
-      ...edge,
-      id,
-    };
-    set((state) => ({
-      edges: [...state.edges, newEdge],
-    }));
-    return id;
-  },
+    // Update node properties
+    updateNode: (nodeId, updates) => {
+      withHistory((state) => ({
+        nodes: state.nodes.map((node) =>
+          node.id === nodeId ? { ...node, ...updates } : node
+        ),
+      }));
+    },
 
-  // Remove an edge
-  removeEdge: (edgeId) => {
-    set((state) => ({
-      edges: state.edges.filter((edge) => edge.id !== edgeId),
-    }));
-  },
+    // Clear selection
+    clearSelection: () => {
+      set({ selectedNodeId: null });
+    },
 
-  // Set all edges (for bulk loading)
-  setEdges: (edges) => {
-    set({ edges });
-  },
-}));
+    // Set all nodes (for bulk loading) - doesn't record history
+    setNodes: (nodes) => {
+      set({ nodes });
+    },
+
+    // Add an edge between two nodes
+    addEdge: (edge) => {
+      const id = `edge-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const newEdge: CanvasEdge = {
+        ...edge,
+        id,
+      };
+      withHistory((state) => ({
+        edges: [...state.edges, newEdge],
+      }));
+      return id;
+    },
+
+    // Remove an edge
+    removeEdge: (edgeId) => {
+      withHistory((state) => ({
+        edges: state.edges.filter((edge) => edge.id !== edgeId),
+      }));
+    },
+
+    // Set all edges (for bulk loading) - doesn't record history
+    setEdges: (edges) => {
+      set({ edges });
+    },
+
+    // Undo: restore previous state
+    undo: () => {
+      const state = get();
+      if (state.past.length === 0) return;
+
+      const previous = state.past[state.past.length - 1];
+      const newPast = state.past.slice(0, -1);
+
+      // Current state becomes the future
+      const currentSnapshot: CanvasSnapshot = {
+        nodes: state.nodes,
+        edges: state.edges,
+        documents: state.documents,
+      };
+
+      set({
+        nodes: previous.nodes,
+        edges: previous.edges,
+        documents: previous.documents,
+        past: newPast,
+        future: [currentSnapshot, ...state.future],
+      });
+    },
+
+    // Redo: restore next state
+    redo: () => {
+      const state = get();
+      if (state.future.length === 0) return;
+
+      const next = state.future[0];
+      const newFuture = state.future.slice(1);
+
+      // Current state becomes past
+      const currentSnapshot: CanvasSnapshot = {
+        nodes: state.nodes,
+        edges: state.edges,
+        documents: state.documents,
+      };
+
+      set({
+        nodes: next.nodes,
+        edges: next.edges,
+        documents: next.documents,
+        past: [...state.past, currentSnapshot],
+        future: newFuture,
+      });
+    },
+
+    // Check if undo is available
+    canUndo: () => get().past.length > 0,
+
+    // Check if redo is available
+    canRedo: () => get().future.length > 0,
+
+    // Clear all history
+    clearHistory: () => {
+      set({ past: [], future: [] });
+    },
+  };
+});
