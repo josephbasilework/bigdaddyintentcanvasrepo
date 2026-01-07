@@ -62,7 +62,7 @@ export function matchesShortcut(event: KeyboardEvent, shortcut: KeyboardShortcut
 export function useKeyboardShortcuts(
   shortcuts: KeyboardShortcut[],
   enabled: boolean = true,
-  target: HTMLElement | Document = typeof document !== 'undefined' ? document : null
+  target: HTMLElement | Document | null = typeof document !== 'undefined' ? document : null
 ) {
   const shortcutsRef = useRef<KeyboardShortcut[]>(shortcuts);
 
@@ -74,9 +74,10 @@ export function useKeyboardShortcuts(
   useEffect(() => {
     if (!enabled || !target) return;
 
-    const handleKeyDown = (event: KeyboardEvent) => {
+    const handleKeyDown = (event: Event) => {
+      const keyboardEvent = event as KeyboardEvent;
       // Ignore events from input fields, textareas, and contentEditable elements
-      const target = event.target as HTMLElement;
+      const target = keyboardEvent.target as HTMLElement;
       if (
         target.tagName === 'INPUT' ||
         target.tagName === 'TEXTAREA' ||
@@ -87,13 +88,13 @@ export function useKeyboardShortcuts(
 
       // Find matching shortcut
       const matchingShortcut = shortcutsRef.current.find((shortcut) =>
-        matchesShortcut(event, shortcut)
+        matchesShortcut(keyboardEvent, shortcut)
       );
 
       if (matchingShortcut) {
-        event.preventDefault();
-        event.stopPropagation();
-        matchingShortcut.handler(event);
+        keyboardEvent.preventDefault();
+        keyboardEvent.stopPropagation();
+        matchingShortcut.handler(keyboardEvent);
       }
     };
 

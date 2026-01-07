@@ -117,10 +117,10 @@ export class AGUIClient {
     }
 
     const envelope: UIToAgentMessage = {
+      ...message,
       version: AGUI_PROTOCOL_VERSION,
       messageId: generateMessageId(),
       timestamp: getTimestamp(),
-      ...message,
     };
 
     this.ws.send(JSON.stringify(envelope));
