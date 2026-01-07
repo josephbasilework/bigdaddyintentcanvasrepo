@@ -1,0 +1,46 @@
+# Custom Gitleaks configuration for IntentUI
+# Detects common API key patterns and secrets
+
+title = "IntentUI Secret Scanning"
+
+[[rules]]
+description = "OpenAI API key"
+id = "openai-api-key"
+regex = '''sk-[a-zA-Z0-9]{20,}'''
+keywords = ["sk-"]
+
+[[rules]]
+description = "Anthropic API key"
+id = "anthropic-api-key"
+regex = '''sk-ant-[a-zA-Z0-9_-]{20,}'''
+keywords = ["sk-ant-"]
+
+[[rules]]
+description = "Generic API key"
+id = "generic-api-key"
+regex = '''(?i)(api[_-]?key|apikey|secret|token)\s*[:=]\s*['"]?[a-zA-Z0-9_-]{20,}'''
+keywords = ["api_key", "apikey", "secret", "token"]
+
+[[rules]]
+description = "AWS Access Key"
+id = "aws-access-key"
+regex = '''(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}'''
+keywords = ["AKIA", "A3T"]
+
+[[rules]]
+description = "Pydantic Gateway API key"
+id = "pydantic-gateway-key"
+regex = '''pydantic[-_]?(api[_-]?key|gateway[_-]?key)\s*[:=]\s*['"]?[a-zA-Z0-9_-]{20,}'''
+keywords = ["pydantic", "gateway"]
+
+[[rules]]
+description = "GitHub token"
+id = "github-token"
+regex = '''ghp_[a-zA-Z0-9]{36}'''
+keywords = ["ghp_"]
+
+[[rules]]
+description = "Slack token"
+id = "slack-token"
+regex = '''xox[baprs]-[a-zA-Z0-9-]{10,}'''
+keywords = ["xoxb-", "xoxp-", "xoxa-", "xoxr-", "xoxs-"]
