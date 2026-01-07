@@ -48,7 +48,12 @@ class TestContextEndpoint:
         assert data["confidence"] == 1.0
 
     def test_submit_context_plain_text(self, client: testclient.TestClient) -> None:
-        """Test submitting plain text without slash command."""
+        """Test submitting plain text without slash command.
+
+        Now uses LLM classification (Intent Decipherer) by default.
+        When LLM fails (no gateway available), falls back to chat_handler
+        with confidence 0.5 from Intent Decipherer's fallback.
+        """
         response = client.post(
             "/api/context",
             json={"text": "Hello, how are you?", "attachments": []},
@@ -56,7 +61,8 @@ class TestContextEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["handler"] == "chat_handler"
-        assert data["confidence"] == 0.3
+        # LLM classification is enabled, confidence from Intent Decipherer
+        assert data["confidence"] == 0.5
         assert data["status"] == "routed"
 
     def test_submit_context_with_attachments(self, client: testclient.TestClient) -> None:

@@ -7,7 +7,8 @@ LLM classification, or fallback behavior.
 import logging
 import re
 
-from app.context.models import ContextPayload, RoutingDecision
+from app.agents.intent_decipherer import IntentDeciphererAgent, get_intent_decipherer
+from app.context.models import Assumption, ContextPayload, RoutingDecision
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +32,25 @@ class ContextRouter:
     3. Fallback to default handler
     """
 
-    def __init__(self) -> None:
-        """Initialize the context router."""
-        # LLM classifier could be injected here for future use
-        self._use_llm_classification: bool = False
+    # Intent to handler mapping
+    INTENT_HANDLERS = {
+        "research": "research_handler",
+        "chat": "chat_handler",
+        "create": "create_handler",
+        "analyze": "analyze_handler",
+        "help": "help_handler",
+        "clear": "clear_handler",
+    }
+
+    def __init__(self, intent_decipherer: IntentDeciphererAgent | None = None) -> None:
+        """Initialize the context router.
+
+        Args:
+            intent_decipherer: Optional Intent Decipherer Agent instance.
+                            If None, uses singleton.
+        """
+        self._use_llm_classification: bool = True
+        self._intent_decipherer = intent_decipherer
 
     async def route(self, payload: ContextPayload) -> RoutingDecision:
         """Route the context payload to an appropriate handler.
@@ -97,23 +113,71 @@ class ContextRouter:
         )
 
     async def _route_via_llm(self, payload: ContextPayload) -> RoutingDecision:
-        """Route using LLM classification.
+        """Route using LLM classification via Intent Decipherer Agent.
 
-        This is a placeholder for future LLM-based classification.
-        When implemented, it will:
-        - Call the Gateway with the user input
-        - Classify the intent (research, chat, code, etc.)
-        - Return the appropriate handler
+        Analyzes user input to:
+        - Classify the primary intent
+        - Extract assumptions that need confirmation
+        - Map intent to appropriate handler
+        - Provide confidence scoring
 
         Args:
             payload: User context to classify.
 
         Returns:
-            RoutingDecision based on LLM classification.
+            RoutingDecision based on LLM classification with assumptions.
         """
-        # TODO: Implement LLM classification via Gateway
-        # For now, fall through to default
-        return self._route_fallback(payload)
+        if self._intent_decipherer is None:
+            self._intent_decipherer = get_intent_decipherer()
+
+        try:
+            result = await self._intent_decipherer.decipher(payload.text)
+
+            # Map intent to handler
+            intent_name = result.primary_intent.name.lower()
+            handler = self.INTENT_HANDLERS.get(intent_name, "chat_handler")
+
+            # Convert assumption dicts to Assumption objects
+            assumptions = [
+                Assumption(
+                    id=a.get("id", ""),
+                    text=a.get("text", ""),
+                    confidence=a.get("confidence", 0.5),
+                    category=a.get("category", "other"),
+                    explanation=a.get("explanation"),
+                )
+                for a in result.assumptions
+            ]
+
+            # Filter to only include assumptions below confidence threshold
+            # These need user confirmation
+            assumptions_needing_confirmation = [
+                a for a in assumptions if a.confidence < self._intent_decipherer.confidence_threshold
+            ]
+
+            logger.info(
+                f"LLM routed: {intent_name} -> {handler} (confidence: {result.primary_intent.confidence:.2f})",
+                extra={
+                    "intent": intent_name,
+                    "handler": handler,
+                    "confidence": result.primary_intent.confidence,
+                    "assumptions_count": len(assumptions_needing_confirmation),
+                    "should_auto_execute": result.should_auto_execute,
+                },
+            )
+
+            return RoutingDecision(
+                handler=handler,
+                confidence=result.primary_intent.confidence,
+                payload=payload,
+                reason=result.reasoning,
+                assumptions=assumptions_needing_confirmation,
+            )
+
+        except Exception as e:
+            logger.error(f"LLM classification failed: {e}", exc_info=True)
+            # Fall back to default handler on error
+            return self._route_fallback(payload)
 
     def _route_fallback(self, payload: ContextPayload) -> RoutingDecision:
         """Default fallback routing for unrecognized input.
@@ -137,13 +201,20 @@ class ContextRouter:
 _router: ContextRouter | None = None
 
 
-def get_context_router() -> ContextRouter:
+def get_context_router(
+    intent_decipherer: IntentDeciphererAgent | None = None,
+    force_new: bool = False,
+) -> ContextRouter:
     """Get the singleton context router instance.
+
+    Args:
+        intent_decipherer: Optional Intent Decipherer Agent to inject.
+        force_new: Force creation of a new instance.
 
     Returns:
         Context router instance.
     """
     global _router
-    if _router is None:
-        _router = ContextRouter()
+    if _router is None or force_new:
+        _router = ContextRouter(intent_decipherer=intent_decipherer)
     return _router

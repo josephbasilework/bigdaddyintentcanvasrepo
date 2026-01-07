@@ -67,22 +67,32 @@ class TestContextRouter:
 
     @pytest.mark.asyncio
     async def test_route_fallback_plain_text(self, router: ContextRouter) -> None:
-        """Test routing plain text without slash command."""
+        """Test routing plain text without slash command.
+
+        Now uses LLM classification (Intent Decipherer) by default.
+        When LLM fails (no gateway available), falls back to chat_handler
+        with confidence 0.5 from Intent Decipherer's fallback.
+        """
         payload = ContextPayload(text="Hello, how are you?")
         decision = await router.route(payload)
 
         assert decision.handler == "chat_handler"
-        assert decision.confidence == 0.3
-        assert "default" in decision.reason.lower()
+        # LLM classification is enabled, so confidence comes from Intent Decipherer
+        # When LLM fails, Intent Decipherer fallback returns 0.5
+        assert decision.confidence == 0.5
 
     @pytest.mark.asyncio
     async def test_route_fallback_question(self, router: ContextRouter) -> None:
-        """Test routing a question to default chat handler."""
+        """Test routing a question to default chat handler.
+
+        Now uses LLM classification (Intent Decipherer) by default.
+        """
         payload = ContextPayload(text="What is the capital of France?")
         decision = await router.route(payload)
 
         assert decision.handler == "chat_handler"
-        assert decision.confidence == 0.3
+        # LLM classification returns 0.5 when it falls back
+        assert decision.confidence == 0.5
 
     @pytest.mark.asyncio
     async def test_route_with_attachments(self, router: ContextRouter) -> None:
