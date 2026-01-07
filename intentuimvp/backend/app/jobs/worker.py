@@ -12,6 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from app.agents.judge_agent import JudgeSynthesis, get_judge_agent
 from app.agents.research_agent import ResearchReport, get_research_agent
 from app.gateway.client import GatewayClient, get_gateway_client
 from app.jobs.base import JobResult, JobType, get_redis_settings
@@ -208,97 +209,32 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
             query, max_steps=depth
         )
 
-        # Step 3: Synthesize all findings
-        synthesis_step = total_steps
+        # Step 3: Judge and synthesize using LLM-as-Judge workflow
+        judge_step = total_steps
         await progress_tracker.update_progress(
             job_id=job_id,
-            progress_percent=(synthesis_step / total_steps) * 100,
-            current_step="Synthesizing findings",
-            step_number=synthesis_step,
+            progress_percent=(judge_step / total_steps) * 100,
+            current_step="Judging and synthesizing perspectives",
+            step_number=judge_step,
             steps_total=total_steps,
         )
 
-        logger.info(f"[{job_id}] Synthesizing findings")
+        logger.info(f"[{job_id}] Running LLM-as-Judge evaluation")
 
-        # Build synthesis prompt
-        perspectives_text = "\n\n".join(
-            [
-                f"## {str(p.get('name', '')).upper()} PERSPECTIVE\n{p.get('analysis', '')}"
-                for p in perspective_results
-            ]
+        # Get Judge Agent and evaluate perspectives
+        judge_agent = get_judge_agent()
+        judge_synthesis: JudgeSynthesis = await judge_agent.judge(
+            query=query,
+            perspective_results=perspective_results,
         )
 
-        research_text = f"""## WEB RESEARCH
-**Summary**: {research_report.summary}
-
-**Key Points**:
-{chr(10).join(f"- {kp}" for kp in research_report.key_points)}
-
-**Detailed Findings**: {research_report.detailed_findings}
-"""
-
-        synthesis_prompt = f"""You are a Research Synthesis Specialist. Your task is to synthesize findings from multiple analytical perspectives and web research into a comprehensive, actionable report.
-
-**Research Query**: {query}
-
-**Perspectives Analysis**:
-{perspectives_text}
-
-**Web Research Findings**:
-{research_text}
-
-Please provide a synthesis that includes:
-1. **Executive Summary** (2-3 paragraphs)
-2. **Key Insights** (5-7 bullet points combining perspectives)
-3. **Recommendations** (actionable next steps)
-4. **Confidence Assessment** (0-1 scale with rationale)
-5. **Identified Risks** (by perspective)
-6. **Open Questions** (areas requiring further investigation)
-
-Return your response as a JSON object with the following structure:
-{{
-  "executive_summary": "...",
-  "key_insights": ["...", "..."],
-  "recommendations": ["...", "..."],
-  "confidence": 0.85,
-  "confidence_rationale": "...",
-  "risks": [{{"perspective": "...", "risk": "..."}}, ...],
-  "open_questions": ["...", "..."]
-}}"""
-
-        synthesis_content = await _generate_with_gateway(
-            gateway=gateway,
-            system_prompt="You are a Research Synthesis Specialist. Always respond with valid JSON.",
-            user_prompt=synthesis_prompt,
-            model="openai/gpt-4o",
-            temperature=0.5,
-        )
-
-        # Parse JSON response
-        import json
-
-        try:
-            synthesis_data = json.loads(synthesis_content)
-        except json.JSONDecodeError:
-            # Fallback if JSON parsing fails
-            logger.warning(f"[{job_id}] Failed to parse synthesis JSON, using structured fallback")
-            synthesis_data = {
-                "executive_summary": synthesis_content[:500],
-                "key_insights": ["Synthesis completed"],
-                "recommendations": ["Review findings"],
-                "confidence": 0.6,
-                "confidence_rationale": "Structured parsing failed",
-                "risks": [],
-                "open_questions": [],
-            }
-
-        # Compile final result
+        # Compile final result with judge synthesis
         result_data = {
             "query": query,
             "depth": depth,
             "perspectives": perspective_results,
             "web_research": research_report.model_dump(),
-            "synthesis": synthesis_data,
+            "judge_synthesis": judge_synthesis.model_dump(),
             "timestamp": datetime.now(UTC).isoformat(),
             "job_id": job_id,
         }
@@ -421,10 +357,10 @@ async def perspective_gather_job(
 async def synthesis_job(
     ctx: dict[str, Any], query: str, perspective_results: list[dict[str, Any]]
 ) -> JobResult:
-    """Synthesize results from multiple perspectives.
+    """Synthesize results from multiple perspectives using LLM-as-Judge workflow.
 
-    This job takes results from multiple perspective analyses and synthesizes
-    them into a comprehensive, actionable report.
+    This job uses the Judge Agent to evaluate, score, and synthesize results
+    from multiple perspective analyses into a comprehensive, actionable report.
 
     Args:
         ctx: ARQ execution context
@@ -450,103 +386,47 @@ async def synthesis_job(
         parameters={"query": query, "perspective_count": len(perspective_results)},
     )
 
-    logger.info(f"[{job_id}] Synthesizing {len(perspective_results)} perspective results")
+    logger.info(f"[{job_id}] Synthesizing {len(perspective_results)} perspective results using Judge Agent")
 
     # Validate input before try/catch to allow ValueError to propagate
     if not perspective_results:
         raise ValueError("No perspective results to synthesize")
 
     try:
-        # Update progress - starting synthesis
+        # Update progress - starting evaluation
         await progress_tracker.update_progress(
             job_id=job_id,
             progress_percent=10,
-            current_step="Analyzing perspective results",
+            current_step="Evaluating perspectives with Judge Agent",
             step_number=1,
             steps_total=2,
         )
 
-        # Build perspectives summary
-        perspectives_text = "\n\n".join(
-            [
-                f"## {p.get('display_name', p.get('name', 'Unknown')).upper()}\n{p.get('analysis', '')}"
-                for p in perspective_results
-            ]
+        # Use Judge Agent for evaluation and synthesis
+        judge_agent = get_judge_agent()
+        judge_synthesis: JudgeSynthesis = await judge_agent.judge(
+            query=query,
+            perspective_results=perspective_results,
         )
 
-        synthesis_prompt = f"""You are a Research Synthesis Specialist. Your task is to synthesize findings from multiple analytical perspectives into a comprehensive, actionable report.
-
-**Research Query**: {query}
-
-**Perspectives Analysis**:
-{perspectives_text}
-
-Please provide a synthesis that includes:
-1. **Executive Summary** (2-3 paragraphs)
-2. **Key Insights** (5-7 bullet points combining perspectives)
-3. **Recommendations** (actionable next steps)
-4. **Confidence Assessment** (0-1 scale with rationale)
-5. **Identified Risks** (by perspective)
-6. **Open Questions** (areas requiring further investigation)
-
-Return your response as a JSON object with the following structure:
-{{
-  "executive_summary": "...",
-  "key_insights": ["...", "..."],
-  "recommendations": ["...", "..."],
-  "confidence": 0.85,
-  "confidence_rationale": "...",
-  "risks": [{{"perspective": "...", "risk": "..."}}, ...],
-  "open_questions": ["...", "..."]
-}}
-
-Ensure your response is valid JSON."""
-
-        # Update progress - generating synthesis
+        # Update progress - synthesis complete
         await progress_tracker.update_progress(
             job_id=job_id,
-            progress_percent=50,
-            current_step="Generating synthesis",
+            progress_percent=90,
+            current_step="Synthesis complete",
             step_number=2,
             steps_total=2,
         )
 
-        gateway = get_gateway_client()
-        content = await _generate_with_gateway(
-            gateway=gateway,
-            system_prompt="You are a Research Synthesis Specialist. Always respond with valid JSON.",
-            user_prompt=synthesis_prompt,
-            model="openai/gpt-4o",
-            temperature=0.5,
-        )
-
-        # Parse JSON response
-        import json
-
-        try:
-            synthesis_data = json.loads(content)
-        except json.JSONDecodeError:
-            # Fallback if JSON parsing fails
-            logger.warning(f"[{job_id}] Failed to parse synthesis JSON, using structured fallback")
-            synthesis_data = {
-                "executive_summary": content[:500],
-                "key_insights": ["Synthesis completed"],
-                "recommendations": ["Review findings"],
-                "confidence": 0.6,
-                "confidence_rationale": "Structured parsing failed",
-                "risks": [],
-                "open_questions": [],
-            }
-
         result_data = {
             "query": query,
             "perspective_count": len(perspective_results),
-            "synthesis": synthesis_data,
+            "judge_synthesis": judge_synthesis.model_dump(),
             "timestamp": datetime.now(UTC).isoformat(),
             "job_id": job_id,
         }
 
-        logger.info(f"[{job_id}] Synthesis completed successfully")
+        logger.info(f"[{job_id}] Judge-based synthesis completed successfully")
 
         # Mark job as complete
         await progress_tracker.complete_job(job_id=job_id, result_data=result_data)
