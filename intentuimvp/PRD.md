@@ -27,7 +27,6 @@
 
 | Resource | Link | Purpose |
 |----------|------|---------|
-| BMAD-METHOD | https://github.com/bmad-code-org/BMAD-METHOD | Repo initialization methodology |
 | PydanticAI | https://ai.pydantic.dev/ | Agent framework with structured outputs |
 | Pydantic AI Gateway | https://ai.pydantic.dev/ | **GATEWAY-ONLY** - All inference through this API |
 | AG-UI Protocol | https://docs.ag-ui.com/introduction | Agent-UI interaction protocol |
