@@ -25,7 +25,7 @@ class Settings(BaseSettings):
         ..., description="Pydantic AI Gateway API key (required)"
     )
     pydantic_gateway_base_url: str = Field(
-        default="https://api.pydantic-ai.com/v1",
+        default="https://gateway.pydantic.dev/proxy/openai/",
         description="Pydantic AI Gateway base URL",
     )
 

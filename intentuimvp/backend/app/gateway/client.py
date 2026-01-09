@@ -14,10 +14,6 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Gateway base URL
-GATEWAY_BASE_URL = "https://api.pydantic.ai/gateway"
-
-
 class GatewayClientError(Exception):
     """Base exception for Gateway client errors."""
 
@@ -34,7 +30,7 @@ class GatewayClient:
     def __init__(
         self,
         api_key: str | None = None,
-        base_url: str = GATEWAY_BASE_URL,
+        base_url: str | None = None,
         timeout: float = 60.0,
         max_retries: int = 3,
     ) -> None:
@@ -47,7 +43,7 @@ class GatewayClient:
             max_retries: Maximum number of retry attempts.
         """
         self.api_key = api_key or settings.pydantic_gateway_api_key
-        self.base_url = base_url.rstrip("/")
+        self.base_url = (base_url or settings.pydantic_gateway_base_url).rstrip("/")
         self.timeout = timeout
         self.max_retries = max_retries
         self._client: httpx.AsyncClient | None = None
