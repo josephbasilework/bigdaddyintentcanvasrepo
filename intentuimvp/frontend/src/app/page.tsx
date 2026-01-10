@@ -84,45 +84,47 @@ export default function Home() {
   };
 
   return (
-    <Canvas>
-      <CanvasWorkspace />
+    <>
+      <Canvas>
+        <CanvasWorkspace />
+        {commands.length > 0 && (
+          <div style={{ position: "absolute", top: "20px", left: "20px", color: "#fff" }}>
+            <h3>Commands:</h3>
+            <ul>
+              {commands.map((cmd, i) => (
+                <li key={i}>{cmd}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {routingError && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: "100px",
+              left: "50%",
+              transform: "translateX(-50%)",
+              padding: "1rem",
+              backgroundColor: "#7f1d1d",
+              border: "1px solid #ef4444",
+              borderRadius: "0.5rem",
+              color: "#fecaca",
+            }}
+          >
+            Error: {routingError}
+          </div>
+        )}
+        {assumptions.length > 0 && (
+          <AssumptionsPanel
+            assumptions={assumptions}
+            onAccept={handleAcceptAssumption}
+            onReject={handleRejectAssumption}
+            onConfirm={handleConfirmAssumptions}
+            onDismiss={handleDismissAssumptions}
+          />
+        )}
+      </Canvas>
       <FloatingInput onSubmit={handleCommandSubmit} placeholder="Type a command..." />
-      {commands.length > 0 && (
-        <div style={{ position: "absolute", top: "20px", left: "20px", color: "#fff" }}>
-          <h3>Commands:</h3>
-          <ul>
-            {commands.map((cmd, i) => (
-              <li key={i}>{cmd}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {routingError && (
-        <div
-          style={{
-            position: "absolute",
-            bottom: "100px",
-            left: "50%",
-            transform: "translateX(-50%)",
-            padding: "1rem",
-            backgroundColor: "#7f1d1d",
-            border: "1px solid #ef4444",
-            borderRadius: "0.5rem",
-            color: "#fecaca",
-          }}
-        >
-          Error: {routingError}
-        </div>
-      )}
-      {assumptions.length > 0 && (
-        <AssumptionsPanel
-          assumptions={assumptions}
-          onAccept={handleAcceptAssumption}
-          onReject={handleRejectAssumption}
-          onConfirm={handleConfirmAssumptions}
-          onDismiss={handleDismissAssumptions}
-        />
-      )}
-    </Canvas>
+    </>
   );
 }

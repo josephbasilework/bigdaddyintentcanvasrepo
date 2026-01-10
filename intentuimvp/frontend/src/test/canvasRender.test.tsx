@@ -62,6 +62,14 @@ describe('workspace canvas', () => {
     expect(screen.getByText('Your canvas is empty')).toBeInTheDocument();
   });
 
+  it('renders the floating command input', async () => {
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    expect(screen.getByRole('textbox', { name: /command input/i })).toBeInTheDocument();
+  });
+
   it('falls back to an empty state when workspace data is corrupted', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,
