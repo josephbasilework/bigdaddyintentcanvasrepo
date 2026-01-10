@@ -21,6 +21,28 @@ id = "generic-api-key"
 regex = '''(?i)(api[_-]?key|apikey|secret|token)\s*[:=]\s*['"]?[a-zA-Z0-9_-]{20,}'''
 keywords = ["api_key", "apikey", "secret", "token"]
 
+  [[rules.allowlists]]
+  description = "Allow placeholder API keys in backend env example."
+  condition = "AND"
+  paths = [
+    '''intentuimvp/backend/\.env\.example''',
+  ]
+  regexTarget = "match"
+  regexes = [
+    '''your-[a-z0-9-]*api-key-here''',
+  ]
+
+  [[rules.allowlists]]
+  description = "Allow placeholder API key reference in PRD."
+  condition = "AND"
+  paths = [
+    '''intentuimvp/PRD\.md''',
+  ]
+  regexTarget = "match"
+  regexes = [
+    '''PYDANTIC_GATEWAY_API_KEY''',
+  ]
+
 [[rules]]
 description = "AWS Access Key"
 id = "aws-access-key"
