@@ -8,7 +8,9 @@ from logging import getLogger
 
 from sqlalchemy.orm import Session
 
-from app.models.canvas import Canvas, Edge, Node
+from app.models.canvas import Canvas
+from app.models.edge import Edge
+from app.models.node import Node
 
 logger = getLogger(__name__)
 
