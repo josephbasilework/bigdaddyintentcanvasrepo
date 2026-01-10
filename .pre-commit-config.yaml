@@ -46,6 +46,12 @@ repos:
   # Node.js / JavaScript / TypeScript
   - repo: local
     hooks:
+      - id: gateway-import-check
+        name: gateway-import-check
+        entry: python3 intentuimvp/backend/scripts/check_gateway_imports.py
+        language: system
+        pass_filenames: false
+        always_run: true
       - id: eslint
         name: eslint
         entry: bash -c 'cd intentuimvp/frontend && npm run lint'
