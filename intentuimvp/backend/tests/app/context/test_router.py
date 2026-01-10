@@ -217,6 +217,31 @@ class TestContextRouter:
         assert "circuit breaker" in decision.reason.lower()
 
     @pytest.mark.asyncio
+    async def test_route_circuit_breaker_resets_after_window(self, monkeypatch) -> None:
+        """Test circuit breaker resumes LLM classification after the window."""
+        fake = FakeIntentDecipherer(raises=True)
+        router = ContextRouter(
+            intent_decipherer=fake,
+            circuit_breaker_window=10.0,
+        )
+        payload = ContextPayload(text="Analyze quarterly data")
+        now = 1000.0
+
+        monkeypatch.setattr("app.context.router.time.monotonic", lambda: now)
+
+        for _ in range(3):
+            await router.route(payload)
+
+        assert fake.calls == 3
+
+        await router.route(payload)
+        assert fake.calls == 3
+
+        now += 11.0
+        await router.route(payload)
+        assert fake.calls == 4
+
+    @pytest.mark.asyncio
     async def test_route_keyword_fallback_no_match(self) -> None:
         """Test clarification response when keyword fallback finds no match."""
         fake = FakeIntentDecipherer(raises=True)
