@@ -70,16 +70,6 @@ interface CanvasState {
 
 // Create the store
 export const useCanvasStore = create<CanvasState>((set, get) => {
-  // Helper to record history (excluding setNodes/setEdges which are for bulk loading)
-  const recordHistory = () => {
-    const state = get();
-    return {
-      nodes: state.nodes,
-      edges: state.edges,
-      documents: state.documents,
-    };
-  };
-
   // Helper to create history-aware setter
   const withHistory = (updater: (state: CanvasState) => Partial<CanvasState>) => {
     set((state) => {

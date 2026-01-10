@@ -34,7 +34,6 @@ export function Edge({ edge, sourceNode, targetNode }: EdgeProps) {
     // TODO: Implement curved bezier lines for better visuals
     const dx = targetCenterX - sourceCenterX;
     const dy = targetCenterY - sourceCenterY;
-    const distance = Math.sqrt(dx * dx + dy * dy);
 
     // Calculate edge position (from center to center)
     // The actual SVG coordinates will be relative to the canvas

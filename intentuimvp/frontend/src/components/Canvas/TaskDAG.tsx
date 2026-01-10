@@ -42,7 +42,6 @@ export function TaskDAG({
 }: TaskDAGProps) {
   // Calculate layout positions using topological sort
   const layout = useMemo(() => {
-    const taskMap = new Map(tasks.map((t) => [t.id, t]));
     const depMap = new Map<string, string[]>();
 
     // Build adjacency list for dependencies

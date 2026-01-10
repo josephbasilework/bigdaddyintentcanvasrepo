@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act } from 'react';
-import { usePreferencesStore, type Preferences } from './preferencesStore';
+import { usePreferencesStore } from './preferencesStore';
 
 // Mock fetch globally
 const mockFetch = vi.fn();

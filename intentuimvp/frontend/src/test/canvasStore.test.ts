@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { useCanvasStore, CanvasNode, CanvasEdge } from '../state/canvasStore';
+import { useCanvasStore } from '../state/canvasStore';
 
 describe('canvasStore', () => {
   // Reset store state before each test
