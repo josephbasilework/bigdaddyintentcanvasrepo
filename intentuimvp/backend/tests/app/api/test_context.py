@@ -3,12 +3,43 @@
 import pytest
 from fastapi import FastAPI, testclient
 
+from app.agents.intent_decipherer import IntentClassification, IntentDecipheringResult
 from app.api.context import router as context_router
+from app.context.router import ContextRouter
+
+
+class FakeIntentDecipherer:
+    """Stub intent decipherer for API tests."""
+
+    def __init__(self, result: IntentDecipheringResult) -> None:
+        self.result = result
+        self.confidence_threshold = 0.8
+
+    async def decipher(self, text: str) -> IntentDecipheringResult:
+        return self.result
+
+
+def build_result(intent_name: str, confidence: float) -> IntentDecipheringResult:
+    """Helper to create an IntentDecipheringResult for tests."""
+    primary = IntentClassification(
+        name=intent_name,
+        confidence=confidence,
+        description=f"{intent_name} intent",
+    )
+    return IntentDecipheringResult(
+        primary_intent=primary,
+        should_auto_execute=False,
+        reasoning="LLM ok",
+    )
 
 
 @pytest.fixture
-def app() -> FastAPI:
+def app(monkeypatch) -> FastAPI:
     """Create a test FastAPI app with the context router."""
+    fake = FakeIntentDecipherer(result=build_result("chat", 0.5))
+    router = ContextRouter(intent_decipherer=fake)
+    monkeypatch.setattr("app.api.context.get_context_router", lambda: router)
+
     app = FastAPI()
     app.include_router(context_router)
     return app
@@ -48,12 +79,7 @@ class TestContextEndpoint:
         assert data["confidence"] == 1.0
 
     def test_submit_context_plain_text(self, client: testclient.TestClient) -> None:
-        """Test submitting plain text without slash command.
-
-        Now uses LLM classification (Intent Decipherer) by default.
-        When LLM fails (no gateway available), falls back to chat_handler
-        with confidence 0.5 from Intent Decipherer's fallback.
-        """
+        """Test submitting plain text without slash command."""
         response = client.post(
             "/api/context",
             json={"text": "Hello, how are you?", "attachments": []},
@@ -61,7 +87,6 @@ class TestContextEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["handler"] == "chat_handler"
-        # LLM classification is enabled, confidence from Intent Decipherer
         assert data["confidence"] == 0.5
         assert data["status"] == "routed"
 
