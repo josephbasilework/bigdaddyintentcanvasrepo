@@ -13,6 +13,11 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _empty_workspace_response() -> dict:
+    """Return a blank workspace response payload."""
+    return EmptyWorkspaceResponse().model_dump()
+
+
 def get_current_user() -> str:
     """Get current user from authentication.
 
@@ -52,10 +57,20 @@ async def get_workspace(
 
     if canvas is None:
         logger.info(f"No canvas found for user {user_id}, returning empty workspace")
-        return EmptyWorkspaceResponse().model_dump()
+        return _empty_workspace_response()
 
+    try:
+        payload = repo.serialize_canvas(canvas, include_edges=True)
+    except (TypeError, ValueError) as e:
+        logger.error(
+            f"Corrupted canvas state for user {user_id}; returning empty workspace: {e}",
+            exc_info=True,
+        )
+        return _empty_workspace_response()
+
+    payload.setdefault("documents", [])
     logger.info(f"Retrieved canvas {canvas.id} for user {user_id}")
-    return repo.serialize_canvas(canvas)
+    return payload
 
 
 @router.put("/api/workspace", response_model=CanvasResponse)
@@ -84,6 +99,7 @@ async def save_workspace(
         repo = CanvasRepository(db)
         canvas_data = {
             "nodes": [node.model_dump() for node in payload.nodes],
+            "edges": payload.edges,
         }
 
         canvas = repo.save_canvas(
@@ -92,8 +108,10 @@ async def save_workspace(
             canvas_name=payload.name,
         )
 
+        canvas_payload = repo.serialize_canvas(canvas, include_edges=True)
+        canvas_payload.setdefault("documents", [])
         logger.info(f"Saved canvas {canvas.id} for user {user_id}")
-        return repo.serialize_canvas(canvas)
+        return canvas_payload
 
     except Exception as e:
         logger.error(f"Failed to save workspace for user {user_id}: {e}", exc_info=True)

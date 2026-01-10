@@ -7,10 +7,11 @@ from fastapi import testclient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-# Import models to register them with Base
-import app.models.canvas  # noqa: F401 - Side-effect import to register models
 from app.api.workspace import router as workspace_router
 from app.database import Base, get_db
+from app.models.canvas import Canvas
+from app.models.edge import Edge, RelationType
+from app.models.node import Node, NodeType
 
 
 @pytest.fixture
@@ -68,6 +69,90 @@ class TestWorkspaceEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert data["nodes"] == []
+        assert data["name"] == "default"
+
+    def test_get_workspace_includes_edges(
+        self,
+        client: testclient.TestClient,
+        test_engine,
+    ) -> None:
+        """Test GET /api/workspace includes persisted edges."""
+        test_session_local = sessionmaker(bind=test_engine)
+        db = test_session_local()
+        try:
+            canvas = Canvas(user_id="default_user", name="edge_test")
+            db.add(canvas)
+            db.commit()
+            db.refresh(canvas)
+
+            node1 = Node(
+                canvas_id=canvas.id,
+                type=NodeType.TEXT,
+                label="Node 1",
+                position='{"x": 10, "y": 20, "z": 0}',
+            )
+            node2 = Node(
+                canvas_id=canvas.id,
+                type=NodeType.TEXT,
+                label="Node 2",
+                position='{"x": 30, "y": 40, "z": 0}',
+            )
+            db.add_all([node1, node2])
+            db.commit()
+            db.refresh(node1)
+            db.refresh(node2)
+            node1_id = node1.id
+            node2_id = node2.id
+
+            edge = Edge(
+                canvas_id=canvas.id,
+                from_node_id=node1_id,
+                to_node_id=node2_id,
+                relation_type=RelationType.SUPPORTS,
+            )
+            db.add(edge)
+            db.commit()
+        finally:
+            db.close()
+
+        response = client.get("/api/workspace")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["edges"]) == 1
+        assert data["edges"][0]["fromNodeId"] == node1_id
+        assert data["edges"][0]["toNodeId"] == node2_id
+
+    def test_get_workspace_corrupted_state_returns_blank(
+        self,
+        client: testclient.TestClient,
+        test_engine,
+    ) -> None:
+        """Test GET /api/workspace returns blank state on corrupted data."""
+        test_session_local = sessionmaker(bind=test_engine)
+        db = test_session_local()
+        try:
+            canvas = Canvas(user_id="default_user", name="corrupt_test")
+            db.add(canvas)
+            db.commit()
+            db.refresh(canvas)
+
+            node = Node(
+                canvas_id=canvas.id,
+                type=NodeType.TEXT,
+                label="Broken Node",
+                position="not-json",
+            )
+            db.add(node)
+            db.commit()
+        finally:
+            db.close()
+
+        response = client.get("/api/workspace")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["nodes"] == []
+        assert data["edges"] == []
+        assert data["documents"] == []
         assert data["name"] == "default"
 
     def test_save_workspace_new(self, client: testclient.TestClient) -> None:
