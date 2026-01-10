@@ -170,9 +170,9 @@ class TestContextEndpoint:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["handler"] == "chat_handler"
+        assert data["handler"] == "clarification_handler"
         assert data["confidence"] == 0.5
-        assert data["status"] == "routed"
+        assert data["status"] == "clarification_required"
 
     def test_submit_context_with_attachments(self, client: testclient.TestClient) -> None:
         """Test submitting context with attachments."""

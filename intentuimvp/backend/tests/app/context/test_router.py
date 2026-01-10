@@ -135,6 +135,19 @@ class TestContextRouter:
         assert fake.calls == 1
 
     @pytest.mark.asyncio
+    async def test_route_llm_low_confidence_requests_clarification(self) -> None:
+        """Test low-confidence LLM intent requests clarification."""
+        fake = FakeIntentDecipherer(result=build_result("research", 0.65))
+        router = ContextRouter(intent_decipherer=fake)
+        payload = ContextPayload(text="Research AI safety")
+        decision = await router.route(payload)
+
+        assert decision.handler == "clarification_handler"
+        assert decision.confidence == 0.65
+        assert "below threshold" in decision.reason.lower()
+        assert fake.calls == 1
+
+    @pytest.mark.asyncio
     async def test_route_llm_tie_requires_disambiguation(self) -> None:
         """Test tie in confidence prompts disambiguation."""
         alternatives = [

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.agents.intent_decipherer import IntentDeciphererAgent, get_intent_decipherer
 from app.api.assumption_store import get_assumption_store
 from app.context.models import ContextPayload
-from app.context.router import get_context_router
+from app.context.router import ContextRouter, get_context_router
 from app.database import get_db
 from app.models.intent import AssumptionResolutionDB
 
@@ -205,12 +205,18 @@ async def submit_context(payload: ContextPayload) -> ContextResponse:
             for a in decision.assumptions
         ]
 
+        status_value = "routed"
+        if decision.handler == ContextRouter.DISAMBIGUATION_HANDLER:
+            status_value = "clarification_required"
+        elif decision.assumptions:
+            status_value = "awaiting_assumptions"
+
         return ContextResponse(
             handler=decision.handler,
             confidence=decision.confidence,
             reason=decision.reason,
             assumptions=assumption_responses,
-            status="routed" if not decision.assumptions else "awaiting_assumptions",
+            status=status_value,
             session_id=session_id,
             should_auto_execute=should_auto_execute,
         )

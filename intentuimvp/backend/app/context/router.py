@@ -143,6 +143,7 @@ class ContextRouter:
 
     DEFAULT_HANDLER = "chat_handler"
     DISAMBIGUATION_HANDLER = "clarification_handler"
+    DEFAULT_CLARIFICATION_CONFIDENCE_THRESHOLD = 0.7
 
     def __init__(
         self,
@@ -151,6 +152,7 @@ class ContextRouter:
         classification_timeout: float = 0.5,
         circuit_breaker_threshold: int = 3,
         circuit_breaker_window: float = 30.0,
+        clarification_confidence_threshold: float = DEFAULT_CLARIFICATION_CONFIDENCE_THRESHOLD,
     ) -> None:
         """Initialize the context router.
 
@@ -166,6 +168,7 @@ class ContextRouter:
         self._classification_timeout = classification_timeout
         self._circuit_breaker_threshold = circuit_breaker_threshold
         self._circuit_breaker_window = circuit_breaker_window
+        self._clarification_confidence_threshold = clarification_confidence_threshold
         self._consecutive_failures = 0
         self._circuit_open_until: float | None = None
 
@@ -321,6 +324,29 @@ class ContextRouter:
             payload,
             priority_label="LLM",
         )
+
+        if decision.confidence < self._clarification_confidence_threshold:
+            reason = (
+                f"LLM confidence {decision.confidence:.2f} below threshold "
+                f"{self._clarification_confidence_threshold:.2f}; request clarification. "
+                f"{decision.reason}"
+            )
+            logger.info(
+                "LLM confidence below threshold; requesting clarification",
+                extra={
+                    "handler": self.DISAMBIGUATION_HANDLER,
+                    "confidence": decision.confidence,
+                    "assumptions_count": len(decision.assumptions),
+                    "should_auto_execute": result.should_auto_execute,
+                },
+            )
+            return RoutingDecision(
+                handler=self.DISAMBIGUATION_HANDLER,
+                confidence=decision.confidence,
+                payload=payload,
+                reason=reason,
+                assumptions=decision.assumptions,
+            )
 
         logger.info(
             f"LLM routed -> {decision.handler} (confidence: {decision.confidence:.2f})",
