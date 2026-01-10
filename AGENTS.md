@@ -37,3 +37,6 @@ bd sync               # Sync with git
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
+
+## Notes learned while working beads
+- 2026-01-09 22:31 EST: `git commit` runs pre-commit hooks (gitleaks, ruff, mypy, eslint, etc.), so expect checks to run on commit.
