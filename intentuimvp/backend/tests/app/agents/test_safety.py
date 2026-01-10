@@ -139,12 +139,12 @@ class TestContentFilter:
         """Test filtering credential patterns."""
         filter_obj = ContentFilter()
 
-        text = "API_KEY: sk-proj-abc123XYZ"
+        text = "API_KEY: testkey1"
         filtered, detected = filter_obj.filter(text, redact=True)
 
         # Credential pattern should match
         assert "CREDENTIAL" in detected
-        assert "sk-proj-abc123XYZ" not in filtered  # Should be redacted
+        assert "testkey1" not in filtered  # Should be redacted
 
     def test_filter_no_redaction(self):
         """Test filtering without redaction."""
