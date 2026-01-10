@@ -21,6 +21,12 @@ from app.schemas.mcp import (
     MCPToolExecuteResponse,
     MCPToolsListResponse,
 )
+from app.schemas.node import (
+    NodeCreateRequest,
+    NodeListResponse,
+    NodeResponse,
+    NodeUpdateRequest,
+)
 from app.schemas.preferences import (
     DefaultPreferencesResponse,
     PreferencesData,
@@ -33,6 +39,10 @@ __all__ = [
     "CanvasResponse",
     "NodeData",
     "WorkspaceSaveRequest",
+    "NodeCreateRequest",
+    "NodeUpdateRequest",
+    "NodeResponse",
+    "NodeListResponse",
     "PreferencesData",
     "PreferencesResponse",
     "PreferencesSaveRequest",
