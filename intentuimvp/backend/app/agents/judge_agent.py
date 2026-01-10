@@ -671,13 +671,13 @@ Create a comprehensive synthesis as valid JSON."""
 _agent: JudgeAgent | None = None
 
 
-def get_judge_agent() -> JudgeAgent:
+def get_judge_agent(gateway: GatewayClient | None = None) -> JudgeAgent:
     """Get the singleton Judge Agent instance.
 
     Returns:
         Judge Agent instance.
     """
     global _agent
-    if _agent is None:
-        _agent = JudgeAgent()
+    if _agent is None or gateway is not None:
+        _agent = JudgeAgent(gateway=gateway)
     return _agent

@@ -1,5 +1,6 @@
 """Database connection and session management."""
 
+import os
 from collections.abc import AsyncGenerator, Generator
 
 from sqlalchemy import create_engine
@@ -13,6 +14,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 from app.config import get_settings
 
 settings = get_settings()
+database_url = os.getenv("INTENTUI_TEST_DATABASE_URL") or settings.database_url
 
 
 class Base(DeclarativeBase):
@@ -22,7 +24,7 @@ class Base(DeclarativeBase):
 
 
 # Convert sync URL to async URL
-async_database_url = settings.database_url.replace(
+async_database_url = database_url.replace(
     "sqlite://", "sqlite+aiosqlite://"
 ).replace(
     "postgresql://", "postgresql+asyncpg://"
@@ -44,8 +46,8 @@ AsyncSessionLocal = async_sessionmaker(
 
 # Create sync engine (for backwards compatibility)
 engine = create_engine(
-    settings.database_url,
-    connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
+    database_url,
+    connect_args={"check_same_thread": False} if database_url.startswith("sqlite") else {},
     echo=settings.debug,
 )
 

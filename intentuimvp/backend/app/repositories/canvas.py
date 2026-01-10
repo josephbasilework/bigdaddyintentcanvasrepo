@@ -1,40 +1,57 @@
 """Repository for canvas and node operations."""
 
 import json
-import random
-import string
-import time
 from logging import getLogger
 
 from sqlalchemy.orm import Session
 
 from app.models.canvas import Canvas
-from app.models.edge import Edge
-from app.models.node import Node
+from app.models.edge import Edge, RelationType
+from app.models.node import Node, NodeType
 
 logger = getLogger(__name__)
 
 
-def _generate_node_id() -> str:
-    """Generate a unique node ID.
+def _coerce_node_type(value: str | NodeType | None) -> NodeType:
+    if value is None:
+        return NodeType.TEXT
+    if isinstance(value, NodeType):
+        return value
+    try:
+        return NodeType(value)
+    except ValueError:
+        return NodeType.TEXT
 
-    Returns:
-        A unique node ID string
-    """
-    timestamp = int(time.time() * 1000)
-    random_str = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
-    return f"node-{timestamp}-{random_str}"
+
+def _coerce_relation_type(value: str | RelationType | None) -> RelationType:
+    if value is None:
+        return RelationType.DEPENDS_ON
+    if isinstance(value, RelationType):
+        return value
+    try:
+        return RelationType(value)
+    except ValueError:
+        return RelationType.DEPENDS_ON
 
 
-def _generate_edge_id() -> str:
-    """Generate a unique edge ID.
+def _position_from_node(node_data: dict) -> dict:
+    position = node_data.get("position")
+    if isinstance(position, dict):
+        return position
+    return {
+        "x": node_data.get("x", 0),
+        "y": node_data.get("y", 0),
+        "z": node_data.get("z", 0),
+    }
 
-    Returns:
-        A unique edge ID string
-    """
-    timestamp = int(time.time() * 1000)
-    random_str = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
-    return f"edge-{timestamp}-{random_str}"
+
+def _metadata_from_node(node_data: dict) -> dict | None:
+    metadata = (
+        node_data.get("metadata")
+        or node_data.get("node_metadata")
+        or node_data.get("nodeMetadata")
+    )
+    return metadata if isinstance(metadata, dict) else None
 
 
 class CanvasRepository:
@@ -125,54 +142,56 @@ class CanvasRepository:
             self.db.flush()  # Get the ID before adding nodes
         else:
             # Delete existing nodes and edges (cascade delete)
-            self.db.query(Node).filter(Node.canvas_id == canvas.id).delete()
             self.db.query(Edge).filter(Edge.canvas_id == canvas.id).delete()
+            self.db.query(Node).filter(Node.canvas_id == canvas.id).delete()
             canvas.name = canvas_name
 
         # Add new nodes
         nodes_data = canvas_data.get("nodes", [])
         for node_data in nodes_data:
-            # Generate node_id if not provided
-            node_id = node_data.get("id", "")
-            if not node_id:
-                node_id = _generate_node_id()
-
-            # Get title from either "title" or "label" for backwards compatibility
-            title = node_data.get("title") or node_data.get("label", "")
-
-            # Convert metadata to JSON string if present
-            node_metadata = None
-            if node_data.get("metadata"):
-                node_metadata = json.dumps(node_data["metadata"])
+            position = _position_from_node(node_data)
+            node_metadata = _metadata_from_node(node_data)
+            node_type = _coerce_node_type(node_data.get("type"))
 
             node = Node(
-                node_id=node_id,
                 canvas_id=canvas.id,
-                type=node_data.get("type", "text"),
-                title=title,
-                content=node_data.get("content"),
-                node_metadata=node_metadata,
-                x=node_data.get("x", 0),
-                y=node_data.get("y", 0),
-                z=node_data.get("z", 0),
+                type=node_type,
+                label=node_data.get("label", ""),
+                position=json.dumps(position),
+                node_metadata=json.dumps(node_metadata) if node_metadata else None,
             )
             self.db.add(node)
 
         # Add new edges
         edges_data = canvas_data.get("edges", [])
         for edge_data in edges_data:
-            # Generate edge_id if not provided
-            edge_id = edge_data.get("id", "")
-            if not edge_id:
-                edge_id = _generate_edge_id()
+            from_node_id = (
+                edge_data.get("fromNodeId")
+                or edge_data.get("sourceNodeId")
+                or edge_data.get("from_node_id")
+            )
+            to_node_id = (
+                edge_data.get("toNodeId")
+                or edge_data.get("targetNodeId")
+                or edge_data.get("to_node_id")
+            )
+            if from_node_id is None or to_node_id is None:
+                continue
+            try:
+                from_node_id = int(from_node_id)
+                to_node_id = int(to_node_id)
+            except (TypeError, ValueError):
+                continue
 
             edge = Edge(
-                edge_id=edge_id,
                 canvas_id=canvas.id,
-                source_node_id=edge_data.get("sourceNodeId", ""),
-                target_node_id=edge_data.get("targetNodeId", ""),
-                label=edge_data.get("label"),
-                type=edge_data.get("type", "solid"),
+                from_node_id=from_node_id,
+                to_node_id=to_node_id,
+                relation_type=_coerce_relation_type(
+                    edge_data.get("relationType")
+                    or edge_data.get("relation_type")
+                    or edge_data.get("type")
+                ),
             )
             self.db.add(edge)
 
@@ -183,6 +202,47 @@ class CanvasRepository:
             f"with {len(nodes_data)} nodes and {len(edges_data)} edges"
         )
         return canvas
+
+    def serialize_canvas(self, canvas: Canvas, *, include_edges: bool = False) -> dict:
+        """Serialize canvas with node positions for API and backups."""
+        nodes = []
+        for node in sorted(canvas.nodes, key=lambda n: n.id):
+            position = node.get_position()
+            nodes.append(
+                {
+                    "id": node.id,
+                    "label": node.label,
+                    "type": node.type,
+                    "x": position.get("x", 0),
+                    "y": position.get("y", 0),
+                    "z": position.get("z", 0),
+                    "metadata": node.get_metadata(),
+                    "created_at": node.created_at.isoformat(),
+                }
+            )
+
+        payload = {
+            "id": canvas.id,
+            "user_id": canvas.user_id,
+            "name": canvas.name,
+            "created_at": canvas.created_at.isoformat(),
+            "updated_at": canvas.updated_at.isoformat(),
+            "nodes": nodes,
+        }
+
+        if include_edges:
+            payload["edges"] = [
+                {
+                    "id": edge.id,
+                    "fromNodeId": edge.from_node_id,
+                    "toNodeId": edge.to_node_id,
+                    "relationType": edge.relation_type,
+                    "created_at": edge.created_at.isoformat(),
+                }
+                for edge in sorted(canvas.edges, key=lambda e: e.id)
+            ]
+
+        return payload
 
     def delete_canvas(self, canvas_id: int) -> bool:
         """Delete canvas by ID.

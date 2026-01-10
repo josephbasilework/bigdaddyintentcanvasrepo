@@ -55,7 +55,7 @@ async def get_workspace(
         return EmptyWorkspaceResponse().model_dump()
 
     logger.info(f"Retrieved canvas {canvas.id} for user {user_id}")
-    return canvas.to_dict()
+    return repo.serialize_canvas(canvas)
 
 
 @router.put("/api/workspace", response_model=CanvasResponse)
@@ -93,7 +93,7 @@ async def save_workspace(
         )
 
         logger.info(f"Saved canvas {canvas.id} for user {user_id}")
-        return canvas.to_dict()
+        return repo.serialize_canvas(canvas)
 
     except Exception as e:
         logger.error(f"Failed to save workspace for user {user_id}: {e}", exc_info=True)

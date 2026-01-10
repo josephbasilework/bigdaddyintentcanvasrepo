@@ -61,7 +61,9 @@ class BackupService:
 
         # Collect user data
         canvas = self.canvas_repo.get_by_user(user_id)
-        canvas_data = canvas.to_dict() if canvas else None
+        canvas_data = (
+            self.canvas_repo.serialize_canvas(canvas, include_edges=True) if canvas else None
+        )
 
         preferences = self.prefs_repo.get_by_user(user_id)
         prefs_data = preferences.to_dict() if preferences else None
@@ -120,7 +122,10 @@ class BackupService:
         if canvas_data:
             self.canvas_repo.save_canvas(
                 user_id=user_id,
-                canvas_data={"nodes": canvas_data.get("nodes", [])},
+                canvas_data={
+                    "nodes": canvas_data.get("nodes", []),
+                    "edges": canvas_data.get("edges", []),
+                },
                 canvas_name=canvas_data.get("name", "restored"),
             )
             logger.info(f"Restored canvas for user {user_id} from backup {backup_id}")

@@ -473,23 +473,6 @@ class AGUIEvent(BaseModel):
     )
 
 
-# ============================================================================
-# State Sync Protocol
-# ============================================================================
-
-
-
-    sequence: int = Field(
-        ..., description="Current sequence number at snapshot time", ge=0
-    )
-    state: dict[str, Any] = Field(
-        ..., description="Full state snapshot"
-    )
-    checksum: str = Field(
-        ..., description="SHA-256 checksum of the state data"
-    )
-
-
 
 # For consistency with frontend naming
 AGUIProtocolVersion = AGUI_PROTOCOL_VERSION

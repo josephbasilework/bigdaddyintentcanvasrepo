@@ -312,7 +312,7 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
         logger.info(f"[{job_id}] Running LLM-as-Judge evaluation")
 
         # Get Judge Agent and evaluate perspectives
-        judge_agent = get_judge_agent()
+        judge_agent = get_judge_agent(gateway=gateway)
         judge_synthesis: JudgeSynthesis = await judge_agent.judge(
             query=query,
             perspective_results=perspective_results,
@@ -325,6 +325,7 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
             "perspectives": perspective_results,
             "web_research": research_report.model_dump(),
             "judge_synthesis": judge_synthesis.model_dump(),
+            "synthesis": judge_synthesis.model_dump(),
             "timestamp": datetime.now(UTC).isoformat(),
             "job_id": job_id,
         }
@@ -520,7 +521,8 @@ async def synthesis_job(
         )
 
         # Use Judge Agent for evaluation and synthesis
-        judge_agent = get_judge_agent()
+        gateway = get_gateway_client()
+        judge_agent = get_judge_agent(gateway=gateway)
         judge_synthesis: JudgeSynthesis = await judge_agent.judge(
             query=query,
             perspective_results=perspective_results,
@@ -542,6 +544,7 @@ async def synthesis_job(
             "query": query,
             "perspective_count": len(perspective_results),
             "judge_synthesis": judge_synthesis.model_dump(),
+            "synthesis": judge_synthesis.model_dump(),
             "timestamp": datetime.now(UTC).isoformat(),
             "job_id": job_id,
         }

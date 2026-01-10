@@ -159,7 +159,7 @@ class TestGetQueueStats:
 class TestJobEnqueueError:
     """Tests for JobEnqueueError."""
 
-    async def test_enqueue_invalid_job_type_raises_error(self, redis_pool) -> None:
+    def test_enqueue_invalid_job_type_raises_error(self) -> None:
         """Should raise JobEnqueueError for unknown job type."""
         # We need to test this indirectly since the API doesn't expose invalid types
         # The enqueue_job function validates JobType enum
