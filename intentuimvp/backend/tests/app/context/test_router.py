@@ -181,6 +181,24 @@ class TestContextRouter:
         assert "keyword" in decision.reason.lower()
 
     @pytest.mark.asyncio
+    async def test_route_keyword_fallback_on_llm_error_reasoning(self) -> None:
+        """Test keyword fallback when LLM returns an error-style reasoning."""
+        fake = FakeIntentDecipherer(
+            result=build_result(
+                "chat",
+                0.5,
+                reasoning="Intent deciphering encountered an error: timeout",
+            )
+        )
+        router = ContextRouter(intent_decipherer=fake)
+        payload = ContextPayload(text="Please research AI safety")
+        decision = await router.route(payload)
+
+        assert decision.handler == "research_handler"
+        assert decision.confidence == 0.6
+        assert "keyword" in decision.reason.lower()
+
+    @pytest.mark.asyncio
     async def test_route_keyword_fallback_on_timeout(self) -> None:
         """Test keyword fallback when LLM times out."""
         fake = FakeIntentDecipherer(
