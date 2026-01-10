@@ -16,7 +16,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
+from app.database import AsyncSessionLocal
+from app.models.node import NodeType
+from app.repositories.canvas_repo import CanvasRepository
+from app.repositories.node_repo import NodeRepository
+
 logger = logging.getLogger(__name__)
+
+DEFAULT_USER_ID = "default_user"
 
 # MCP integration is optional - requires database session
 # Tools will work without MCP, just MCP-specific tools won't be available
@@ -65,6 +72,25 @@ class ToolRecommendation(BaseModel):
     confidence: float
     reason: str
     suggested_arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class CanvasNodePosition(BaseModel):
+    """Position coordinates for a canvas node."""
+
+    x: float = Field(..., description="X coordinate")
+    y: float = Field(..., description="Y coordinate")
+    z: float = Field(..., description="Z coordinate")
+
+
+class CanvasCreateNodeParams(BaseModel):
+    """Parameters for creating a canvas node."""
+
+    type: NodeType = Field(..., description="Node type")
+    content: str = Field(..., min_length=1, description="Node content/label")
+    position: CanvasNodePosition = Field(..., description="Node position")
+    metadata: dict[str, Any] | None = Field(
+        default=None, description="Optional node metadata"
+    )
 
 
 class ToolValidationError(Exception):
@@ -166,6 +192,49 @@ class ToolManager:
             except Exception as e:
                 raise ValueError(f"Invalid expression: {e}")
 
+        async def canvas_create_node(
+            type: NodeType,
+            content: str,
+            position: CanvasNodePosition | dict[str, Any],
+            metadata: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            """Create a new canvas node in the workspace."""
+            parsed_position = (
+                position
+                if isinstance(position, CanvasNodePosition)
+                else CanvasNodePosition.model_validate(position)
+            )
+            params = CanvasCreateNodeParams(
+                type=type,
+                content=content,
+                position=parsed_position,
+                metadata=metadata,
+            )
+
+            async with AsyncSessionLocal() as session:
+                canvas_repo = CanvasRepository(session)
+                canvases = await canvas_repo.get_by_user(
+                    DEFAULT_USER_ID, limit=1
+                )
+                canvas = (
+                    canvases[0]
+                    if canvases
+                    else await canvas_repo.create_canvas(
+                        user_id=DEFAULT_USER_ID, name="default"
+                    )
+                )
+
+                node_repo = NodeRepository(session)
+                node = await node_repo.create_node(
+                    canvas_id=canvas.id,
+                    label=params.content,
+                    type=params.type,
+                    position=params.position.model_dump(),
+                    node_metadata=params.metadata,
+                )
+
+            return {"id": node.id}
+
         # Register the tools
         self.register_function(
             name="web_search",
@@ -203,6 +272,14 @@ class ToolManager:
             name="calculate",
             description="Calculate a mathematical expression",
             func=calculate,
+            is_async=True,
+        )
+
+        self.register_function(
+            name="canvas.create_node",
+            description="Create a new node on the canvas",
+            func=canvas_create_node,
+            parameters=CanvasCreateNodeParams,
             is_async=True,
         )
 
