@@ -12,12 +12,14 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import or_, select
 
 from app.database import AsyncSessionLocal
-from app.models.node import NodeType
+from app.models.canvas import Canvas
+from app.models.node import Node, NodeType
 from app.repositories.canvas_repo import CanvasRepository
 from app.repositories.node_repo import NodeRepository
 
@@ -90,6 +92,21 @@ class CanvasCreateNodeParams(BaseModel):
     position: CanvasNodePosition = Field(..., description="Node position")
     metadata: dict[str, Any] | None = Field(
         default=None, description="Optional node metadata"
+    )
+
+
+class WorkspaceSearchParams(BaseModel):
+    """Parameters for searching nodes/documents in the workspace."""
+
+    query: str = Field(..., min_length=1, description="Search query")
+    scope: Literal["selection", "canvas", "all"] = Field(
+        ..., description="Search scope"
+    )
+    selection_ids: list[int] | None = Field(
+        default=None, description="Optional selected node IDs for selection scope"
+    )
+    canvas_id: int | None = Field(
+        default=None, description="Optional canvas ID for canvas scope"
     )
 
 
@@ -235,6 +252,54 @@ class ToolManager:
 
             return {"id": node.id}
 
+        async def workspace_search(
+            query: str,
+            scope: str,
+            selection_ids: list[int] | None = None,
+            canvas_id: int | None = None,
+        ) -> list[dict[str, Any]]:
+            """Search nodes/documents in the workspace."""
+            normalized_query = query.strip()
+            if not normalized_query:
+                return []
+
+            pattern = f"%{normalized_query}%"
+
+            async with AsyncSessionLocal() as session:
+                stmt = (
+                    select(Node)
+                    .join(Canvas)
+                    .where(Canvas.user_id == DEFAULT_USER_ID)
+                )
+
+                if scope == "selection":
+                    if not selection_ids:
+                        return []
+                    stmt = stmt.where(Node.id.in_(selection_ids))
+                elif scope == "canvas":
+                    resolved_canvas_id = canvas_id
+                    if resolved_canvas_id is None:
+                        canvas_repo = CanvasRepository(session)
+                        canvases = await canvas_repo.get_by_user(
+                            DEFAULT_USER_ID, limit=1
+                        )
+                        if not canvases:
+                            return []
+                        resolved_canvas_id = canvases[0].id
+
+                    stmt = stmt.where(Node.canvas_id == resolved_canvas_id)
+
+                stmt = stmt.where(
+                    or_(
+                        Node.label.ilike(pattern),
+                        Node.node_metadata.ilike(pattern),
+                    )
+                ).order_by(Node.id)
+
+                result = await session.execute(stmt)
+                nodes = result.scalars().all()
+                return [node.to_dict() for node in nodes]
+
         # Register the tools
         self.register_function(
             name="web_search",
@@ -280,6 +345,14 @@ class ToolManager:
             description="Create a new node on the canvas",
             func=canvas_create_node,
             parameters=CanvasCreateNodeParams,
+            is_async=True,
+        )
+
+        self.register_function(
+            name="workspace.search",
+            description="Search nodes/documents in the workspace",
+            func=workspace_search,
+            parameters=WorkspaceSearchParams,
             is_async=True,
         )
 
