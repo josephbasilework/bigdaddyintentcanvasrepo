@@ -44,3 +44,4 @@ bd sync               # Sync with git
 - 2026-01-10 00:07 EST: `pip install -r intentuimvp/backend/requirements.txt` hits a google-auth resolver conflict; `python3 -m pip install --no-deps -r intentuimvp/backend/requirements.txt` works since the file is a full freeze.
 - 2026-01-10 00:25 EST: `npm run build` in `intentuimvp/frontend` completed successfully; the prior TypeScript error may be resolved.
 - 2026-01-10 00:37 EST: `npm test -- --run` in `intentuimvp/frontend` runs the full vitest suite once and emits existing warnings about `jsx` attributes and act wrapping.
+- 2026-01-10 00:54 EST: `python` isn't available; use `python3` for backend `pytest` and `ruff` commands.
