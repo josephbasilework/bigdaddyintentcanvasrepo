@@ -60,3 +60,4 @@ bd sync               # Sync with git
 - 2026-01-10 00:54 EST: `python` isn't available; use `python3` for backend `pytest` and `ruff` commands.
 - 2026-01-10 15:49 EST: Backend source-of-truth for tests is `intentuimvp/backend/app`; the `intentuimvp/backend/src/intentuimvp-backend` tree is not tracked.
 - 2026-01-10 16:29 EST: AsyncSessionLocal-based pytest runs can hang unless `async_engine.dispose()` is called in a fixture.
+- 2026-01-10 18:48 EST: Keep floating UI like the command input outside the zoom/pan transform so it stays fixed over the canvas.
