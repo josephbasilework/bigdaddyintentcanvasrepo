@@ -1,8 +1,23 @@
 import os
 from logging.config import fileConfig
+from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+# ruff: noqa: E402, I001 (Alembic env.py requires imports after config setup)
+
+# Load environment variables from .env file
+# This ensures DATABASE_URL and other settings are available
+try:
+    from dotenv import load_dotenv
+
+    # Find .env file in the backend directory or parent directories
+    env_path = Path(__file__).parent.parent / ".env"
+    load_dotenv(env_path)
+except ImportError:
+    # python-dotenv not available, rely on system environment
+    pass
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -15,15 +30,42 @@ if config.config_file_name is not None:
 
 # Get DATABASE_URL from environment variable
 # This is the PRIMARY way to configure the database URL
-database_url = os.getenv("DATABASE_URL")
-if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+# Default to SQLite if not set
+database_url = os.getenv("DATABASE_URL", "sqlite:///./intentui.db")
+config.set_main_option("sqlalchemy.url", database_url)
 
 # add your model's MetaData object here
 # for 'autogenerate' support
-# from myapp import mymodel
-# target_metadata = mymodel.Base.metadata
-target_metadata = None
+
+# Import Base and all models so they register with metadata
+# Note: There are two separate Base classes in the codebase:
+# 1. app.database.Base (main models: Canvas, Node, Edge, Preferences, Backup, Job, JobArtifact)
+# 2. app.models.intent.Base (intent models: UserIntent, AttachmentDB, AssumptionResolutionDB)
+# noqa: E402 (imports must be after config setup for Alembic env.py)
+from app.database import Base as MainBase  # noqa: F401 (registers metadata)
+from app.models.artifact import JobArtifact  # noqa: F401 (registers metadata)
+from app.models.backup import Backup  # noqa: F401 (registers metadata)
+from app.models.canvas import Canvas, Edge, Node  # noqa: F401 (registers metadata)
+from app.models.job import Job  # noqa: F401 (registers metadata)
+from app.models.preferences import Preferences  # noqa: F401 (registers metadata)
+from app.mcp.models import MCPServer, MCPExecutionLog  # noqa: F401 (registers metadata)
+
+# Intent models use a separate Base
+from app.models.intent import (  # noqa: E402, F401 (registers metadata)
+    AttachmentDB,
+    AssumptionResolutionDB,
+    Base as IntentBase,
+    UserIntent,
+)
+
+# Combine metadata from both Base classes for Alembic autogenerate
+from sqlalchemy.schema import MetaData  # noqa: E402
+
+target_metadata = MetaData()
+for table in MainBase.metadata.tables.values():
+    target_metadata._add_table(table.name, table.schema, table)
+for table in IntentBase.metadata.tables.values():
+    target_metadata._add_table(table.name, table.schema, table)
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
