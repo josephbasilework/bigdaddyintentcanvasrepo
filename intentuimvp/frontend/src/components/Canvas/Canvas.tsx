@@ -17,7 +17,7 @@ export function Canvas({ children }: CanvasProps) {
   const transformRef = useRef<ReactZoomPanPinchRef>(null);
 
   return (
-    <div className="canvas-container">
+    <div className="canvas-container" data-testid="canvas-container">
       <TransformWrapper
         ref={transformRef}
         initialScale={1}
