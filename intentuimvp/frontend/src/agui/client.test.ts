@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AGUIClient } from './client';
+import { AGUI_PROTOCOL_VERSION, computeChecksum } from './protocol';
 
 class MockWebSocket {
   static CONNECTING = 0;
@@ -82,7 +83,9 @@ class MockWebSocket {
 const OriginalWebSocket = global.WebSocket;
 
 const flushMicrotasks = async (): Promise<void> => {
-  await Promise.resolve();
+  for (let i = 0; i < 5; i += 1) {
+    await Promise.resolve();
+  }
 };
 
 const hasStateSyncRequest = (messages: string[]): boolean => {
@@ -192,5 +195,49 @@ describe('AGUIClient reconnection', () => {
 
     const secondSocket = MockWebSocket.instances[1];
     expect(hasStateSyncRequest(secondSocket.sentMessages)).toBe(true);
+  });
+});
+
+describe('AGUIClient state sync', () => {
+  beforeEach(() => {
+    global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+    MockWebSocket.reset();
+  });
+
+  afterEach(() => {
+    MockWebSocket.reset();
+    global.WebSocket = OriginalWebSocket;
+  });
+
+  it('applies state snapshots through the CopilotKit event pipeline', async () => {
+    const client = new AGUIClient({
+      gatewayUrl: 'http://localhost:8000',
+    });
+
+    client.connect();
+    await flushMicrotasks();
+
+    const snapshotState = { canvas: { nodes: { n1: { id: 'n1' } } } };
+    const checksum = await computeChecksum(snapshotState);
+    const snapshotMessage = {
+      version: AGUI_PROTOCOL_VERSION,
+      messageId: 'msg-1',
+      timestamp: new Date().toISOString(),
+      source: 'agent',
+      target: 'ui',
+      type: 'state.snapshot',
+      payload: {
+        sequence: 1,
+        state: snapshotState,
+        checksum,
+      },
+    };
+
+    const ws = MockWebSocket.instances[0];
+    ws.triggerMessage(JSON.stringify(snapshotMessage));
+    await flushMicrotasks();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(client.getLocalState()).toEqual(snapshotState);
   });
 });

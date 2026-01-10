@@ -6,26 +6,86 @@
  */
 
 import {
+  AbstractAgent,
+  AgentSubscriber,
+  BaseEvent,
+  CustomEvent,
+  EventSchemas,
+  EventType,
+  RunAgentInput,
+  RunAgentParameters,
+  RunFinishedEvent,
+  RunStartedEvent,
+  RunErrorEvent,
+  StateDeltaEvent,
+  StateSnapshotEvent,
+} from "@ag-ui/client";
+import { Observable, Subscriber } from "rxjs";
+import {
   AGUIClientConfig,
   AgentToUIMessageHandler,
   AgentToUIMessageType,
+  AGUI_PROTOCOL_VERSION,
   UIToAgentMessage,
   UIToAgentMessageType,
-  generateMessageId,
-  getTimestamp,
-  AGUI_PROTOCOL_VERSION,
   StateUpdateMessage,
   StateSnapshotMessage,
   StateSyncStatus,
-  applyJSONPatch,
+  generateMessageId,
+  getTimestamp,
   computeChecksum,
-} from './protocol';
+} from "./protocol";
 
 export interface AGUIClientState {
   connected: boolean;
   connecting: boolean;
   error: Error | null;
   stateSync: StateSyncStatus;
+}
+
+const AGENT_MESSAGE_TYPES = new Set<string>([
+  "status",
+  "progress",
+  "result",
+  "error",
+  "request",
+  "notification",
+  "state.update",
+  "state.snapshot",
+]);
+
+type RunStreamMode = "connect" | "run";
+
+type RunStreamOptions = {
+  mode: RunStreamMode;
+  input: RunAgentInput;
+};
+
+type RunStartEnvelope = {
+  version: string;
+  messageId: string;
+  timestamp: string;
+  source: "ui";
+  target: "agent";
+  type: "run.start";
+  payload: RunAgentInput;
+};
+
+class CopilotKitWebSocketAgent extends AbstractAgent {
+  private client: AGUIClient;
+
+  constructor(client: AGUIClient) {
+    super();
+    this.client = client;
+  }
+
+  run(input: RunAgentInput): Observable<BaseEvent> {
+    return this.client.createEventStream({ mode: "run", input });
+  }
+
+  protected connect(input: RunAgentInput): Observable<BaseEvent> {
+    return this.client.createEventStream({ mode: "connect", input });
+  }
 }
 
 export class AGUIClient {
@@ -35,6 +95,7 @@ export class AGUIClient {
   private reconnectAttempts = 0;
   private isManualDisconnect = false;
   private messageHandlers: Set<AgentToUIMessageHandler> = new Set();
+  private agent: CopilotKitWebSocketAgent;
 
   // Local state cache
   private localState: Record<string, unknown> = {};
@@ -54,7 +115,8 @@ export class AGUIClient {
   private stateListeners: Set<(state: AGUIClientState) => void> = new Set();
 
   // State update listeners
-  private stateUpdateListeners: Set<(state: Record<string, unknown>) => void> = new Set();
+  private stateUpdateListeners: Set<(state: Record<string, unknown>) => void> =
+    new Set();
 
   // State sync status listeners
   private stateSyncListeners: Set<(status: StateSyncStatus) => void> = new Set();
@@ -65,13 +127,24 @@ export class AGUIClient {
       maxReconnectAttempts: 10,
       ...config,
     };
+    this.agent = new CopilotKitWebSocketAgent(this);
+    this.localState = this.toRecordState(this.agent.state);
+
+    this.agent.subscribe({
+      onStateChanged: ({ state }) => {
+        this.localState = this.toRecordState(state);
+        for (const listener of this.stateUpdateListeners) {
+          listener(this.localState);
+        }
+      },
+    });
   }
 
   /**
    * Connect to the gateway via WebSocket
    */
   connect(): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+    if (this.state.connecting || this.ws?.readyState === WebSocket.OPEN) {
       return;
     }
 
@@ -79,49 +152,12 @@ export class AGUIClient {
     this.clearReconnectTimer();
     this.setState({ connecting: true, error: null });
 
-    try {
-      const wsUrl = this.config.gatewayUrl.replace(/^http/, 'ws');
-      this.ws = new WebSocket(wsUrl);
-
-      this.ws.onopen = () => {
-        this.setState({ connected: true, connecting: false, error: null });
-        this.reconnectAttempts = 0;
-
-        // Request full state sync on connection
-        this.requestStateSync();
-
-        this.config.onConnect?.();
-      };
-
-      this.ws.onclose = () => {
-        this.setState({ connected: false, connecting: false });
-        this.config.onDisconnect?.();
-
-        // Attempt to reconnect if not intentionally closed
-        if (!this.isManualDisconnect) {
-          this.scheduleReconnect();
-        }
-      };
-
-      this.ws.onerror = () => {
-        const error = new Error('WebSocket connection error');
-        this.setState({ error });
-        this.config.onError?.(error);
-        if (!this.isManualDisconnect) {
-          this.scheduleReconnect();
-        }
-      };
-
-      this.ws.onmessage = (event) => {
-        this.handleMessage(event.data);
-      };
-    } catch (error) {
-      this.setState({ connected: false, connecting: false, error: error as Error });
-      this.config.onError?.(error as Error);
-      if (!this.isManualDisconnect) {
-        this.scheduleReconnect();
-      }
-    }
+    void this.agent.connectAgent().catch((error) => {
+      const resolvedError =
+        error instanceof Error ? error : new Error(String(error));
+      this.setState({ error: resolvedError, connecting: false });
+      this.config.onError?.(resolvedError);
+    });
   }
 
   /**
@@ -132,12 +168,35 @@ export class AGUIClient {
     this.reconnectAttempts = 0;
     this.clearReconnectTimer();
 
+    void this.agent.detachActiveRun();
+
     if (this.ws) {
-      this.ws.close(1000, 'Client disconnect');
+      this.ws.close(1000, "Client disconnect");
       this.ws = null;
     }
 
     this.setState({ connected: false, connecting: false });
+  }
+
+  /**
+   * Start an AG-UI run using CopilotKit run management.
+   */
+  runAgent(parameters?: RunAgentParameters, subscriber?: AgentSubscriber) {
+    return this.agent.runAgent(parameters, subscriber);
+  }
+
+  /**
+   * Connect to the agent event stream using CopilotKit run management.
+   */
+  connectAgent(parameters?: RunAgentParameters, subscriber?: AgentSubscriber) {
+    return this.agent.connectAgent(parameters, subscriber);
+  }
+
+  /**
+   * Access the underlying CopilotKit agent instance.
+   */
+  getAgent(): AbstractAgent {
+    return this.agent;
   }
 
   /**
@@ -164,7 +223,7 @@ export class AGUIClient {
    */
   send(message: UIToAgentMessageType): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error('WebSocket is not connected');
+      throw new Error("WebSocket is not connected");
     }
 
     const envelope: UIToAgentMessage = {
@@ -235,125 +294,318 @@ export class AGUIClient {
   }
 
   /**
-   * Handle incoming message from gateway
+   * Create an AG-UI event stream bridged through CopilotKit.
    */
-  private handleMessage(data: string): void {
+  createEventStream(options: RunStreamOptions): Observable<BaseEvent> {
+    return new Observable<BaseEvent>((subscriber) => {
+      this.isManualDisconnect = false;
+      const { input, mode } = options;
+      let runStarted = false;
+      let runStartSent = false;
+      let finished = false;
+
+      const emitEvent = (event: BaseEvent) => {
+        if (!subscriber.closed) {
+          subscriber.next(event);
+        }
+      };
+
+      const emitRunStarted = () => {
+        if (runStarted) {
+          return;
+        }
+        runStarted = true;
+        const event: RunStartedEvent = {
+          type: EventType.RUN_STARTED,
+          threadId: input.threadId,
+          runId: input.runId,
+          parentRunId: input.parentRunId,
+          input,
+          timestamp: Date.now(),
+        };
+        emitEvent(event);
+      };
+
+      const emitRunFinished = () => {
+        if (!runStarted) {
+          return;
+        }
+        const event: RunFinishedEvent = {
+          type: EventType.RUN_FINISHED,
+          threadId: input.threadId,
+          runId: input.runId,
+          timestamp: Date.now(),
+        };
+        emitEvent(event);
+      };
+
+      const emitRunError = (error: Error) => {
+        const event: RunErrorEvent = {
+          type: EventType.RUN_ERROR,
+          message: error.message,
+          timestamp: Date.now(),
+        };
+        emitEvent(event);
+      };
+
+      const finishStream = (error?: Error) => {
+        if (finished) {
+          return;
+        }
+        finished = true;
+        this.clearReconnectTimer();
+
+        if (error) {
+          emitRunError(error);
+        } else {
+          emitRunFinished();
+        }
+
+        if (!subscriber.closed) {
+          subscriber.complete();
+        }
+      };
+
+      const scheduleReconnect = () => {
+        if (this.reconnectTimer || finished) {
+          return;
+        }
+
+        const maxAttempts = this.config.maxReconnectAttempts ?? 10;
+        if (this.reconnectAttempts >= maxAttempts) {
+          const error = new Error(
+            `WebSocket: Max reconnection attempts (${maxAttempts}) reached`
+          );
+          this.setState({ error });
+          this.config.onError?.(error);
+          finishStream(error);
+          return;
+        }
+
+        this.reconnectAttempts += 1;
+        const delay = this.getReconnectDelay(this.reconnectAttempts);
+
+        this.reconnectTimer = setTimeout(() => {
+          this.reconnectTimer = null;
+          openSocket();
+        }, delay);
+      };
+
+      const openSocket = () => {
+        if (finished) {
+          return;
+        }
+
+        if (
+          this.ws &&
+          (this.ws.readyState === WebSocket.OPEN ||
+            this.ws.readyState === WebSocket.CONNECTING)
+        ) {
+          return;
+        }
+
+        this.setState({ connecting: true, error: null });
+
+        try {
+          const wsUrl = this.config.gatewayUrl.replace(/^http/, "ws");
+          const ws = new WebSocket(wsUrl);
+          this.ws = ws;
+
+          ws.onopen = () => {
+            this.setState({ connected: true, connecting: false, error: null });
+            this.reconnectAttempts = 0;
+
+            emitRunStarted();
+
+            if (mode === "run" && !runStartSent) {
+              this.sendRunStart(input);
+              runStartSent = true;
+            }
+
+            this.requestStateSync();
+            this.config.onConnect?.();
+          };
+
+          ws.onmessage = (event) => {
+            if (typeof event.data === "string") {
+              this.handleIncomingMessage(event.data, subscriber);
+            }
+          };
+
+          ws.onclose = () => {
+            this.setState({ connected: false, connecting: false });
+            this.config.onDisconnect?.();
+
+            if (!this.isManualDisconnect) {
+              scheduleReconnect();
+            } else {
+              finishStream();
+            }
+          };
+
+          ws.onerror = () => {
+            const error = new Error("WebSocket connection error");
+            this.setState({ error });
+            this.config.onError?.(error);
+
+            if (!this.isManualDisconnect) {
+              scheduleReconnect();
+            } else {
+              finishStream(error);
+            }
+          };
+        } catch (error) {
+          const resolvedError =
+            error instanceof Error ? error : new Error(String(error));
+          this.setState({ connected: false, connecting: false, error: resolvedError });
+          this.config.onError?.(resolvedError);
+
+          if (!this.isManualDisconnect) {
+            scheduleReconnect();
+          } else {
+            finishStream(resolvedError);
+          }
+        }
+      };
+
+      openSocket();
+
+      return () => {
+        this.isManualDisconnect = true;
+        finishStream();
+
+        if (this.ws) {
+          this.ws.close(1000, "Client disconnect");
+          this.ws = null;
+        }
+      };
+    });
+  }
+
+  /**
+   * Handle incoming messages from gateway and emit AG-UI events.
+   */
+  private handleIncomingMessage(
+    data: string,
+    subscriber: Subscriber<BaseEvent>
+  ): void {
+    let message: unknown;
+
     try {
-      const message = JSON.parse(data) as AgentToUIMessageType;
-
-      // Validate message structure
-      if (!message.version || !message.messageId || !message.timestamp) {
-        console.error('Invalid AG-UI message:', message);
-        return;
-      }
-
-      // Handle state update messages
-      if (message.type === 'state.update') {
-        this.handleStateUpdate(message);
-        return;
-      }
-
-      // Handle state snapshot messages
-      if (message.type === 'state.snapshot') {
-        this.handleStateSnapshot(message);
-        return;
-      }
-
-      // Call all registered handlers for other message types
-      for (const handler of this.messageHandlers) {
-        handler(message);
-      }
-
-      // Call legacy onMessage handler if provided
-      if (this.config.onMessage) {
-        this.config.onMessage(message);
-      }
+      message = JSON.parse(data);
     } catch (error) {
-      console.error('Failed to parse AG-UI message:', error);
+      console.error("Failed to parse AG-UI message:", error);
+      return;
     }
+
+    const parsedEvent = EventSchemas.safeParse(message);
+    if (parsedEvent.success) {
+      const event = parsedEvent.data as BaseEvent;
+      const enrichedEvent =
+        "rawEvent" in event ? event : { ...event, rawEvent: message };
+      if (!subscriber.closed) {
+        subscriber.next(enrichedEvent);
+      }
+      return;
+    }
+
+    if (this.isAgentMessage(message)) {
+      const agentMessage = message as AgentToUIMessageType;
+      this.dispatchAgentMessage(agentMessage);
+
+      const event = this.mapAgentMessageToEvent(agentMessage);
+      if (event) {
+        if (!subscriber.closed) {
+          subscriber.next(event);
+        }
+      }
+      return;
+    }
+
+    console.warn("Unknown AG-UI message:", message);
+  }
+
+  /**
+   * Dispatch agent messages to registered handlers.
+   */
+  private dispatchAgentMessage(message: AgentToUIMessageType): void {
+    for (const handler of this.messageHandlers) {
+      handler(message);
+    }
+
+    if (this.config.onMessage) {
+      this.config.onMessage(message);
+    }
+  }
+
+  /**
+   * Map protocol messages to AG-UI events.
+   */
+  private mapAgentMessageToEvent(message: AgentToUIMessageType): BaseEvent | null {
+    if (message.type === "state.update") {
+      return this.handleStateUpdate(message);
+    }
+
+    if (message.type === "state.snapshot") {
+      return this.handleStateSnapshot(message);
+    }
+
+    const event: CustomEvent = {
+      type: EventType.CUSTOM,
+      name: message.type,
+      value: message.payload,
+      timestamp: this.parseTimestamp(message.timestamp),
+      rawEvent: message,
+    };
+    return event;
   }
 
   /**
    * Handle state update message with sequence validation
    */
-  private handleStateUpdate(message: StateUpdateMessage): void {
+  private handleStateUpdate(message: StateUpdateMessage): BaseEvent | null {
     const { sequence, patch, checksum } = message.payload;
 
-    // Check for sequence gap
+    // Check for sequence gap or duplicates
     const lastSeq = this.state.stateSync.lastSequence;
-    if (lastSeq !== null && sequence !== lastSeq + 1) {
-      console.warn(
-        `Sequence gap detected: expected ${lastSeq + 1}, got ${sequence}`
-      );
-
-      // Update state sync status
-      this.setState({
-        stateSync: {
-          ...this.state.stateSync,
-          needsSync: true,
-          isSynced: false,
-        },
-      });
-
-      // Request full state sync
-      this.requestStateSync();
-
-      // Notify listeners about the gap
-      for (const listener of this.stateSyncListeners) {
-        listener(this.state.stateSync);
+    if (lastSeq !== null) {
+      if (sequence <= lastSeq) {
+        console.warn(
+          `Duplicate or out-of-order sequence: expected > ${lastSeq}, got ${sequence}`
+        );
+        return null;
       }
 
-      return;
+      if (sequence !== lastSeq + 1) {
+        console.warn(
+          `Sequence gap detected: expected ${lastSeq + 1}, got ${sequence}`
+        );
+
+        // Update state sync status
+        this.setState({
+          stateSync: {
+            ...this.state.stateSync,
+            needsSync: true,
+            isSynced: false,
+          },
+        });
+
+        // Request full state sync
+        this.requestStateSync();
+
+        // Notify listeners about the gap
+        for (const listener of this.stateSyncListeners) {
+          listener(this.state.stateSync);
+        }
+
+        return null;
+      }
     }
 
     // Validate checksum (optional but recommended)
     this.validateChecksum(patch, checksum).catch((err) => {
-      console.error('Checksum validation failed:', err);
+      console.error("Checksum validation failed:", err);
     });
-
-    // Apply the patch
-    try {
-      this.localState = applyJSONPatch(this.localState, patch);
-
-      // Update last sequence
-      this.setState({
-        stateSync: {
-          lastSequence: sequence,
-          isSynced: true,
-          needsSync: false,
-        },
-      });
-
-      // Notify state update listeners
-      for (const listener of this.stateUpdateListeners) {
-        listener(this.localState);
-      }
-
-      // Notify state sync listeners
-      for (const listener of this.stateSyncListeners) {
-        listener(this.state.stateSync);
-      }
-    } catch (error) {
-      console.error('Failed to apply state update:', error);
-
-      // Request full state sync on error
-      this.requestStateSync();
-    }
-  }
-
-  /**
-   * Handle state snapshot message
-   */
-  private handleStateSnapshot(message: StateSnapshotMessage): void {
-    const { sequence, state, checksum } = message.payload;
-
-    // Validate checksum (optional but recommended)
-    this.validateChecksum(state, checksum).catch((err) => {
-      console.error('Checksum validation failed for snapshot:', err);
-    });
-
-    // Replace entire state with snapshot
-    this.localState = { ...state };
 
     // Update last sequence
     this.setState({
@@ -364,19 +616,52 @@ export class AGUIClient {
       },
     });
 
-    // Notify state update listeners
-    for (const listener of this.stateUpdateListeners) {
-      listener(this.localState);
+    // Notify state sync listeners
+    for (const listener of this.stateSyncListeners) {
+      listener(this.state.stateSync);
     }
+
+    const event: StateDeltaEvent = {
+      type: EventType.STATE_DELTA,
+      delta: patch,
+      timestamp: this.parseTimestamp(message.timestamp),
+      rawEvent: message,
+    };
+    return event;
+  }
+
+  /**
+   * Handle state snapshot message
+   */
+  private handleStateSnapshot(message: StateSnapshotMessage): BaseEvent {
+    const { sequence, state, checksum } = message.payload;
+
+    // Validate checksum (optional but recommended)
+    this.validateChecksum(state, checksum).catch((err) => {
+      console.error("Checksum validation failed for snapshot:", err);
+    });
+
+    // Update last sequence
+    this.setState({
+      stateSync: {
+        lastSequence: sequence,
+        isSynced: true,
+        needsSync: false,
+      },
+    });
 
     // Notify state sync listeners
     for (const listener of this.stateSyncListeners) {
       listener(this.state.stateSync);
     }
 
-    console.info(
-      `State snapshot applied: sequence=${sequence}, keys=${Object.keys(state).join(', ')}`
-    );
+    const event: StateSnapshotEvent = {
+      type: EventType.STATE_SNAPSHOT,
+      snapshot: state,
+      timestamp: this.parseTimestamp(message.timestamp),
+      rawEvent: message,
+    };
+    return event;
   }
 
   /**
@@ -396,7 +681,7 @@ export class AGUIClient {
       }
       return true;
     } catch (error) {
-      console.error('Checksum validation error:', error);
+      console.error("Checksum validation error:", error);
       return false;
     }
   }
@@ -409,9 +694,9 @@ export class AGUIClient {
       version: AGUI_PROTOCOL_VERSION,
       messageId: generateMessageId(),
       timestamp: getTimestamp(),
-      source: 'ui',
-      target: 'agent',
-      type: 'state.sync_request',
+      source: "ui",
+      target: "agent",
+      type: "state.sync_request",
       payload: {
         last_sequence: this.state.stateSync.lastSequence,
       },
@@ -420,38 +705,30 @@ export class AGUIClient {
     try {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify(syncRequest));
-        console.info('Requested state sync');
+        console.info("Requested state sync");
       }
     } catch (error) {
-      console.error('Failed to request state sync:', error);
+      console.error("Failed to request state sync:", error);
     }
   }
 
   /**
-   * Schedule reconnection attempt
+   * Send a run start envelope to the server.
    */
-  private scheduleReconnect(): void {
-    if (this.reconnectTimer) {
-      return;
+  private sendRunStart(input: RunAgentInput): void {
+    const envelope: RunStartEnvelope = {
+      version: AGUI_PROTOCOL_VERSION,
+      messageId: generateMessageId(),
+      timestamp: getTimestamp(),
+      source: "ui",
+      target: "agent",
+      type: "run.start",
+      payload: input,
+    };
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(envelope));
     }
-
-    const maxAttempts = this.config.maxReconnectAttempts ?? 10;
-    if (this.reconnectAttempts >= maxAttempts) {
-      const error = new Error(
-        `WebSocket: Max reconnection attempts (${maxAttempts}) reached`
-      );
-      this.setState({ error });
-      this.config.onError?.(error);
-      return;
-    }
-
-    this.reconnectAttempts += 1;
-    const delay = this.getReconnectDelay(this.reconnectAttempts);
-
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connect();
-    }, delay);
   }
 
   /**
@@ -462,6 +739,42 @@ export class AGUIClient {
     for (const listener of this.stateListeners) {
       listener(this.getState());
     }
+  }
+
+  private isAgentMessage(message: unknown): message is AgentToUIMessageType {
+    if (!message || typeof message !== "object") {
+      return false;
+    }
+
+    const candidate = message as {
+      source?: unknown;
+      target?: unknown;
+      type?: unknown;
+    };
+
+    return (
+      candidate.source === "agent" &&
+      candidate.target === "ui" &&
+      typeof candidate.type === "string" &&
+      AGENT_MESSAGE_TYPES.has(candidate.type)
+    );
+  }
+
+  private parseTimestamp(value?: string): number | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+
+  private toRecordState(state: unknown): Record<string, unknown> {
+    if (state && typeof state === "object") {
+      return { ...(state as Record<string, unknown>) };
+    }
+
+    return {};
   }
 }
 

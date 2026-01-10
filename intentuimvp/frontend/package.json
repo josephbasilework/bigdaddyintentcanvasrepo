@@ -11,6 +11,7 @@
     "test:ui": "vitest --ui"
   },
   "dependencies": {
+    "@ag-ui/client": "^0.0.42",
     "@copilotkit/react-core": "^1.50.1",
     "@copilotkit/react-ui": "^1.50.1",
     "@tiptap/extension-placeholder": "^3.15.1",
@@ -23,6 +24,7 @@
     "react-dom": "19.2.3",
     "react-draggable": "^4.5.0",
     "react-zoom-pan-pinch": "^3.7.0",
+    "rxjs": "^7.8.1",
     "zustand": "^5.0.9"
   },
   "devDependencies": {
