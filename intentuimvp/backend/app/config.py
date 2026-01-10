@@ -69,17 +69,21 @@ class Settings(BaseSettings):
     )
 
     # Redis (for job queue)
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        description="Redis URL for job queue (e.g., redis://localhost:6379/0)",
+    )
     redis_host: str = Field(
-        default="localhost", description="Redis host for job queue"
+        default="localhost", description="Redis host for job queue (deprecated, use redis_url)"
     )
     redis_port: int = Field(
-        default=6379, description="Redis port for job queue"
+        default=6379, description="Redis port for job queue (deprecated, use redis_url)"
     )
     redis_db: int = Field(
-        default=0, description="Redis database number for job queue"
+        default=0, description="Redis database number for job queue (deprecated, use redis_url)"
     )
     redis_password: str = Field(
-        default="", description="Redis password (optional)"
+        default="", description="Redis password (optional, deprecated, use redis_url)"
     )
 
     @field_validator("pydantic_gateway_api_key")

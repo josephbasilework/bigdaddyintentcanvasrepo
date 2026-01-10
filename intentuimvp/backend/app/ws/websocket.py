@@ -1,11 +1,23 @@
-"""WebSocket endpoint for real-time updates."""
+"""WebSocket endpoint for real-time updates using AG-UI protocol."""
 
 import asyncio
+import json
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
+from pydantic import ValidationError
 
+from app.agui import (
+    AgentNotificationMessage,
+    AgentNotificationPayload,
+    AgentToUIMessageType,
+    AGUIEnvelope,
+    StateSnapshotMessage,
+    StateSnapshotPayload,
+    StateSyncRequestMessage,
+)
 from app.config import get_settings
+from app.ws.state_manager import get_state_manager
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -52,7 +64,7 @@ class ConnectionManager:
         )
 
     async def send_personal_message(self, message: str, websocket: WebSocket) -> None:
-        """Send a message to a specific WebSocket connection.
+        """Send a plain text message to a specific WebSocket connection.
 
         Args:
             message: The message to send.
@@ -64,8 +76,23 @@ class ConnectionManager:
             logger.error(f"Error sending personal message: {e}")
             self.disconnect(websocket)
 
+    async def send_agui_message(
+        self, message: AgentToUIMessageType, websocket: WebSocket
+    ) -> None:
+        """Send an AG-UI protocol message to a specific WebSocket connection.
+
+        Args:
+            message: The AG-UI message to send.
+            websocket: The WebSocket connection to send the message to.
+        """
+        try:
+            await websocket.send_text(message.model_dump_json())
+        except Exception as e:
+            logger.error(f"Error sending AG-UI message: {e}")
+            self.disconnect(websocket)
+
     async def broadcast(self, message: str) -> None:
-        """Broadcast a message to all active WebSocket connections.
+        """Broadcast a plain text message to all active WebSocket connections.
 
         Args:
             message: The message to broadcast.
@@ -82,6 +109,24 @@ class ConnectionManager:
                 logger.error(f"Error broadcasting to connection: {e}")
                 self.disconnect(connection)
 
+    async def broadcast_agui(self, message: AgentToUIMessageType) -> None:
+        """Broadcast an AG-UI protocol message to all active WebSocket connections.
+
+        Args:
+            message: The AG-UI message to broadcast.
+        """
+        if not self.active_connections:
+            return
+
+        message_json = message.model_dump_json()
+        connections = list(self.active_connections)
+        for connection in connections:
+            try:
+                await connection.send_text(message_json)
+            except Exception as e:
+                logger.error(f"Error broadcasting AG-UI message: {e}")
+                self.disconnect(connection)
+
     async def start_heartbeat(self) -> None:
         """Start the heartbeat task that sends ping messages every 30 seconds."""
         if self._heartbeat_task is not None and not self._heartbeat_task.done():
@@ -90,11 +135,18 @@ class ConnectionManager:
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
 
     async def _heartbeat_loop(self) -> None:
-        """Send heartbeat messages to all connected clients."""
+        """Send heartbeat AG-UI messages to all connected clients."""
         while True:
             await asyncio.sleep(HEARTBEAT_INTERVAL)
             if self.active_connections:
-                await self.broadcast('{"type":"heartbeat"}')
+                # Send heartbeat as AG-UI notification message
+                payload = AgentNotificationPayload(
+                    level="info",
+                    title="Heartbeat",
+                    message="Connection alive",
+                )
+                heartbeat_msg = AgentNotificationMessage(payload=payload)
+                await self.broadcast_agui(heartbeat_msg)
                 logger.debug("Heartbeat sent to all connections")
 
     async def stop_heartbeat(self) -> None:
@@ -141,14 +193,14 @@ async def verify_websocket_auth(websocket: WebSocket) -> bool:
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
-    """WebSocket endpoint for real-time updates.
+    """WebSocket endpoint for AG-UI protocol real-time communication.
 
-    Clients connect to this endpoint to receive real-time updates
-    from the backend. The endpoint handles:
+    Clients connect to this endpoint to exchange AG-UI protocol messages
+    with the backend. The endpoint handles:
     - Connection acceptance with authentication
-    - Message receiving from clients
-    - Broadcasting updates to all connected clients
-    - Heartbeat every 30 seconds
+    - AG-UI message validation and routing
+    - Broadcasting agent messages to connected clients
+    - Heartbeat every 30 seconds using AG-UI notification messages
 
     Args:
         websocket: The WebSocket connection.
@@ -163,6 +215,15 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     await manager.connect(websocket)
 
+    # Send welcome notification
+    welcome_payload = AgentNotificationPayload(
+        level="info",
+        title="Connected",
+        message="WebSocket connection established",
+    )
+    welcome_msg = AgentNotificationMessage(payload=welcome_payload)
+    await manager.send_agui_message(welcome_msg, websocket)
+
     # Start heartbeat if this is the first connection
     if len(manager.active_connections) == 1:
         await manager.start_heartbeat()
@@ -171,12 +232,107 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         while True:
             # Receive messages from client
             data = await websocket.receive_text()
-            logger.debug(f"Received message: {data}")
+            logger.debug(f"Received raw message: {data}")
 
-            # Echo back for now (can be extended for bidirectional communication)
-            await manager.send_personal_message(
-                f'{{"type":"echo","message":"{data}"}}', websocket
-            )
+            # Parse and validate as AG-UI message
+            try:
+                message_data = json.loads(data)
+
+                # Validate envelope structure
+                envelope = AGUIEnvelope(**message_data)
+
+                # For UI -> Agent messages, validate the specific message type
+                if envelope.source == "ui" and envelope.target == "agent":
+                    message_type = message_data.get('type')
+
+                    # Handle state sync requests
+                    if message_type == "state.sync_request":
+                        try:
+                            # Validate the state sync request message
+                            StateSyncRequestMessage(**message_data)
+                            state_manager = get_state_manager()
+
+                            # Get full state snapshot
+                            seq, state, checksum = await state_manager.create_snapshot()
+
+                            # Send state snapshot
+                            snapshot_payload = StateSnapshotPayload(
+                                sequence=seq,
+                                state=state,
+                                checksum=checksum,
+                            )
+                            snapshot_msg = StateSnapshotMessage(
+                                payload=snapshot_payload,
+                                correlation_id=envelope.message_id,
+                            )
+                            await manager.send_agui_message(snapshot_msg, websocket)
+
+                            logger.info(
+                                f"Sent state snapshot: sequence={seq}, "
+                                f"state_keys={list(state.keys())}"
+                            )
+                        except ValidationError as e:
+                            logger.error(f"State sync request validation failed: {e}")
+                            error_payload = AgentNotificationPayload(
+                                level="warning",
+                                title="Invalid Sync Request",
+                                message=str(e),
+                            )
+                            error_msg = AgentNotificationMessage(payload=error_payload)
+                            await manager.send_agui_message(error_msg, websocket)
+                        except Exception as e:
+                            logger.error(f"Error handling state sync request: {e}")
+                            error_payload = AgentNotificationPayload(
+                                level="warning",
+                                title="Sync Error",
+                                message="Failed to generate state snapshot",
+                            )
+                            error_msg = AgentNotificationMessage(payload=error_payload)
+                            await manager.send_agui_message(error_msg, websocket)
+
+                    else:
+                        # Try to validate as UIToAgentMessageType
+                        # This is a placeholder - actual routing would be handled here
+                        logger.info(
+                            f"Received UI->Agent message: type={message_type}"
+                        )
+
+                        # For now, send acknowledgment
+                        ack_payload = AgentNotificationPayload(
+                            level="info",
+                            title="Message Received",
+                            message=f"Processed {message_type or 'unknown'} message",
+                        )
+                        ack_msg = AgentNotificationMessage(
+                            payload=ack_payload,
+                            correlation_id=envelope.message_id,
+                        )
+                        await manager.send_agui_message(ack_msg, websocket)
+
+                else:
+                    logger.warning(
+                        f"Invalid message direction: source={envelope.source}, target={envelope.target}"
+                    )
+
+            except ValidationError as e:
+                logger.error(f"AG-UI message validation failed: {e}")
+                # Send error notification
+                error_payload = AgentNotificationPayload(
+                    level="warning",
+                    title="Invalid Message",
+                    message="Message does not conform to AG-UI protocol",
+                )
+                error_msg = AgentNotificationMessage(payload=error_payload)
+                await manager.send_agui_message(error_msg, websocket)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse message as JSON: {e}")
+                error_payload = AgentNotificationPayload(
+                    level="warning",
+                    title="Invalid JSON",
+                    message="Message must be valid JSON",
+                )
+                error_msg = AgentNotificationMessage(payload=error_payload)
+                await manager.send_agui_message(error_msg, websocket)
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)

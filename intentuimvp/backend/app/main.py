@@ -80,6 +80,12 @@ async def lifespan(app: FastAPI):
     print(f"Starting {settings.app_name} v{settings.app_version}")
     print(f"Environment: {settings.environment}")
 
+    # Validate required Gateway API key
+    if not settings.pydantic_gateway_api_key or settings.pydantic_gateway_api_key.strip() == "":
+        raise RuntimeError("PYDANTIC_GATEWAY_API_KEY required")
+    logger.info("Gateway API key configured")
+    print("Gateway API key configured")
+
     # Initialize backup scheduler if enabled
     if settings.backup_enabled:
         _scheduler = BackgroundScheduler()

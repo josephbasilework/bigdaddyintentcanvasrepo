@@ -46,7 +46,9 @@ export type AgentToUIMessageType =
   | AgentResultMessage
   | AgentErrorMessage
   | AgentRequestMessage
-  | AgentNotificationMessage;
+  | AgentNotificationMessage
+  | StateUpdateMessage
+  | StateSnapshotMessage;
 
 /**
  * Agent status update (working, idle, error)
@@ -135,6 +137,30 @@ export interface AgentNotificationMessage extends AgentToUIMessage {
   };
 }
 
+/**
+ * State update message with sequence tracking and checksum
+ */
+export interface StateUpdateMessage extends AgentToUIMessage {
+  type: 'state.update';
+  payload: {
+    sequence: number; // Monotonically increasing sequence number
+    patch: JSONPatchOperation[]; // JSON Patch operations to apply
+    checksum: string; // SHA-256 checksum of the patch data
+  };
+}
+
+/**
+ * State snapshot message (full state response)
+ */
+export interface StateSnapshotMessage extends AgentToUIMessage {
+  type: 'state.snapshot';
+  payload: {
+    sequence: number; // Current sequence number at snapshot time
+    state: Record<string, unknown>; // Full state snapshot
+    checksum: string; // SHA-256 checksum of the state data
+  };
+}
+
 // ============================================================================
 // UI -> Agent Messages
 // ============================================================================
@@ -154,7 +180,8 @@ export type UIToAgentMessageType =
   | UICommandMessage
   | UIResponseMessage
   | UICancelMessage
-  | UIContextMessage;
+  | UIContextMessage
+  | UIStateSyncRequestMessage;
 
 /**
  * UI command to agent (execute an operation)
@@ -202,6 +229,196 @@ export interface UIContextMessage extends UIToAgentMessage {
   payload: {
     context: UIContext;
   };
+}
+
+/**
+ * UI state sync request (request full state from server)
+ */
+export interface UIStateSyncRequestMessage extends UIToAgentMessage {
+  type: 'state.sync_request';
+  payload: {
+    last_sequence: number | null; // The last sequence number the client received
+  };
+}
+
+// ============================================================================
+// Context Types
+// ============================================================================
+
+/**
+ * JSON Patch operation as per RFC 6902
+ */
+export interface JSONPatchOperation {
+  op: 'add' | 'remove' | 'replace' | 'move' | 'copy' | 'test';
+  path: string;
+  value?: unknown;
+  from?: string;
+}
+
+// ============================================================================
+// State Sync Types
+// ============================================================================
+
+/**
+ * State sync status for the client
+ */
+export interface StateSyncStatus {
+  lastSequence: number | null; // The last sequence number received
+  isSynced: boolean; // Whether the client is in sync
+  needsSync: boolean; // Whether the client needs a full state sync
+}
+
+/**
+ * State update result
+ */
+export interface StateUpdateResult {
+  applied: boolean; // Whether the update was applied
+  reason?: string; // Reason why it wasn't applied (if any)
+  gapDetected: boolean; // Whether a sequence gap was detected
+}
+
+/**
+ * Apply JSON Patch operations to a target object
+ *
+ * @param target - The target object to apply patches to
+ * @param patches - Array of JSON Patch operations
+ * @returns The patched object
+ */
+export function applyJSONPatch(
+  target: Record<string, unknown>,
+  patches: JSONPatchOperation[]
+): Record<string, unknown> {
+  const result = { ...target };
+
+  for (const patch of patches) {
+    switch (patch.op) {
+      case 'add':
+      case 'replace':
+        setAtPath(result, patch.path, patch.value);
+        break;
+      case 'remove':
+        removeAtPath(result, patch.path);
+        break;
+      case 'move':
+        if (patch.from) {
+          const value = getAtPath(result, patch.from);
+          removeAtPath(result, patch.from);
+          setAtPath(result, patch.path, value);
+        }
+        break;
+      case 'copy':
+        if (patch.from) {
+          const value = getAtPath(result, patch.from);
+          setAtPath(result, patch.path, value);
+        }
+        break;
+      case 'test':
+        const current = getAtPath(result, patch.path);
+        if (current !== patch.value) {
+          throw new Error(
+            `Test failed at ${patch.path}: expected ${JSON.stringify(patch.value)}, got ${JSON.stringify(current)}`
+          );
+        }
+        break;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Set a value at a JSON Pointer path
+ */
+function setAtPath(obj: Record<string, unknown>, path: string, value: unknown): void {
+  if (path === '' || path === '/') {
+    if (typeof value === 'object' && value !== null) {
+      Object.assign(obj, value);
+    }
+    return;
+  }
+
+  const parts = path.slice(1).split('/');
+  let current: Record<string, unknown> = obj;
+
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (!(part in current)) {
+      current[part] = {};
+    }
+    const next = current[part];
+    if (typeof next === 'object' && next !== null) {
+      current = next as Record<string, unknown>;
+    } else {
+      current = {};
+    }
+  }
+
+  current[parts[parts.length - 1]] = value;
+}
+
+/**
+ * Get a value at a JSON Pointer path
+ */
+function getAtPath(obj: Record<string, unknown>, path: string): unknown {
+  if (path === '' || path === '/') {
+    return obj;
+  }
+
+  const parts = path.slice(1).split('/');
+  let current: Record<string, unknown> | unknown = obj;
+
+  for (const part of parts) {
+    if (typeof current !== 'object' || current === null || !(part in current)) {
+      throw new Error(`Path not found: ${path}`);
+    }
+    current = (current as Record<string, unknown>)[part];
+  }
+
+  return current;
+}
+
+/**
+ * Remove a value at a JSON Pointer path
+ */
+function removeAtPath(obj: Record<string, unknown>, path: string): void {
+  if (path === '' || path === '/') {
+    Object.keys(obj).forEach((key) => delete obj[key]);
+    return;
+  }
+
+  const parts = path.slice(1).split('/');
+  let current: Record<string, unknown> = obj;
+
+  for (let i = 0; i < parts.length - 1; i++) {
+    const part = parts[i];
+    if (!(part in current)) {
+      throw new Error(`Path not found: ${path}`);
+    }
+    current = current[part];
+  }
+
+  const lastPart = parts[parts.length - 1];
+  if (!(lastPart in current)) {
+    throw new Error(`Path not found: ${path}`);
+  }
+
+  delete current[lastPart];
+}
+
+/**
+ * Compute SHA-256 checksum for data
+ *
+ * @param data - The data to checksum
+ * @returns A string in format "sha256:{hexdigest}"
+ */
+export async function computeChecksum(data: unknown): Promise<string> {
+  const jsonStr = JSON.stringify(data, Object.keys(data as Record<string, unknown>).sort());
+  const encoder = new TextEncoder();
+  const dataBuffer = encoder.encode(jsonStr);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `sha256:${hashHex}`;
 }
 
 // ============================================================================

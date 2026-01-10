@@ -5,15 +5,24 @@ Integrates with the registry and security validator.
 """
 
 import asyncio
+import sys
 from dataclasses import dataclass
 from typing import Any
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
-from sqlalchemy.ext.asyncio import AsyncSession
+# Import mcp SDK, avoiding shadowing by local app.mcp module
+# Temporarily remove app.mcp from sys.modules if present
+_app_mcp = sys.modules.pop("app.mcp", None)
+try:
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+finally:
+    # Restore app.mcp to sys.modules
+    if _app_mcp is not None:
+        sys.modules["app.mcp"] = _app_mcp
+from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
-from app.mcp.registry import MCPServerRegistry
-from app.mcp.security import MCPSecurityValidator
+from app.mcp.registry import MCPServerRegistry  # noqa: E402
+from app.mcp.security import MCPSecurityValidator  # noqa: E402
 
 
 @dataclass

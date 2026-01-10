@@ -46,6 +46,10 @@ line-length = 100
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501"]
 
+# Gateway-only enforcement: Banned LLM provider imports (openai, anthropic, etc.)
+# are checked via tests/test_gateway_only_enforcement.py since Ruff doesn't
+# support custom rules. Direct provider imports only allowed in app/gateway/client.py
+
 [tool.pyright]
 pythonVersion = "3.11"
 strict = ["app/**.py"]
