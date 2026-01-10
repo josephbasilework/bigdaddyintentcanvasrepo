@@ -1,7 +1,7 @@
 """SQLAlchemy models for intent indexing and attachments."""
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import JSON, Boolean, Column, DateTime, Float, Integer, String, Text
 from sqlalchemy.ext.declarative import declarative_base
@@ -36,6 +36,7 @@ class UserIntent(Base):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
+        created_at = cast(datetime | None, self.created_at)
         return {
             "id": self.id,
             "user_id": self.user_id,
@@ -45,7 +46,7 @@ class UserIntent(Base):
             "context": self.context,
             "handler": self.handler,
             "executed": self.executed,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": created_at.isoformat() if created_at else None,
         }
 
 
@@ -72,6 +73,8 @@ class AttachmentDB(Base):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
+        processed_at = cast(datetime | None, self.processed_at)
+        created_at = cast(datetime | None, self.created_at)
         return {
             "id": self.id,
             "user_id": self.user_id,
@@ -85,9 +88,9 @@ class AttachmentDB(Base):
             "description": self.description,
             "status": self.status,
             "error_message": self.error_message,
-            "processed_at": self.processed_at.isoformat() if self.processed_at else None,
+            "processed_at": processed_at.isoformat() if processed_at else None,
             "context_id": self.context_id,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": created_at.isoformat() if created_at else None,
         }
 
 
@@ -107,6 +110,7 @@ class AssumptionResolutionDB(Base):
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
+        created_at = cast(datetime | None, self.created_at)
         return {
             "id": self.id,
             "session_id": self.session_id,
@@ -115,5 +119,5 @@ class AssumptionResolutionDB(Base):
             "original_text": self.original_text,
             "final_text": self.final_text,
             "category": self.category,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": created_at.isoformat() if created_at else None,
         }

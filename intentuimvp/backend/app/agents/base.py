@@ -4,6 +4,7 @@ All agents MUST inherit from BaseAgent and use self.gateway for LLM calls.
 Direct provider SDK imports (OpenAI, Anthropic, etc.) are PROHIBITED.
 """
 
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, TypeVar
@@ -142,8 +143,6 @@ class BaseAgent(ABC):
         # Parse and validate against response model
         try:
             # Assuming Gateway returns JSON in content
-            import json
-
             parsed = json.loads(content)
             return response_model.model_validate(parsed)
 

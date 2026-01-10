@@ -88,8 +88,8 @@ async def lifespan(app: FastAPI):
 
     # Initialize backup scheduler if enabled
     if settings.backup_enabled:
-        _scheduler = BackgroundScheduler()
-        _scheduler.add_job(
+        scheduler = BackgroundScheduler()
+        scheduler.add_job(
             _run_scheduled_backups,
             "cron",
             hour=settings.backup_schedule_hour,
@@ -97,7 +97,8 @@ async def lifespan(app: FastAPI):
             id="daily_backup",
             name="Daily backup job",
         )
-        _scheduler.start()
+        scheduler.start()
+        _scheduler = scheduler
         logger.info(
             f"Backup scheduler started: daily at {settings.backup_schedule_hour:02d}:00"
         )

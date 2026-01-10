@@ -1,12 +1,19 @@
 """SQLAlchemy model for edge table."""
 
+from __future__ import annotations
+
 from datetime import datetime
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.canvas import Canvas
+    from app.models.node import Node
 
 
 class RelationType(str, Enum):
@@ -41,11 +48,11 @@ class Edge(Base):
     )
 
     # Relationships
-    canvas: Mapped["Canvas"] = relationship("Canvas", back_populates="edges")  # noqa: F821
-    from_node: Mapped["Node"] = relationship(  # noqa: F821
+    canvas: Mapped[Canvas] = relationship("Canvas", back_populates="edges")
+    from_node: Mapped[Node] = relationship(
         "Node", foreign_keys=[from_node_id], back_populates="outgoing_edges"
     )
-    to_node: Mapped["Node"] = relationship(  # noqa: F821
+    to_node: Mapped[Node] = relationship(
         "Node", foreign_keys=[to_node_id], back_populates="incoming_edges"
     )
 

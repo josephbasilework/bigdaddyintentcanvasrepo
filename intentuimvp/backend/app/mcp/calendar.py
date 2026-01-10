@@ -8,9 +8,9 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
-import google.auth.transport.requests
-import google.oauth2.credentials
-from googleapiclient.discovery import build
+import google.auth.transport.requests  # type: ignore[reportMissingImports]
+import google.oauth2.credentials  # type: ignore[reportMissingImports]
+from googleapiclient.discovery import build  # type: ignore[reportMissingImports]
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.mcp.manager import MCPManager

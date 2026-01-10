@@ -1,11 +1,18 @@
 """SQLAlchemy model for canvas table."""
 
+from __future__ import annotations
+
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.edge import Edge
+    from app.models.node import Node
 
 
 class Canvas(Base):
@@ -24,10 +31,10 @@ class Canvas(Base):
     )
 
     # Relationships
-    nodes: Mapped[list["Node"]] = relationship(  # noqa: F821
+    nodes: Mapped[list[Node]] = relationship(
         "Node", back_populates="canvas", cascade="all, delete-orphan"
     )
-    edges: Mapped[list["Edge"]] = relationship(  # noqa: F821
+    edges: Mapped[list[Edge]] = relationship(
         "Edge", back_populates="canvas", cascade="all, delete-orphan"
     )
 

@@ -1,13 +1,20 @@
 """SQLAlchemy model for node table."""
 
+from __future__ import annotations
+
 import json
 from datetime import datetime
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
+
+if TYPE_CHECKING:
+    from app.models.canvas import Canvas
+    from app.models.edge import Edge
 
 
 class NodeType(str, Enum):
@@ -37,11 +44,11 @@ class Node(Base):
     )
 
     # Relationships
-    canvas: Mapped["Canvas"] = relationship("Canvas", back_populates="nodes")  # noqa: F821
-    outgoing_edges: Mapped[list["Edge"]] = relationship(  # noqa: F821
+    canvas: Mapped[Canvas] = relationship("Canvas", back_populates="nodes")
+    outgoing_edges: Mapped[list[Edge]] = relationship(
         "Edge", foreign_keys="Edge.from_node_id", back_populates="from_node"
     )
-    incoming_edges: Mapped[list["Edge"]] = relationship(  # noqa: F821
+    incoming_edges: Mapped[list[Edge]] = relationship(
         "Edge", foreign_keys="Edge.to_node_id", back_populates="to_node"
     )
 

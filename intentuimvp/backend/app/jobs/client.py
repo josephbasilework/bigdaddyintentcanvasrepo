@@ -193,6 +193,7 @@ async def get_job_status(job_id: str) -> dict[str, Any] | None:
     Returns:
         Job status dict or None if not found
     """
+    redis: Any | None = None
     try:
         redis = await create_pool(get_redis_settings())
         job_key = f"arq:job:{job_id}"
@@ -213,7 +214,7 @@ async def get_job_status(job_id: str) -> dict[str, Any] | None:
         logger.error(f"Failed to get job status for {job_id}: {e}")
         return None
     finally:
-        if "redis" in locals():
+        if redis is not None:
             await redis.close()
 
 

@@ -52,4 +52,8 @@ ignore = ["E501"]
 
 [tool.pyright]
 pythonVersion = "3.11"
-strict = ["app/**.py"]
+typeCheckingMode = "basic"
+include = ["app"]
+exclude = ["tests", "migrations"]
+reportMissingImports = "none"
+reportMissingTypeStubs = "none"

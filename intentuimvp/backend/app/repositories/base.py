@@ -1,7 +1,7 @@
 """Base repository class for async CRUD operations."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from pydantic import BaseModel
 from sqlalchemy import UnaryExpression, select
@@ -63,7 +63,8 @@ class BaseRepository(ABC, Generic[ModelType, CreateSchemaType, UpdateSchemaType]
         Returns:
             Model instance if found, None otherwise
         """
-        stmt = select(self.model).where(self.model.id == id)
+        model_id = cast(Any, self.model).id
+        stmt = select(self.model).where(model_id == id)
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 

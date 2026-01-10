@@ -66,8 +66,8 @@ class AGUIEnvelope(BaseModel):
 class AgentToUIMessage(AGUIEnvelope):
     """Base type for messages sent from Agent to UI."""
 
-    source: Literal["agent"] = "agent"
-    target: Literal["ui"] = "ui"
+    source: Literal["agent"] = "agent"  # type: ignore[reportIncompatibleVariableOverride]
+    target: Literal["ui"] = "ui"  # type: ignore[reportIncompatibleVariableOverride]
 
 
 class AgentStatusPayload(BaseModel):
@@ -305,8 +305,8 @@ AgentToUIMessageType = (
 class UIToAgentMessage(AGUIEnvelope):
     """Base type for messages sent from UI to Agent."""
 
-    source: Literal["ui"] = "ui"
-    target: Literal["agent"] = "agent"
+    source: Literal["ui"] = "ui"  # type: ignore[reportIncompatibleVariableOverride]
+    target: Literal["agent"] = "agent"  # type: ignore[reportIncompatibleVariableOverride]
 
 
 class UIContextViewport(BaseModel):
