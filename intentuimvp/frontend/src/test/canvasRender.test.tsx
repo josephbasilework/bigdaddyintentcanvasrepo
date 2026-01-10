@@ -13,6 +13,13 @@ vi.mock('react-zoom-pan-pinch', () => ({
   ),
 }));
 
+vi.mock('react-draggable', () => ({
+  __esModule: true,
+  default: ({ children }: { children: ReactNode }) => (
+    <div data-testid="draggable">{children}</div>
+  ),
+}));
+
 describe('workspace canvas', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -44,5 +51,40 @@ describe('workspace canvas', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
     expect(screen.getByTestId('canvas-container')).toBeInTheDocument();
+  });
+
+  it('shows an empty state message for first-time users', async () => {
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    expect(screen.getByTestId('empty-canvas-state')).toBeInTheDocument();
+    expect(screen.getByText('Your canvas is empty')).toBeInTheDocument();
+  });
+
+  it('does not show empty state when nodes exist', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'text',
+            x: 0,
+            y: 0,
+            z: 1,
+            title: 'First node',
+            content: 'Hello',
+          },
+        ],
+        edges: [],
+      }),
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    expect(screen.queryByTestId('empty-canvas-state')).not.toBeInTheDocument();
   });
 });
