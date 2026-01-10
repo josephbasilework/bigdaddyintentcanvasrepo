@@ -21,7 +21,7 @@ from app.agents.intent_decipherer import (
     IntentDecipheringResult,
     get_intent_decipherer,
 )
-from app.context.models import Assumption, ContextPayload, RoutingDecision
+from app.context.models import Assumption, ContextPayload, RoutingDecision, parse_assumption
 
 logger = logging.getLogger(__name__)
 
@@ -285,16 +285,15 @@ class ContextRouter:
             raise LLMRoutingError("LLM classification error")
 
         # Convert assumption dicts to Assumption objects
-        assumptions = [
-            Assumption(
-                id=a.get("id", ""),
-                text=a.get("text", ""),
-                confidence=a.get("confidence", 0.5),
-                category=a.get("category", "other"),
-                explanation=a.get("explanation"),
-            )
-            for a in result.assumptions
-        ]
+        assumptions = []
+        for assumption_payload in result.assumptions:
+            try:
+                assumptions.append(parse_assumption(assumption_payload))
+            except ValueError as exc:
+                logger.warning(
+                    "Skipping invalid assumption payload from LLM",
+                    extra={"error": str(exc)},
+                )
 
         # Filter to only include assumptions below confidence threshold
         # These need user confirmation

@@ -170,6 +170,53 @@ class TestContextRouter:
         assert "ambiguous" in decision.reason.lower()
 
     @pytest.mark.asyncio
+    async def test_route_llm_skips_invalid_assumptions(self) -> None:
+        """Test invalid assumptions are skipped during routing."""
+        result = IntentDecipheringResult(
+            primary_intent=IntentClassification(
+                name="research",
+                confidence=0.8,
+                description="research intent",
+            ),
+            assumptions=[
+                {
+                    "id": "assumption-valid",
+                    "text": "Use last quarter's data",
+                    "confidence": 0.65,
+                    "category": "parameter",
+                },
+                {
+                    "id": "assumption-empty-text",
+                    "text": "   ",
+                    "confidence": 0.4,
+                    "category": "context",
+                },
+                {
+                    "id": "assumption-bad-confidence",
+                    "text": "Deliver as summary",
+                    "confidence": 1.5,
+                    "category": "intent",
+                },
+                {
+                    "id": "assumption-bad-category",
+                    "text": "Focus on revenue",
+                    "confidence": 0.4,
+                    "category": "nonsense",
+                },
+            ],
+            should_auto_execute=False,
+            reasoning="LLM ok",
+        )
+        fake = FakeIntentDecipherer(result=result)
+        router = ContextRouter(intent_decipherer=fake)
+        payload = ContextPayload(text="Research quarterly performance")
+        decision = await router.route(payload)
+
+        assert decision.handler == "research_handler"
+        assert len(decision.assumptions) == 1
+        assert decision.assumptions[0].id == "assumption-valid"
+
+    @pytest.mark.asyncio
     async def test_route_keyword_fallback_on_llm_error(self) -> None:
         """Test keyword fallback when LLM fails."""
         fake = FakeIntentDecipherer(raises=True)

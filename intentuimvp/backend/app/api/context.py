@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.intent_decipherer import IntentDeciphererAgent, get_intent_decipherer
 from app.api.assumption_store import get_assumption_store
-from app.context.models import ContextPayload
+from app.context.models import ContextPayload, parse_assumption
 from app.context.router import ContextRouter, get_context_router
 from app.database import get_db
 from app.models.intent import AssumptionResolutionDB
@@ -252,15 +252,22 @@ async def generate_assumptions(
         ]
 
         assumption_responses = []
-        for assumption in result.assumptions:
-            assumption_id = assumption.get("id") or str(uuid.uuid4())
+        for assumption_payload in result.assumptions:
+            try:
+                assumption = parse_assumption(assumption_payload)
+            except ValueError as exc:
+                logger.warning(
+                    "Skipping invalid assumption payload from LLM",
+                    extra={"error": str(exc)},
+                )
+                continue
             assumption_responses.append(
                 AssumptionResponse(
-                    id=assumption_id,
-                    text=assumption.get("text", ""),
-                    confidence=assumption.get("confidence", 0.5),
-                    category=assumption.get("category", "other"),
-                    explanation=assumption.get("explanation"),
+                    id=assumption.id,
+                    text=assumption.text,
+                    confidence=assumption.confidence,
+                    category=assumption.category,
+                    explanation=assumption.explanation,
                 )
             )
 

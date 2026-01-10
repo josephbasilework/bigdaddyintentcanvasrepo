@@ -3,9 +3,11 @@
 Defines the payloads and decision structures used by the context router.
 """
 
+import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal, cast
 
 
 class AssumptionCategory(str, Enum):
@@ -37,8 +39,16 @@ class Assumption:
 
     def __post_init__(self) -> None:
         """Validate assumption data."""
+        if not isinstance(self.id, str) or not self.id.strip():
+            raise ValueError("Assumption id cannot be empty")
+        if not isinstance(self.text, str) or not self.text.strip():
+            raise ValueError("Assumption text cannot be empty")
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError("Confidence must be between 0 and 1")
+        if not isinstance(self.category, str):
+            raise ValueError("Assumption category must be a string")
+        if self.category not in {category.value for category in AssumptionCategory}:
+            raise ValueError("Assumption category must be a supported value")
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -49,6 +59,48 @@ class Assumption:
             "category": self.category,
             "explanation": self.explanation,
         }
+
+
+def parse_assumption(payload: Mapping[str, Any]) -> Assumption:
+    """Parse and validate a raw assumption payload."""
+    if not isinstance(payload, Mapping):
+        raise ValueError("Assumption payload must be a mapping")
+
+    raw_id = payload.get("id")
+    assumption_id = raw_id if raw_id is not None else str(uuid.uuid4())
+    raw_text = payload.get("text")
+    text = raw_text if raw_text is not None else ""
+    raw_confidence = payload.get("confidence", 0.5)
+
+    raw_category = payload.get("category")
+    if raw_category is None:
+        category = AssumptionCategory.OTHER.value
+    elif isinstance(raw_category, AssumptionCategory):
+        category = raw_category.value
+    else:
+        category = str(raw_category).strip().lower()
+
+    try:
+        confidence = float(raw_confidence)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Confidence must be between 0 and 1") from exc
+
+    explanation = payload.get("explanation")
+    if explanation is not None and not isinstance(explanation, str):
+        explanation = str(explanation)
+
+    category_value = cast(
+        Literal["context", "intent", "parameter", "other"],
+        category,
+    )
+
+    return Assumption(
+        id=str(assumption_id).strip(),
+        text=str(text).strip(),
+        confidence=confidence,
+        category=category_value,
+        explanation=explanation,
+    )
 
 
 @dataclass
