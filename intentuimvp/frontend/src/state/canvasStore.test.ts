@@ -61,8 +61,8 @@ describe('canvasStore', () => {
     it('should return unique node IDs', () => {
       const { result } = renderHook(() => useCanvasStore());
 
-      let id1: string;
-      let id2: string;
+      let id1 = '';
+      let id2 = '';
 
       act(() => {
         id1 = result.current.addNode({
@@ -89,7 +89,7 @@ describe('canvasStore', () => {
     it('should remove a node from the store', () => {
       const { result } = renderHook(() => useCanvasStore());
 
-      let nodeId: string;
+      let nodeId = '';
 
       act(() => {
         nodeId = result.current.addNode({
@@ -113,7 +113,7 @@ describe('canvasStore', () => {
     it('should clear selectedNodeId when removing selected node', () => {
       const { result } = renderHook(() => useCanvasStore());
 
-      let nodeId: string;
+      let nodeId = '';
 
       act(() => {
         nodeId = result.current.addNode({
@@ -138,8 +138,8 @@ describe('canvasStore', () => {
     it('should not affect selectedNodeId when removing non-selected node', () => {
       const { result } = renderHook(() => useCanvasStore());
 
-      let nodeId1: string;
-      let nodeId2: string;
+      let nodeId1 = '';
+      let nodeId2 = '';
 
       act(() => {
         nodeId1 = result.current.addNode({
@@ -173,7 +173,7 @@ describe('canvasStore', () => {
     it('should update node x, y coordinates', () => {
       const { result } = renderHook(() => useCanvasStore());
 
-      let nodeId: string;
+      let nodeId = '';
 
       act(() => {
         nodeId = result.current.addNode({
@@ -194,7 +194,7 @@ describe('canvasStore', () => {
     it('should update node x, y, z coordinates when z is provided', () => {
       const { result } = renderHook(() => useCanvasStore());
 
-      let nodeId: string;
+      let nodeId = '';
 
       act(() => {
         nodeId = result.current.addNode({
@@ -216,7 +216,7 @@ describe('canvasStore', () => {
     it('should not modify z coordinate when z is not provided', () => {
       const { result } = renderHook(() => useCanvasStore());
 
-      let nodeId: string;
+      let nodeId = '';
 
       act(() => {
         nodeId = result.current.addNode({
@@ -236,8 +236,8 @@ describe('canvasStore', () => {
     it('should not affect other nodes', () => {
       const { result } = renderHook(() => useCanvasStore());
 
-      let nodeId1: string;
-      let nodeId2: string;
+      let nodeId1 = '';
+      let nodeId2 = '';
 
       act(() => {
         nodeId1 = result.current.addNode({
@@ -267,7 +267,7 @@ describe('canvasStore', () => {
     it('should set selectedNodeId', () => {
       const { result } = renderHook(() => useCanvasStore());
 
-      let nodeId: string;
+      let nodeId = '';
 
       act(() => {
         nodeId = result.current.addNode({
@@ -286,7 +286,7 @@ describe('canvasStore', () => {
     it('should allow selecting null to deselect', () => {
       const { result } = renderHook(() => useCanvasStore());
 
-      let nodeId: string;
+      let nodeId = '';
 
       act(() => {
         nodeId = result.current.addNode({
@@ -313,7 +313,7 @@ describe('canvasStore', () => {
     it('should set selectedNodeId to null', () => {
       const { result } = renderHook(() => useCanvasStore());
 
-      let nodeId: string;
+      let nodeId = '';
 
       act(() => {
         nodeId = result.current.addNode({
@@ -340,7 +340,7 @@ describe('canvasStore', () => {
     it('should update node properties', () => {
       const { result } = renderHook(() => useCanvasStore());
 
-      let nodeId: string;
+      let nodeId = '';
 
       act(() => {
         nodeId = result.current.addNode({

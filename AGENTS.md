@@ -41,3 +41,4 @@ bd sync               # Sync with git
 ## Notes learned while working beads
 - 2026-01-09 22:31 EST: `git commit` runs pre-commit hooks (gitleaks, ruff, mypy, eslint, etc.), so expect checks to run on commit.
 - 2026-01-09 22:44 EST: `npm run build` in `intentuimvp/frontend` currently fails with a TypeScript error in `intentuimvp/frontend/src/agui/protocol.ts` (record indexing type narrowing needed).
+- 2026-01-10 00:07 EST: `pip install -r intentuimvp/backend/requirements.txt` hits a google-auth resolver conflict; `python3 -m pip install --no-deps -r intentuimvp/backend/requirements.txt` works since the file is a full freeze.

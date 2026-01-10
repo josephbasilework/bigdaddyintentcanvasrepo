@@ -6,6 +6,7 @@ Integrates with the registry and security validator.
 
 import asyncio
 import sys
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from typing import Any
 
@@ -42,6 +43,14 @@ class ToolExecutionResult:
     required_confirmation: bool = False
 
 
+@dataclass
+class MCPConnection:
+    """Tracks an MCP client session with its managed cleanup stack."""
+
+    session: ClientSession
+    exit_stack: AsyncExitStack
+
+
 class MCPManager:
     """Manages MCP server connections and tool execution.
 
@@ -61,8 +70,8 @@ class MCPManager:
         self._session = session
         self._registry = MCPServerRegistry(session)
         self._validator = MCPSecurityValidator(session)
-        # Active connections: server_id -> ClientSession
-        self._connections: dict[str, ClientSession] = {}
+        # Active connections: server_id -> MCPConnection
+        self._connections: dict[str, MCPConnection] = {}
         # Connection lock for thread safety
         self._connection_lock = asyncio.Lock()
 
@@ -121,16 +130,23 @@ class MCPManager:
             env=env,
         )
 
-        # Connect to server
-        stdio_transport = await stdio_client(server_params)
-        stdio_read, stdio_write = stdio_transport
-
-        # Create session
-        session = ClientSession(stdio_read, stdio_write)
-        await session.initialize()
+        exit_stack = AsyncExitStack()
+        try:
+            stdio_read, stdio_write = await exit_stack.enter_async_context(
+                stdio_client(server_params)
+            )
+            session = await exit_stack.enter_async_context(
+                ClientSession(stdio_read, stdio_write)
+            )
+            await session.initialize()
+        except Exception:
+            await exit_stack.aclose()
+            raise
 
         # Store connection
-        self._connections[server.server_id] = session
+        self._connections[server.server_id] = MCPConnection(
+            session=session, exit_stack=exit_stack
+        )
         return True
 
     async def stop_server(self, server_id: str) -> bool:
@@ -147,8 +163,8 @@ class MCPManager:
                 return False
 
             try:
-                session = self._connections[server_id]
-                await session.close()
+                connection = self._connections[server_id]
+                await connection.exit_stack.aclose()
                 del self._connections[server_id]
                 return True
             except Exception:
@@ -172,7 +188,7 @@ class MCPManager:
         if server_id not in self._connections:
             return None
 
-        session = self._connections[server_id]
+        session = self._connections[server_id].session
         try:
             response = await session.list_tools()
             return [
@@ -239,17 +255,24 @@ class MCPManager:
                 success=False, error=f"Server {server_id} not connected"
             )
 
-        session = self._connections[server_id]
+        session = self._connections[server_id].session
         try:
             result = await session.call_tool(tool_name, arguments=arguments)
 
             # Parse result content
             result_data = None
             if hasattr(result, "content"):
-                result_data = [
-                    {"type": item.type, "text": item.text}
-                    for item in result.content
-                ]
+                result_data = []
+                for item in result.content:
+                    if hasattr(item, "model_dump"):
+                        result_data.append(item.model_dump())
+                    else:
+                        result_data.append(
+                            {
+                                "type": getattr(item, "type", "unknown"),
+                                "text": getattr(item, "text", None),
+                            }
+                        )
             else:
                 result_data = result
 

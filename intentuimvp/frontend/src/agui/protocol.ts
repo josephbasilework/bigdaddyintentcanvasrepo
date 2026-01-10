@@ -394,7 +394,11 @@ function removeAtPath(obj: Record<string, unknown>, path: string): void {
     if (!(part in current)) {
       throw new Error(`Path not found: ${path}`);
     }
-    current = current[part];
+    const next = current[part];
+    if (typeof next !== 'object' || next === null) {
+      throw new Error(`Path not found: ${path}`);
+    }
+    current = next as Record<string, unknown>;
   }
 
   const lastPart = parts[parts.length - 1];
