@@ -18,19 +18,34 @@ export interface KeyboardShortcut {
  */
 export function matchesShortcut(event: KeyboardEvent, shortcut: KeyboardShortcut): boolean {
   const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
-  const cmdKey = isMac ? event.metaKey : event.ctrlKey;
+  const wantsCtrl = !!shortcut.ctrl;
+  const wantsMeta = !!shortcut.meta;
+  const wantsShift = !!shortcut.shift;
+  const wantsAlt = !!shortcut.alt;
+  const ctrlPressed = event.ctrlKey;
+  const metaPressed = event.metaKey;
+  const shiftPressed = event.shiftKey;
+  const altPressed = event.altKey;
 
   // Normalize key (handle special cases)
   const normalizedKey = event.key.toLowerCase();
+  const shortcutKey = shortcut.key.toLowerCase();
+
+  const metaMatches = wantsMeta
+    ? (isMac ? metaPressed : metaPressed || ctrlPressed)
+    : !metaPressed;
+  const ctrlMatches = wantsCtrl
+    ? ctrlPressed
+    : !(ctrlPressed && !(wantsMeta && !isMac));
+  const shiftMatches = wantsShift ? shiftPressed : !shiftPressed;
+  const altMatches = wantsAlt ? altPressed : !altPressed;
 
   return (
-    normalizedKey === shortcut.key.toLowerCase() &&
-    !!shortcut.ctrl === event.ctrlKey &&
-    !!shortcut.meta === event.metaKey &&
-    !!shortcut.shift === event.shiftKey &&
-    !!shortcut.alt === event.altKey &&
-    // For Cmd/Ctrl shortcuts, check the appropriate modifier
-    (shortcut.ctrl || shortcut.meta ? cmdKey : true)
+    normalizedKey === shortcutKey &&
+    ctrlMatches &&
+    metaMatches &&
+    shiftMatches &&
+    altMatches
   );
 }
 
@@ -77,13 +92,22 @@ export function useKeyboardShortcuts(
     const handleKeyDown = (event: Event) => {
       const keyboardEvent = event as KeyboardEvent;
       // Ignore events from input fields, textareas, and contentEditable elements
-      const target = keyboardEvent.target as HTMLElement;
-      if (
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.isContentEditable
-      ) {
-        return;
+      const eventTarget = keyboardEvent.target;
+      if (eventTarget instanceof HTMLElement) {
+        const contentEditable = eventTarget.getAttribute('contenteditable');
+        const isContentEditable =
+          eventTarget.isContentEditable ||
+          eventTarget.contentEditable === 'true' ||
+          contentEditable === 'true' ||
+          contentEditable === '';
+
+        if (
+          eventTarget.tagName === 'INPUT' ||
+          eventTarget.tagName === 'TEXTAREA' ||
+          isContentEditable
+        ) {
+          return;
+        }
       }
 
       // Find matching shortcut
