@@ -1,17 +1,54 @@
 """Context submission endpoint for routing user input and assumption reconciliation."""
 
 import logging
-from typing import Any, Literal
+import uuid
+from typing import Any, Literal, NoReturn
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
+from app.agents.intent_decipherer import IntentDeciphererAgent, get_intent_decipherer
 from app.api.assumption_store import get_assumption_store
 from app.context.models import ContextPayload
 from app.context.router import get_context_router
+from app.database import get_db
+from app.models.intent import AssumptionResolutionDB
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def get_decipherer() -> IntentDeciphererAgent:
+    """Get the intent decipherer instance for dependency injection."""
+    return get_intent_decipherer()
+
+
+def _validate_text(text: str) -> None:
+    """Validate incoming text payloads."""
+    if not text or not text.strip():
+        raise HTTPException(status_code=400, detail="Text field cannot be empty")
+
+    max_text_length = 10000
+    if len(text) > max_text_length:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Text exceeds maximum length of {max_text_length} characters",
+        )
+
+
+def _raise_internal_error(message: str, error: Exception) -> NoReturn:
+    """Raise a 500 HTTPException with a correlation ID for tracing."""
+    correlation_id = str(uuid.uuid4())
+    logger.error(
+        message,
+        extra={"correlation_id": correlation_id},
+        exc_info=True,
+    )
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail={"message": message, "correlation_id": correlation_id},
+    ) from error
 
 
 class AssumptionResponse(BaseModel):
@@ -36,12 +73,54 @@ class ContextResponse(BaseModel):
     should_auto_execute: bool = False
 
 
+class AssumptionGenerationRequest(BaseModel):
+    """Request model for generating assumptions from user input."""
+
+    text: str
+    attachments: list[str] | None = None
+
+
+class IntentAlternative(BaseModel):
+    """Alternative intent classification for ambiguity handling."""
+
+    name: str
+    confidence: float
+    description: str
+
+
+class AssumptionSetResponse(BaseModel):
+    """Response model for generated assumptions and intent options."""
+
+    intent: str
+    intent_description: str | None = None
+    confidence: float
+    alternatives: list[IntentAlternative]
+    assumptions: list[AssumptionResponse]
+    reasoning: str
+    should_auto_execute: bool
+    session_id: str | None = None
+
+
+class AssumptionResolutionPayload(BaseModel):
+    """Payload for a single assumption resolution."""
+
+    assumption_id: str
+    action: Literal["accept", "reject", "edit"]
+    edited_text: str | None = None
+    original_text: str | None = None
+    category: str | None = None
+    feedback: str | None = None
+
+
 class AssumptionResolutionRequest(BaseModel):
     """Request model for resolving a single assumption."""
 
     assumption_id: str
     action: Literal["accept", "reject", "edit"]
     edited_text: str | None = None
+    original_text: str | None = None
+    category: str | None = None
+    feedback: str | None = None
     session_id: str | None = None
 
 
@@ -49,7 +128,7 @@ class BatchAssumptionResolutionRequest(BaseModel):
     """Request model for resolving multiple assumptions at once."""
 
     session_id: str | None = None
-    resolutions: list[dict]  # Each dict has assumption_id, action, edited_text
+    resolutions: list[AssumptionResolutionPayload]
 
 
 class ResolvedAssumption(BaseModel):
@@ -61,6 +140,7 @@ class ResolvedAssumption(BaseModel):
     final_text: str
     category: str
     timestamp: str
+    feedback: str | None = None
 
 
 @router.post("/api/context", response_model=ContextResponse)
@@ -84,17 +164,7 @@ async def submit_context(payload: ContextPayload) -> ContextResponse:
     Raises:
         HTTPException: If routing fails or input is invalid.
     """
-    # Validate input
-    if not payload.text or not payload.text.strip():
-        raise HTTPException(status_code=400, detail="Text field cannot be empty")
-
-    # Sanitize input (basic length check)
-    max_text_length = 10000
-    if len(payload.text) > max_text_length:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Text exceeds maximum length of {max_text_length} characters",
-        )
+    _validate_text(payload.text)
 
     try:
         # Route through context router
@@ -150,8 +220,74 @@ async def submit_context(payload: ContextPayload) -> ContextResponse:
         raise HTTPException(status_code=500, detail="Internal routing error") from e
 
 
+@router.post("/api/context/assumptions", response_model=AssumptionSetResponse)
+async def generate_assumptions(
+    payload: AssumptionGenerationRequest,
+    decipherer: IntentDeciphererAgent = Depends(get_decipherer),
+) -> AssumptionSetResponse:
+    """Generate assumptions and intent alternatives for HITL confirmation."""
+    _validate_text(payload.text)
+
+    try:
+        result = await decipherer.decipher(payload.text)
+
+        alternatives = [
+            IntentAlternative(
+                name=alt.name,
+                confidence=alt.confidence,
+                description=alt.description,
+            )
+            for alt in result.alternative_intents
+        ]
+
+        assumption_responses = []
+        for assumption in result.assumptions:
+            assumption_id = assumption.get("id") or str(uuid.uuid4())
+            assumption_responses.append(
+                AssumptionResponse(
+                    id=assumption_id,
+                    text=assumption.get("text", ""),
+                    confidence=assumption.get("confidence", 0.5),
+                    category=assumption.get("category", "other"),
+                    explanation=assumption.get("explanation"),
+                )
+            )
+
+        assumptions_needing_confirmation = [
+            a
+            for a in assumption_responses
+            if a.confidence < decipherer.confidence_threshold
+        ]
+
+        session_id = None
+        if assumptions_needing_confirmation:
+            store = get_assumption_store()
+            session_id = store.create_session()
+
+        should_auto_execute = bool(result.should_auto_execute) and not assumptions_needing_confirmation
+
+        return AssumptionSetResponse(
+            intent=result.primary_intent.name,
+            intent_description=result.primary_intent.description,
+            confidence=result.primary_intent.confidence,
+            alternatives=alternatives,
+            assumptions=assumptions_needing_confirmation,
+            reasoning=result.reasoning,
+            should_auto_execute=should_auto_execute,
+            session_id=session_id,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        _raise_internal_error("Failed to generate assumptions", e)
+
+
 @router.post("/api/context/assumptions/resolve")
-async def resolve_assumption(request: AssumptionResolutionRequest) -> ResolvedAssumption:
+async def resolve_assumption(
+    request: AssumptionResolutionRequest,
+    db: Session = Depends(get_db),
+) -> ResolvedAssumption:
     """Resolve a single assumption by accepting, rejecting, or editing it.
 
     This endpoint allows the frontend to send user decisions about
@@ -174,22 +310,32 @@ async def resolve_assumption(request: AssumptionResolutionRequest) -> ResolvedAs
         if request.action == "edit" and not request.edited_text:
             raise HTTPException(
                 status_code=400,
-                detail="edited_text is required when action is 'edit'"
+                detail="edited_text is required when action is 'edit'",
             )
 
-        # For now, we don't have the original assumption text
-        # In a full implementation, this would be fetched from the session
-        # or passed along with the original request
-        original_text = "[original text not available]"
+        original_text = request.original_text or "[original text not available]"
+        category = request.category or "unknown"
 
         resolution = store.resolve_assumption(
             session_id=request.session_id or "default",
             assumption_id=request.assumption_id,
             action=request.action,
             original_text=original_text,
-            category="unknown",
+            category=category,
             edited_text=request.edited_text,
+            feedback=request.feedback,
         )
+
+        db_record = AssumptionResolutionDB(
+            session_id=request.session_id or "default",
+            assumption_id=request.assumption_id,
+            action=request.action,
+            original_text=original_text,
+            final_text=resolution["final_text"],
+            category=category,
+        )
+        db.add(db_record)
+        db.commit()
 
         return ResolvedAssumption(
             assumption_id=resolution["assumption_id"],
@@ -198,17 +344,20 @@ async def resolve_assumption(request: AssumptionResolutionRequest) -> ResolvedAs
             final_text=resolution["final_text"],
             category=resolution["category"],
             timestamp=str(resolution["timestamp"]),
+            feedback=resolution.get("feedback"),
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Assumption resolution failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to resolve assumption") from e
+        _raise_internal_error("Failed to resolve assumption", e)
 
 
 @router.post("/api/context/assumptions/batch-resolve")
-async def batch_resolve_assumptions(request: BatchAssumptionResolutionRequest) -> dict[str, Any]:
+async def batch_resolve_assumptions(
+    request: BatchAssumptionResolutionRequest,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
     """Resolve multiple assumptions at once.
 
     This batch endpoint allows efficient resolution of multiple assumptions
@@ -228,16 +377,39 @@ async def batch_resolve_assumptions(request: BatchAssumptionResolutionRequest) -
         session_id = request.session_id or "default"
 
         results = []
+        db_records = []
         for resolution in request.resolutions:
+            if resolution.action == "edit" and not resolution.edited_text:
+                raise HTTPException(
+                    status_code=400,
+                    detail="edited_text is required when action is 'edit'",
+                )
+            original_text = resolution.original_text or "[not available]"
+            category = resolution.category or "unknown"
             result = store.resolve_assumption(
                 session_id=session_id,
-                assumption_id=resolution.get("assumption_id", ""),
-                action=resolution.get("action", "accept"),
-                original_text=resolution.get("original_text", "[not available]"),
-                category=resolution.get("category", "unknown"),
-                edited_text=resolution.get("edited_text"),
+                assumption_id=resolution.assumption_id,
+                action=resolution.action,
+                original_text=original_text,
+                category=category,
+                edited_text=resolution.edited_text,
+                feedback=resolution.feedback,
             )
             results.append(result)
+            db_records.append(
+                AssumptionResolutionDB(
+                    session_id=session_id,
+                    assumption_id=resolution.assumption_id,
+                    action=resolution.action,
+                    original_text=original_text,
+                    final_text=result["final_text"],
+                    category=category,
+                )
+            )
+
+        if db_records:
+            db.add_all(db_records)
+            db.commit()
 
         return {
             "session_id": session_id,
@@ -246,8 +418,7 @@ async def batch_resolve_assumptions(request: BatchAssumptionResolutionRequest) -
         }
 
     except Exception as e:
-        logger.error(f"Batch assumption resolution failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail="Failed to resolve assumptions") from e
+        _raise_internal_error("Failed to resolve assumptions", e)
 
 
 @router.get("/api/context/sessions/{session_id}")

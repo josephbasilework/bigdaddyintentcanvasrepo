@@ -2,10 +2,17 @@
 
 import pytest
 from fastapi import FastAPI, testclient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.agents.intent_decipherer import IntentClassification, IntentDecipheringResult
+from app.api.context import get_decipherer
 from app.api.context import router as context_router
 from app.context.router import ContextRouter
+from app.database import get_db
+from app.models.intent import AssumptionResolutionDB
+from app.models.intent import Base as IntentBase
 
 
 class FakeIntentDecipherer:
@@ -33,6 +40,42 @@ def build_result(intent_name: str, confidence: float) -> IntentDecipheringResult
     )
 
 
+def build_assumption_result() -> IntentDecipheringResult:
+    """Helper to create an IntentDecipheringResult with assumptions."""
+    primary = IntentClassification(
+        name="research",
+        confidence=0.82,
+        description="Research a topic based on the request",
+    )
+    return IntentDecipheringResult(
+        primary_intent=primary,
+        alternative_intents=[
+            IntentClassification(
+                name="analyze",
+                confidence=0.55,
+                description="Analyze existing data for insights",
+            )
+        ],
+        assumptions=[
+            {
+                "id": "assumption-1",
+                "text": "Use last quarter's data",
+                "confidence": 0.65,
+                "category": "parameter",
+                "explanation": "No timeframe specified",
+            },
+            {
+                "id": "assumption-2",
+                "text": "Deliver results as a summary",
+                "confidence": 0.92,
+                "category": "intent",
+            },
+        ],
+        should_auto_execute=False,
+        reasoning="Ambiguity requires confirmation of timeframe.",
+    )
+
+
 @pytest.fixture
 def app(monkeypatch) -> FastAPI:
     """Create a test FastAPI app with the context router."""
@@ -49,6 +92,47 @@ def app(monkeypatch) -> FastAPI:
 def client(app: FastAPI) -> testclient.TestClient:
     """Create a test client for the context endpoint."""
     return testclient.TestClient(app)
+
+
+@pytest.fixture
+def assumptions_db() -> sessionmaker:
+    """Provide a shared in-memory database for assumption tests."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    IntentBase.metadata.create_all(bind=engine)
+    return sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+@pytest.fixture
+def assumptions_app(assumptions_db: sessionmaker) -> FastAPI:
+    """Create a test app with overrides for assumption endpoints."""
+    app = FastAPI()
+    app.include_router(context_router)
+
+    decipherer = FakeIntentDecipherer(result=build_assumption_result())
+
+    def override_get_decipherer() -> FakeIntentDecipherer:
+        return decipherer
+
+    def override_get_db():
+        db = assumptions_db()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_decipherer] = override_get_decipherer
+    app.dependency_overrides[get_db] = override_get_db
+    return app
+
+
+@pytest.fixture
+def assumptions_client(assumptions_app: FastAPI) -> testclient.TestClient:
+    """Create a test client for assumption endpoints."""
+    return testclient.TestClient(assumptions_app)
 
 
 class TestContextEndpoint:
@@ -164,3 +248,58 @@ class TestContextEndpoint:
         data = response.json()
         assert data["handler"] == "clear_handler"
         assert data["confidence"] == 1.0
+
+
+class TestAssumptionEndpoints:
+    """Test suite for assumption generation and resolution endpoints."""
+
+    def test_generate_assumptions_returns_intent_and_alternatives(
+        self, assumptions_client: testclient.TestClient
+    ) -> None:
+        response = assumptions_client.post(
+            "/api/context/assumptions",
+            json={"text": "Research quarterly performance"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["intent"] == "research"
+        assert data["confidence"] == 0.82
+        assert data["alternatives"][0]["name"] == "analyze"
+        assert data["intent_description"] == "Research a topic based on the request"
+        assert len(data["assumptions"]) == 1
+        assert data["assumptions"][0]["id"] == "assumption-1"
+        assert data["session_id"] is not None
+
+    def test_resolve_assumption_persists_feedback(
+        self,
+        assumptions_client: testclient.TestClient,
+        assumptions_db: sessionmaker,
+    ) -> None:
+        response = assumptions_client.post(
+            "/api/context/assumptions/resolve",
+            json={
+                "assumption_id": "assumption-1",
+                "action": "reject",
+                "original_text": "Use last quarter's data",
+                "category": "parameter",
+                "feedback": "Need a specific date range",
+                "session_id": "session-123",
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["action"] == "reject"
+        assert data["feedback"] == "Need a specific date range"
+        assert "REJECTED" in data["final_text"]
+
+        db = assumptions_db()
+        try:
+            record = (
+                db.query(AssumptionResolutionDB)
+                .filter(AssumptionResolutionDB.assumption_id == "assumption-1")
+                .one()
+            )
+        finally:
+            db.close()
+        assert record.action == "reject"
+        assert "Need a specific date range" in record.final_text

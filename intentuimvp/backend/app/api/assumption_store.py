@@ -46,6 +46,7 @@ class AssumptionStore:
         original_text: str,
         category: str,
         edited_text: str | None = None,
+        feedback: str | None = None,
     ) -> dict[str, Any]:
         """Record an assumption resolution.
 
@@ -73,7 +74,7 @@ class AssumptionStore:
         if action == "edit" and edited_text:
             final_text = edited_text
         elif action == "reject":
-            final_text = "[REJECTED]"
+            final_text = "[REJECTED]" if not feedback else f"[REJECTED] {feedback}"
 
         resolution = {
             "assumption_id": assumption_id,
@@ -82,6 +83,7 @@ class AssumptionStore:
             "final_text": final_text,
             "category": category,
             "timestamp": time.time(),
+            "feedback": feedback,
         }
 
         # Remove any existing resolution for this assumption

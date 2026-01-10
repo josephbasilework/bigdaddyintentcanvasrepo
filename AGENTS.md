@@ -2,6 +2,19 @@
 
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
 
+## Issue Tracking
+
+This project uses **bd (beads)** for issue tracking.
+Run `bd prime` for workflow context, or install hooks (`bd hooks install`) for auto-injection.
+
+**Quick reference:**
+- `bd ready` - Find unblocked work
+- `bd create "Title" --type task --priority 2` - Create issue
+- `bd close <id>` - Complete work
+- `bd sync` - Sync with git (run at session end)
+
+For full workflow details: `bd prime`
+
 ## Quick Reference
 
 ```bash
@@ -45,3 +58,4 @@ bd sync               # Sync with git
 - 2026-01-10 00:25 EST: `npm run build` in `intentuimvp/frontend` completed successfully; the prior TypeScript error may be resolved.
 - 2026-01-10 00:37 EST: `npm test -- --run` in `intentuimvp/frontend` runs the full vitest suite once and emits existing warnings about `jsx` attributes and act wrapping.
 - 2026-01-10 00:54 EST: `python` isn't available; use `python3` for backend `pytest` and `ruff` commands.
+- 2026-01-10 15:49 EST: Backend source-of-truth for tests is `intentuimvp/backend/app`; the `intentuimvp/backend/src/intentuimvp-backend` tree is not tracked.
