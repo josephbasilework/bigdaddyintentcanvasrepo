@@ -23,7 +23,8 @@ class FakeIntentDecipherer:
         self.delay = delay
         self.raises = raises
         self.calls = 0
-        self.confidence_threshold = 0.8
+        self.confidence_threshold = 0.95
+        self.assumption_confidence_threshold = 0.7
 
     async def decipher(self, text: str) -> IntentDecipheringResult:
         self.calls += 1

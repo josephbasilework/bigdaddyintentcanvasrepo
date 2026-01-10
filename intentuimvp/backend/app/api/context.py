@@ -17,6 +17,9 @@ from app.models.intent import AssumptionResolutionDB
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+AUTO_EXECUTE_CONFIDENCE_THRESHOLD = (
+    IntentDeciphererAgent.DEFAULT_AUTO_EXECUTE_CONFIDENCE_THRESHOLD
+)
 
 
 def get_decipherer() -> IntentDeciphererAgent:
@@ -188,9 +191,11 @@ async def submit_context(payload: ContextPayload) -> ContextResponse:
             store = get_assumption_store()
             session_id = store.create_session()
 
-        # Determine if auto-execute is appropriate
-        # (This would come from the IntentDecipherer in a full implementation)
-        if decision.confidence >= 0.8 and not decision.assumptions:
+        # Determine if auto-execute is appropriate using the confidence threshold.
+        if (
+            decision.confidence >= AUTO_EXECUTE_CONFIDENCE_THRESHOLD
+            and not decision.assumptions
+        ):
             should_auto_execute = True
 
         # Convert assumptions to response format
@@ -262,7 +267,7 @@ async def generate_assumptions(
         assumptions_needing_confirmation = [
             a
             for a in assumption_responses
-            if a.confidence < decipherer.confidence_threshold
+            if a.confidence < decipherer.assumption_confidence_threshold
         ]
 
         session_id = None
@@ -270,7 +275,11 @@ async def generate_assumptions(
             store = get_assumption_store()
             session_id = store.create_session()
 
-        should_auto_execute = bool(result.should_auto_execute) and not assumptions_needing_confirmation
+        should_auto_execute = (
+            bool(result.should_auto_execute)
+            and result.primary_intent.confidence >= AUTO_EXECUTE_CONFIDENCE_THRESHOLD
+            and not assumptions_needing_confirmation
+        )
 
         return AssumptionSetResponse(
             intent=result.primary_intent.name,

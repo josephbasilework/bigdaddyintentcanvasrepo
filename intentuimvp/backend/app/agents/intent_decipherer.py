@@ -76,14 +76,17 @@ class IntentDeciphererAgent(BaseAgent):
         result = await agent.decipher("Create a chart showing sales data")
     """
 
-    DEFAULT_CONFIDENCE_THRESHOLD = 0.8
+    DEFAULT_AUTO_EXECUTE_CONFIDENCE_THRESHOLD = 0.95
+    DEFAULT_ASSUMPTION_CONFIDENCE_THRESHOLD = 0.7
+    DEFAULT_CONFIDENCE_THRESHOLD = DEFAULT_AUTO_EXECUTE_CONFIDENCE_THRESHOLD
 
     def __init__(
         self,
         gateway: Any | None = None,
         model: str = "openai/gpt-4o",
         temperature: float = 0.3,  # Lower temperature for more consistent classification
-        confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD,
+        confidence_threshold: float = DEFAULT_AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
+        assumption_confidence_threshold: float = DEFAULT_ASSUMPTION_CONFIDENCE_THRESHOLD,
     ) -> None:
         """Initialize the Intent Decipherer Agent.
 
@@ -92,9 +95,11 @@ class IntentDeciphererAgent(BaseAgent):
             model: Model identifier for Gateway.
             temperature: Sampling temperature (lower for more deterministic classification).
             confidence_threshold: Threshold for auto-execution recommendation.
+            assumption_confidence_threshold: Threshold for assumptions requiring confirmation.
         """
         super().__init__(gateway=gateway, model=model, temperature=temperature)
         self.confidence_threshold = confidence_threshold
+        self.assumption_confidence_threshold = assumption_confidence_threshold
 
     async def run(self, input_data: dict[str, Any]) -> dict[str, Any]:
         """Run the agent with the given input.
@@ -143,7 +148,9 @@ class IntentDeciphererAgent(BaseAgent):
 
     def _build_system_prompt(self) -> str:
         """Build the system prompt for intent deciphering."""
-        return """You are an Intent Decipherer for a canvas-based agentic workspace.
+        auto_execute_threshold = self.confidence_threshold
+        assumption_threshold = self.assumption_confidence_threshold
+        return f"""You are an Intent Decipherer for a canvas-based agentic workspace.
 
 Your task is to analyze user input and extract:
 1. **Primary Intent**: What the user wants to do (research, create, analyze, etc.)
@@ -158,14 +165,13 @@ Categories for assumptions:
 - other: Other types of assumptions
 
 Confidence scores:
-- 0.9-1.0: Very confident, can auto-execute
-- 0.7-0.9: Confident, but may want confirmation for assumptions
-- 0.5-0.7: Moderate confidence, should ask for clarification
-- <0.5: Low confidence, must ask user
+- >= {auto_execute_threshold:.2f}: Very confident, can auto-execute
+- {assumption_threshold:.2f} to < {auto_execute_threshold:.2f}: Confident, but want confirmation for assumptions
+- < {assumption_threshold:.2f}: Low confidence, must ask user
 
 Auto-execution should only be recommended when:
-- Primary intent confidence >= 0.8
-- No high-risk assumptions (confidence < 0.7) exist
+- Primary intent confidence >= {auto_execute_threshold:.2f}
+- No high-risk assumptions (confidence < {assumption_threshold:.2f}) exist
 - Required parameters are present with good confidence
 
 Provide clear, structured output that helps the system understand and validate user intent."""

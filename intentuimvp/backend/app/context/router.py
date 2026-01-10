@@ -96,6 +96,7 @@ class IntentDeciphererProtocol(Protocol):
     """Protocol for intent decipherer implementations used by the router."""
 
     confidence_threshold: float
+    assumption_confidence_threshold: float
 
     async def decipher(self, text: str) -> IntentDecipheringResult: ...
 
@@ -143,7 +144,9 @@ class ContextRouter:
 
     DEFAULT_HANDLER = "chat_handler"
     DISAMBIGUATION_HANDLER = "clarification_handler"
-    DEFAULT_CLARIFICATION_CONFIDENCE_THRESHOLD = 0.7
+    DEFAULT_CLARIFICATION_CONFIDENCE_THRESHOLD = (
+        IntentDeciphererAgent.DEFAULT_ASSUMPTION_CONFIDENCE_THRESHOLD
+    )
 
     def __init__(
         self,
@@ -295,8 +298,9 @@ class ContextRouter:
 
         # Filter to only include assumptions below confidence threshold
         # These need user confirmation
+        assumption_threshold = self._intent_decipherer.assumption_confidence_threshold
         assumptions_needing_confirmation = [
-            a for a in assumptions if a.confidence < self._intent_decipherer.confidence_threshold
+            a for a in assumptions if a.confidence < assumption_threshold
         ]
 
         intents = [result.primary_intent, *result.alternative_intents]

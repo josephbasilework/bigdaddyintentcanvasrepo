@@ -20,7 +20,8 @@ class FakeIntentDecipherer:
 
     def __init__(self, result: IntentDecipheringResult) -> None:
         self.result = result
-        self.confidence_threshold = 0.8
+        self.confidence_threshold = 0.95
+        self.assumption_confidence_threshold = 0.7
 
     async def decipher(self, text: str) -> IntentDecipheringResult:
         return self.result
@@ -68,6 +69,12 @@ def build_assumption_result() -> IntentDecipheringResult:
                 "id": "assumption-2",
                 "text": "Deliver results as a summary",
                 "confidence": 0.92,
+                "category": "intent",
+            },
+            {
+                "id": "assumption-3",
+                "text": "Focus on revenue KPIs only",
+                "confidence": 0.72,
                 "category": "intent",
             },
         ],
@@ -269,6 +276,33 @@ class TestAssumptionEndpoints:
         assert len(data["assumptions"]) == 1
         assert data["assumptions"][0]["id"] == "assumption-1"
         assert data["session_id"] is not None
+
+    def test_generate_assumptions_auto_execute_threshold(self) -> None:
+        """Test auto-execute requires meeting the configured confidence threshold."""
+        app = FastAPI()
+        app.include_router(context_router)
+
+        primary = IntentClassification(
+            name="research",
+            confidence=0.94,
+            description="Research a topic based on the request",
+        )
+        result = IntentDecipheringResult(
+            primary_intent=primary,
+            should_auto_execute=True,
+            reasoning="High confidence, but below auto-execute threshold.",
+        )
+        decipherer = FakeIntentDecipherer(result=result)
+        app.dependency_overrides[get_decipherer] = lambda: decipherer
+
+        client = testclient.TestClient(app)
+        response = client.post(
+            "/api/context/assumptions",
+            json={"text": "Research quarterly performance"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["should_auto_execute"] is False
 
     def test_resolve_assumption_persists_feedback(
         self,
