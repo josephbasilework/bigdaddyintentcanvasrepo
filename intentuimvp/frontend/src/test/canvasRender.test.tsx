@@ -62,6 +62,22 @@ describe('workspace canvas', () => {
     expect(screen.getByText('Your canvas is empty')).toBeInTheDocument();
   });
 
+  it('falls back to an empty state when workspace data is corrupted', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: 'not-an-array',
+        edges: { bad: true },
+      }),
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    expect(screen.getByTestId('empty-canvas-state')).toBeInTheDocument();
+  });
+
   it('does not show empty state when nodes exist', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,

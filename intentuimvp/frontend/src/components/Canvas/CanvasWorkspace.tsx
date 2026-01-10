@@ -1,11 +1,109 @@
 "use client";
 
 import { useEffect, useCallback, useState } from "react";
-import { useCanvasStore } from "../../state/canvasStore";
+import { useCanvasStore, CanvasEdge, CanvasNode } from "../../state/canvasStore";
 import { Node } from "./Node";
 import { EdgesLayer } from "./Edge";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+const NODE_TYPES: Set<CanvasNode["type"]> = new Set(["text", "document", "audio", "graph"]);
+const EDGE_TYPES: Set<CanvasEdge["type"]> = new Set(["solid", "dashed", "dotted"]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const getString = (value: unknown): string | null =>
+  typeof value === "string" ? value : null;
+
+const getNumber = (value: unknown, fallback: number): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+const normalizeNode = (value: unknown): CanvasNode | null => {
+  if (!isRecord(value)) return null;
+
+  const idValue = value.id ?? value.nodeId;
+  if (idValue === undefined || idValue === null) return null;
+  const id = typeof idValue === "string" ? idValue : String(idValue);
+
+  const typeValue = getString(value.type);
+  const type = typeValue && NODE_TYPES.has(typeValue as CanvasNode["type"])
+    ? (typeValue as CanvasNode["type"])
+    : "text";
+
+  const position = isRecord(value.position) ? value.position : null;
+  const x = getNumber(position?.x ?? value.x, 0);
+  const y = getNumber(position?.y ?? value.y, 0);
+  const z = getNumber(position?.z ?? value.z, 0);
+
+  const titleValue = getString(value.title) ?? getString(value.label);
+  const title = titleValue?.trim() || "Untitled";
+
+  const content = getString(value.content);
+  const metadataCandidate = value.metadata ?? value.node_metadata ?? value.nodeMetadata;
+  const metadata = isRecord(metadataCandidate) ? metadataCandidate : undefined;
+
+  const node: CanvasNode = { id, type, x, y, z, title };
+  if (content) node.content = content;
+  if (metadata) node.metadata = metadata;
+  return node;
+};
+
+const normalizeEdge = (value: unknown, index: number): CanvasEdge | null => {
+  if (!isRecord(value)) return null;
+
+  const sourceValue = value.sourceNodeId ?? value.fromNodeId ?? value.from_node_id;
+  const targetValue = value.targetNodeId ?? value.toNodeId ?? value.to_node_id;
+  if (sourceValue === undefined || sourceValue === null) return null;
+  if (targetValue === undefined || targetValue === null) return null;
+
+  const sourceNodeId = typeof sourceValue === "string" ? sourceValue : String(sourceValue);
+  const targetNodeId = typeof targetValue === "string" ? targetValue : String(targetValue);
+
+  const idValue = value.id ?? `${sourceNodeId}-${targetNodeId}-${index}`;
+  const id = typeof idValue === "string" ? idValue : String(idValue);
+
+  const label = getString(value.label);
+  const typeValue = getString(value.type);
+  const type = typeValue && EDGE_TYPES.has(typeValue as CanvasEdge["type"])
+    ? (typeValue as CanvasEdge["type"])
+    : undefined;
+
+  const edge: CanvasEdge = { id, sourceNodeId, targetNodeId };
+  if (label) edge.label = label;
+  if (type) edge.type = type;
+  return edge;
+};
+
+const normalizeWorkspaceState = (
+  value: unknown
+): { nodes: CanvasNode[]; edges: CanvasEdge[]; hadCorruption: boolean } => {
+  if (!isRecord(value)) {
+    return { nodes: [], edges: [], hadCorruption: true };
+  }
+
+  const nodesRaw = value.nodes;
+  if (!Array.isArray(nodesRaw)) {
+    return { nodes: [], edges: [], hadCorruption: true };
+  }
+
+  const edgesRaw = value.edges;
+  const edgesArray = Array.isArray(edgesRaw) ? edgesRaw : [];
+  const edgesTypeInvalid = edgesRaw !== undefined && !Array.isArray(edgesRaw);
+
+  const nodes = nodesRaw.map(normalizeNode).filter(Boolean) as CanvasNode[];
+  const edges = edgesArray.map((edge, index) => normalizeEdge(edge, index)).filter(Boolean) as CanvasEdge[];
+
+  const nodesInvalid = nodes.length !== nodesRaw.length;
+  const edgesInvalid = edges.length !== edgesArray.length;
+  const nodesMissing = nodesRaw.length > 0 && nodes.length === 0;
+
+  return {
+    nodes: nodesMissing ? [] : nodes,
+    edges: nodesMissing ? [] : edges,
+    hadCorruption: edgesTypeInvalid || nodesInvalid || edgesInvalid,
+  };
+};
 
 /**
  * CanvasWorkspace component that renders all nodes on the canvas.
@@ -30,13 +128,12 @@ export function CanvasWorkspace() {
         }
 
         const data = await response.json();
-        // Backend returns { nodes: [...], edges: [...] }
-        if (Array.isArray(data.nodes)) {
-          setNodes(data.nodes);
+        const normalized = normalizeWorkspaceState(data);
+        if (normalized.hadCorruption) {
+          console.warn("Workspace state contained invalid data; recovered what we could.");
         }
-        if (Array.isArray(data.edges)) {
-          setEdges(data.edges);
-        }
+        setNodes(normalized.nodes);
+        setEdges(normalized.edges);
         if (isActive) {
           setLoadStatus("loaded");
         }
