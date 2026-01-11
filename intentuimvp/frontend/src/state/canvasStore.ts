@@ -12,12 +12,21 @@ export interface CanvasNode {
   metadata?: Record<string, unknown>;
 }
 
+export type CanvasEdgeRelationType =
+  | 'depends_on'
+  | 'references'
+  | 'supports'
+  | 'conflicts'
+  | 'derived_from'
+  | 'critiques';
+
 export interface CanvasEdge {
   id: string;
   sourceNodeId: string;
   targetNodeId: string;
   label?: string;
   type?: 'solid' | 'dashed' | 'dotted';
+  relationType?: CanvasEdgeRelationType;
 }
 
 export interface CanvasDocument {

@@ -1,15 +1,21 @@
 "use client";
 
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useState, useId } from "react";
 import { createPortal } from "react-dom";
-import { useCanvasStore, CanvasEdge, CanvasNode } from "../../state/canvasStore";
+import { useCanvasStore, CanvasEdge, CanvasNode, CanvasEdgeRelationType } from "../../state/canvasStore";
 import { Node } from "./Node";
 import { EdgesLayer } from "./Edge";
+import { EDGE_RELATION_OPTIONS, getEdgeRelationLabel } from "./edgeRelations";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const NODE_TYPES: Set<CanvasNode["type"]> = new Set(["text", "document", "audio", "graph"]);
-const EDGE_TYPES: Set<CanvasEdge["type"]> = new Set(["solid", "dashed", "dotted"]);
+const EDGE_STYLE_TYPES: Set<CanvasEdge["type"]> = new Set(["solid", "dashed", "dotted"]);
+const EDGE_RELATION_TYPES: Set<CanvasEdgeRelationType> = new Set(
+  EDGE_RELATION_OPTIONS.map((option) => option.value)
+);
+const DEFAULT_RELATION_TYPE: CanvasEdgeRelationType = "depends_on";
+const DEFAULT_RELATION_LABEL = getEdgeRelationLabel(DEFAULT_RELATION_TYPE) ?? "Depends on";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -66,13 +72,21 @@ const normalizeEdge = (value: unknown, index: number): CanvasEdge | null => {
 
   const label = getString(value.label);
   const typeValue = getString(value.type);
-  const type = typeValue && EDGE_TYPES.has(typeValue as CanvasEdge["type"])
+  const type = typeValue && EDGE_STYLE_TYPES.has(typeValue as CanvasEdge["type"])
     ? (typeValue as CanvasEdge["type"])
     : undefined;
+
+  const relationValue = getString(value.relationType ?? value.relation_type);
+  const relationType = relationValue && EDGE_RELATION_TYPES.has(relationValue as CanvasEdgeRelationType)
+    ? (relationValue as CanvasEdgeRelationType)
+    : typeValue && EDGE_RELATION_TYPES.has(typeValue as CanvasEdgeRelationType)
+      ? (typeValue as CanvasEdgeRelationType)
+      : undefined;
 
   const edge: CanvasEdge = { id, sourceNodeId, targetNodeId };
   if (label) edge.label = label;
   if (type) edge.type = type;
+  if (relationType) edge.relationType = relationType;
   return edge;
 };
 
@@ -118,6 +132,13 @@ export function CanvasWorkspace() {
   const { nodes, edges, clearSelection, setNodes, setEdges, addEdge } = useCanvasStore();
   const [loadStatus, setLoadStatus] = useState<"loading" | "loaded" | "error">("loading");
   const [connectSourceNodeId, setConnectSourceNodeId] = useState<string | null>(null);
+  const [connectRelationType, setConnectRelationType] = useState<CanvasEdgeRelationType>(
+    DEFAULT_RELATION_TYPE
+  );
+  const [connectLabel, setConnectLabel] = useState(DEFAULT_RELATION_LABEL);
+  const [connectLabelTouched, setConnectLabelTouched] = useState(false);
+  const connectRelationId = useId();
+  const connectLabelId = useId();
 
   const handleCancelConnect = useCallback(() => {
     setConnectSourceNodeId(null);
@@ -125,6 +146,9 @@ export function CanvasWorkspace() {
 
   const handleStartConnect = useCallback((nodeId: string) => {
     setConnectSourceNodeId(nodeId);
+    setConnectRelationType(DEFAULT_RELATION_TYPE);
+    setConnectLabel(DEFAULT_RELATION_LABEL);
+    setConnectLabelTouched(false);
   }, []);
 
   const handleConnectTarget = useCallback((targetNodeId: string) => {
@@ -140,11 +164,44 @@ export function CanvasWorkspace() {
     );
 
     if (!hasEdge) {
-      addEdge({ sourceNodeId: connectSourceNodeId, targetNodeId });
+      const trimmedLabel = connectLabel.trim();
+      const resolvedLabel = trimmedLabel || getEdgeRelationLabel(connectRelationType) || undefined;
+      const edgePayload: Omit<CanvasEdge, "id"> = {
+        sourceNodeId: connectSourceNodeId,
+        targetNodeId,
+        relationType: connectRelationType,
+      };
+      if (resolvedLabel) {
+        edgePayload.label = resolvedLabel;
+      }
+      addEdge(edgePayload);
     }
 
     setConnectSourceNodeId(null);
-  }, [addEdge, connectSourceNodeId, edges]);
+  }, [addEdge, connectLabel, connectRelationType, connectSourceNodeId, edges]);
+
+  const handleRelationTypeChange = useCallback(
+    (event: React.ChangeEvent<HTMLSelectElement>) => {
+      const nextType = event.target.value as CanvasEdgeRelationType;
+      setConnectRelationType(nextType);
+      if (!connectLabelTouched) {
+        setConnectLabel(getEdgeRelationLabel(nextType) ?? "");
+      }
+    },
+    [connectLabelTouched]
+  );
+
+  const handleLabelChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    setConnectLabel(event.target.value);
+    setConnectLabelTouched(true);
+  }, []);
+
+  useEffect(() => {
+    if (connectSourceNodeId) return;
+    setConnectRelationType(DEFAULT_RELATION_TYPE);
+    setConnectLabel(DEFAULT_RELATION_LABEL);
+    setConnectLabelTouched(false);
+  }, [connectSourceNodeId]);
 
   useEffect(() => {
     if (!connectSourceNodeId) return;
@@ -271,22 +328,70 @@ export function CanvasWorkspace() {
           zIndex: 10002,
           backgroundColor: "rgba(15, 23, 42, 0.95)",
           border: "1px solid rgba(148, 163, 184, 0.4)",
-          borderRadius: "10px",
+          borderRadius: "12px",
           padding: "12px 16px",
           display: "flex",
           alignItems: "center",
+          flexWrap: "wrap",
           gap: "16px",
           color: "#e2e8f0",
           boxShadow: "0 8px 18px rgba(0, 0, 0, 0.45)",
-          maxWidth: "520px",
+          maxWidth: "680px",
+          width: "calc(100% - 32px)",
         }}
       >
-        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "8px", flex: "1 1 320px" }}>
           <div style={{ fontSize: "11px", letterSpacing: "0.08em", textTransform: "uppercase", color: "#94a3b8" }}>
             Connect mode
           </div>
           <div style={{ fontSize: "14px", lineHeight: 1.4 }}>
-            Connecting from <span style={{ fontWeight: 600 }}>{connectSourceLabel}</span>. Select another node to create an edge.
+            Connecting from <span style={{ fontWeight: 600 }}>{connectSourceLabel}</span>. Choose a relation and label, then select another node to create an edge.
+          </div>
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: "160px" }}>
+              <label htmlFor={connectRelationId} style={{ fontSize: "11px", color: "#94a3b8" }}>
+                Relation
+              </label>
+              <select
+                id={connectRelationId}
+                value={connectRelationType}
+                onChange={handleRelationTypeChange}
+                style={{
+                  backgroundColor: "#0f172a",
+                  border: "1px solid rgba(148, 163, 184, 0.45)",
+                  borderRadius: "8px",
+                  color: "#e2e8f0",
+                  fontSize: "12px",
+                  padding: "6px 10px",
+                }}
+              >
+                {EDGE_RELATION_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: "1 1 220px" }}>
+              <label htmlFor={connectLabelId} style={{ fontSize: "11px", color: "#94a3b8" }}>
+                Edge label
+              </label>
+              <input
+                id={connectLabelId}
+                type="text"
+                value={connectLabel}
+                onChange={handleLabelChange}
+                placeholder="Optional label"
+                style={{
+                  backgroundColor: "#0f172a",
+                  border: "1px solid rgba(148, 163, 184, 0.45)",
+                  borderRadius: "8px",
+                  color: "#e2e8f0",
+                  fontSize: "12px",
+                  padding: "6px 10px",
+                }}
+              />
+            </div>
           </div>
         </div>
         <button

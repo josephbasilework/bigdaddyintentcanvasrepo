@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useCanvasStore, CanvasEdge, CanvasNode } from "../../state/canvasStore";
+import { getEdgeRelationLabel } from "./edgeRelations";
 
 interface EdgeProps {
   edge: CanvasEdge;
@@ -17,6 +18,7 @@ interface EdgeProps {
  */
 export function Edge({ edge, sourceNode, targetNode }: EdgeProps) {
   const { type = "solid" } = edge;
+  const resolvedLabel = edge.label ?? getEdgeRelationLabel(edge.relationType) ?? undefined;
 
   // Calculate connection points on nodes
   const { path, labelPosition } = useMemo(() => {
@@ -75,7 +77,7 @@ export function Edge({ edge, sourceNode, targetNode }: EdgeProps) {
       </defs>
 
       {/* Optional label */}
-      {edge.label && (
+      {resolvedLabel && (
         <text
           x={labelPosition.x}
           y={labelPosition.y}
@@ -89,7 +91,7 @@ export function Edge({ edge, sourceNode, targetNode }: EdgeProps) {
             borderRadius: "4px",
           }}
         >
-          {edge.label}
+          {resolvedLabel}
         </text>
       )}
     </g>

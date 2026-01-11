@@ -355,6 +355,13 @@ describe('workspace canvas', () => {
 
     await waitFor(() => expect(screen.getByTestId('connect-mode-banner')).toBeInTheDocument());
 
+    const relationSelect = screen.getByLabelText(/relation/i);
+    const labelInput = screen.getByLabelText(/edge label/i);
+    expect(labelInput).toHaveValue('Depends on');
+    fireEvent.change(relationSelect, { target: { value: 'references' } });
+    expect(labelInput).toHaveValue('References');
+    fireEvent.change(labelInput, { target: { value: 'Cites' } });
+
     const targetNode = screen.getByRole('button', { name: /second node/i });
     fireEvent.click(targetNode);
 
@@ -363,6 +370,8 @@ describe('workspace canvas', () => {
     const [edge] = useCanvasStore.getState().edges;
     expect(edge.sourceNodeId).toBe('node-1');
     expect(edge.targetNodeId).toBe('node-2');
+    expect(edge.relationType).toBe('references');
+    expect(edge.label).toBe('Cites');
     await waitFor(() =>
       expect(screen.queryByTestId('connect-mode-banner')).not.toBeInTheDocument()
     );

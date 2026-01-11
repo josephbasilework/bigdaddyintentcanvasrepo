@@ -34,6 +34,7 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
   const isSelected = selectedNodeIds.length > 0
     ? selectedNodeIds.includes(node.id)
     : selectedNodeId === node.id;
+  const showConnectButton = Boolean(onStartConnect) && isSelected && !connectSourceNodeId;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState<{
@@ -157,6 +158,12 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
     if (onStartConnect) {
       onStartConnect(node.id);
     }
+  };
+
+  const handleConnectClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    event.preventDefault();
+    handleConnect();
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -284,6 +291,27 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
             }}>
               {node.title}
             </span>
+            {showConnectButton && (
+              <button
+                type="button"
+                onClick={handleConnectClick}
+                onMouseDown={(event) => event.stopPropagation()}
+                onTouchStart={(event) => event.stopPropagation()}
+                aria-label={`Connect from ${node.title}`}
+                style={{
+                  border: "1px solid rgba(148, 163, 184, 0.5)",
+                  backgroundColor: "rgba(15, 23, 42, 0.6)",
+                  color: "#e2e8f0",
+                  borderRadius: "999px",
+                  padding: "4px 10px",
+                  fontSize: "11px",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Connect
+              </button>
+            )}
           </div>
 
           {/* Node content */}
