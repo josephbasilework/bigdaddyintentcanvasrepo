@@ -359,7 +359,7 @@ export function TaskDAG({
                 x="157"
                 y="16"
                 fontSize="9"
-                fill="#718096"
+                fill="#94a3b8"
                 textAnchor="middle"
               >
                 {task.id.slice(-4)}
@@ -383,7 +383,7 @@ export function TaskDAG({
         }}
       >
         <div style={{ color: "#a0aec0", marginBottom: "4px", fontWeight: 600 }}>Status:</div>
-        <div style={{ display: "flex", gap: "12px", color: "#718096" }}>
+        <div style={{ display: "flex", gap: "12px", color: "#94a3b8" }}>
           <span>⏳ Pending</span>
           <span>🔄 In Progress</span>
           <span>✅ Complete</span>

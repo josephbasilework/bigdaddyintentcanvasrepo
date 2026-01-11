@@ -280,7 +280,7 @@ export function DocumentBlock({ nodeId, title, content, onSave, onCancel }: Docu
             backgroundColor: "#162032",
           }}
         >
-          <div style={{ fontSize: "12px", color: "#718096" }}>
+          <div style={{ fontSize: "12px", color: "#94a3b8" }}>
             {editor.storage.characterCount?.characters() || 0} characters
           </div>
           <div style={{ display: "flex", gap: "8px" }}>
@@ -341,7 +341,7 @@ export function DocumentBlock({ nodeId, title, content, onSave, onCancel }: Docu
         }
 
         .ProseMirror p.is-editor-empty:first-child::before {
-          color: #718096;
+          color: #94a3b8;
           content: attr(data-placeholder);
           float: left;
           height: 0;

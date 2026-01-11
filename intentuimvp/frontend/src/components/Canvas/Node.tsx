@@ -362,7 +362,7 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
             <div style={{
               marginTop: "8px",
               fontSize: "11px",
-              color: "#666",
+              color: "#94a3b8",
               display: "flex",
               gap: "4px",
               flexWrap: "wrap",

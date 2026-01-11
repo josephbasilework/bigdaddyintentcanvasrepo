@@ -517,7 +517,7 @@ export function FloatingInput({
         }
 
         .floating-input::placeholder {
-          color: #666;
+          color: #94a3b8;
         }
 
         @media (max-width: 640px) {

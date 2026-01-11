@@ -669,7 +669,7 @@ export function CanvasWorkspace() {
               style={{
                 marginTop: "10px",
                 fontSize: "12px",
-                color: "#64748b",
+                color: "#94a3b8",
               }}
             >
               Try: /plan, /research, or &quot;Outline our next sprint&quot;
