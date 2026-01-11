@@ -1,2 +1,9 @@
 export { AssumptionsPanel } from "./AssumptionsPanel";
-export type { Assumption, AssumptionsPanelProps } from "./types";
+export type {
+  Assumption,
+  AssumptionCategory,
+  AssumptionSet,
+  AssumptionStatus,
+  AssumptionsPanelProps,
+  IntentAlternative,
+} from "./types";

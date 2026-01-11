@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { AssumptionsPanel } from "../AssumptionsPanel";
-import type { Assumption } from "../types";
+import type { Assumption, AssumptionSet } from "../types";
 
 const mockAssumptions: Assumption[] = [
   {
@@ -27,6 +27,25 @@ const mockAssumptions: Assumption[] = [
     status: "accepted",
   },
 ];
+
+const mockAssumptionSet: AssumptionSet = {
+  intent: "Deep research",
+  intentDescription: "Compile recent findings on vector databases.",
+  confidence: 0.82,
+  reasoning: "The prompt mentions research and sources.",
+  alternatives: [
+    {
+      name: "Plan",
+      confidence: 0.48,
+      description: "Generate a step-by-step plan.",
+    },
+    {
+      name: "Summarize",
+      confidence: 0.36,
+      description: "Summarize existing notes and materials.",
+    },
+  ],
+};
 
 describe("AssumptionsPanel", () => {
   it("renders null when no assumptions provided", () => {
@@ -248,5 +267,47 @@ describe("AssumptionsPanel", () => {
     );
 
     expect(screen.getByText("✓ 2 accepted")).toBeInTheDocument();
+  });
+
+  it("renders intent summary details when provided", () => {
+    render(
+      <AssumptionsPanel
+        assumptions={mockAssumptions}
+        assumptionSet={mockAssumptionSet}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Deep research")).toBeInTheDocument();
+    expect(
+      screen.getByText("Compile recent findings on vector databases.")
+    ).toBeInTheDocument();
+    expect(screen.getByText("82%")).toBeInTheDocument();
+  });
+
+  it("toggles reasoning and alternatives when explain is clicked", () => {
+    render(
+      <AssumptionsPanel
+        assumptions={mockAssumptions}
+        assumptionSet={mockAssumptionSet}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.queryByText("The prompt mentions research and sources.")
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Explain" }));
+
+    expect(
+      screen.getByText("The prompt mentions research and sources.")
+    ).toBeInTheDocument();
+    expect(screen.getByText("Alternate interpretations")).toBeInTheDocument();
+    expect(screen.getByText("Plan")).toBeInTheDocument();
   });
 });
