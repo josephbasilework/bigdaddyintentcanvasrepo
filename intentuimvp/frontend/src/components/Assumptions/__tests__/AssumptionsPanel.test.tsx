@@ -54,6 +54,7 @@ describe("AssumptionsPanel", () => {
         assumptions={[]}
         onAccept={vi.fn()}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
       />
     );
@@ -66,6 +67,7 @@ describe("AssumptionsPanel", () => {
         assumptions={mockAssumptions}
         onAccept={vi.fn()}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
       />
     );
@@ -85,19 +87,20 @@ describe("AssumptionsPanel", () => {
     expect(screen.getByText("✓ 1 accepted")).toBeInTheDocument();
   });
 
-  it("calls onAccept when Accept button is clicked", () => {
+  it("calls onAccept when Confirm button is clicked", () => {
     const onAccept = vi.fn();
     render(
       <AssumptionsPanel
         assumptions={mockAssumptions}
         onAccept={onAccept}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
       />
     );
 
-    const acceptButtons = screen.getAllByText("Accept");
-    fireEvent.click(acceptButtons[0]);
+    const confirmButtons = screen.getAllByText("Confirm");
+    fireEvent.click(confirmButtons[0]);
 
     expect(onAccept).toHaveBeenCalledWith("1");
   });
@@ -109,6 +112,7 @@ describe("AssumptionsPanel", () => {
         assumptions={mockAssumptions}
         onAccept={vi.fn()}
         onReject={onReject}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
       />
     );
@@ -119,12 +123,36 @@ describe("AssumptionsPanel", () => {
     expect(onReject).toHaveBeenCalledWith("2");
   });
 
+  it("calls onEdit when Save button is clicked", () => {
+    const onEdit = vi.fn();
+    render(
+      <AssumptionsPanel
+        assumptions={mockAssumptions}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onEdit={onEdit}
+        onConfirm={vi.fn()}
+      />
+    );
+
+    fireEvent.click(screen.getAllByText("Edit")[0]);
+
+    const editor = screen.getByLabelText("Edit assumption");
+    fireEvent.change(editor, { target: { value: "Updated assumption text" } });
+
+    const saveButton = screen.getByText("Save");
+    fireEvent.click(saveButton);
+
+    expect(onEdit).toHaveBeenCalledWith("1", "Updated assumption text");
+  });
+
   it("disables confirm button when not all assumptions are resolved", () => {
     render(
       <AssumptionsPanel
         assumptions={mockAssumptions}
         onAccept={vi.fn()}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
       />
     );
@@ -132,7 +160,7 @@ describe("AssumptionsPanel", () => {
     const confirmButton = screen.queryByText("Continue with Execution");
     expect(confirmButton).not.toBeInTheDocument();
     expect(
-      screen.getByText("Please accept or reject all assumptions to continue")
+      screen.getByText("Please confirm or reject all assumptions to continue")
     ).toBeInTheDocument();
   });
 
@@ -149,6 +177,7 @@ describe("AssumptionsPanel", () => {
         assumptions={resolvedAssumptions}
         onAccept={vi.fn()}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={onConfirm}
       />
     );
@@ -167,6 +196,7 @@ describe("AssumptionsPanel", () => {
         assumptions={mockAssumptions}
         onAccept={vi.fn()}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
       />
     );
@@ -182,6 +212,7 @@ describe("AssumptionsPanel", () => {
         assumptions={mockAssumptions}
         onAccept={vi.fn()}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
       />
     );
@@ -197,6 +228,7 @@ describe("AssumptionsPanel", () => {
         assumptions={mockAssumptions}
         onAccept={vi.fn()}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
       />
     );
@@ -211,6 +243,7 @@ describe("AssumptionsPanel", () => {
         assumptions={mockAssumptions}
         onAccept={vi.fn()}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
         onDismiss={onDismiss}
       />
@@ -233,6 +266,7 @@ describe("AssumptionsPanel", () => {
         assumptions={resolvedAssumptions}
         onAccept={vi.fn()}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
       />
     );
@@ -247,6 +281,7 @@ describe("AssumptionsPanel", () => {
         assumptions={mockAssumptions}
         onAccept={vi.fn()}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
       />
     );
@@ -262,6 +297,7 @@ describe("AssumptionsPanel", () => {
         assumptions={updatedAssumptions}
         onAccept={vi.fn()}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
       />
     );
@@ -276,6 +312,7 @@ describe("AssumptionsPanel", () => {
         assumptionSet={mockAssumptionSet}
         onAccept={vi.fn()}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
       />
     );
@@ -294,6 +331,7 @@ describe("AssumptionsPanel", () => {
         assumptionSet={mockAssumptionSet}
         onAccept={vi.fn()}
         onReject={vi.fn()}
+        onEdit={vi.fn()}
         onConfirm={vi.fn()}
       />
     );

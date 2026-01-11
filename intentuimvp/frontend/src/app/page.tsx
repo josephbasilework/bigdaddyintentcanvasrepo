@@ -341,6 +341,12 @@ export default function Home() {
     );
   };
 
+  const handleEditAssumption = (id: string, text: string) => {
+    setAssumptions((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, text } : a))
+    );
+  };
+
   const handleConfirmAssumptions = async () => {
     const accepted = assumptions.filter((a) => a.status === "accepted");
     const rejected = assumptions.filter((a) => a.status === "rejected");
@@ -427,6 +433,7 @@ export default function Home() {
           assumptionSet={assumptionSet ?? undefined}
           onAccept={handleAcceptAssumption}
           onReject={handleRejectAssumption}
+          onEdit={handleEditAssumption}
           onConfirm={handleConfirmAssumptions}
           onDismiss={handleDismissAssumptions}
         />

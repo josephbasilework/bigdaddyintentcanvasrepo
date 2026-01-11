@@ -6,7 +6,7 @@ import type { Assumption, AssumptionsPanelProps } from "./types";
 /**
  * AssumptionsPanel displays agent-extracted assumptions for user confirmation.
  *
- * Shows each assumption with accept/reject buttons. Users must resolve all
+ * Shows each assumption with confirm/reject/edit controls. Users must resolve all
  * assumptions before proceeding with action execution.
  */
 export function AssumptionsPanel({
@@ -14,12 +14,15 @@ export function AssumptionsPanel({
   assumptionSet,
   onAccept,
   onReject,
+  onEdit,
   onConfirm,
   onDismiss,
 }: AssumptionsPanelProps) {
   const titleId = useId();
   const explainId = useId();
   const [showExplain, setShowExplain] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editText, setEditText] = useState("");
   // Filter assumptions by status
   const pendingAssumptions = assumptions.filter((a) => a.status === "pending");
   const acceptedCount = assumptions.filter((a) => a.status === "accepted").length;
@@ -64,6 +67,26 @@ export function AssumptionsPanel({
       other: "#6b7280", // gray
     };
     return colors[category] || colors.other;
+  };
+
+  const handleStartEdit = (assumption: Assumption) => {
+    setEditingId(assumption.id);
+    setEditText(assumption.text);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    setEditText("");
+  };
+
+  const handleSaveEdit = (assumptionId: string) => {
+    const trimmed = editText.trim();
+    if (!trimmed) {
+      return;
+    }
+    onEdit(assumptionId, trimmed);
+    setEditingId(null);
+    setEditText("");
   };
 
   if (assumptions.length === 0) {
@@ -198,70 +221,117 @@ export function AssumptionsPanel({
 
         {/* Assumptions List */}
         <div className="assumptions-list">
-          {assumptions.map((assumption, index) => (
-            <div
-              key={assumption.id}
-              className={`assumption-item assumption-item-${assumption.status}`}
-              style={{ animationDelay: `${index * 60}ms` }}
-            >
-              {/* Category Badge */}
+          {assumptions.map((assumption, index) => {
+            const isEditing =
+              assumption.status === "pending" && editingId === assumption.id;
+
+            return (
               <div
-                className="assumption-category"
-                style={{ backgroundColor: getCategoryColor(assumption.category) }}
+                key={assumption.id}
+                className={`assumption-item assumption-item-${assumption.status}`}
+                style={{ animationDelay: `${index * 60}ms` }}
               >
-                {getCategoryLabel(assumption.category)}
-              </div>
-
-              {/* Assumption Text */}
-              <div className="assumption-content">
-                <p className="assumption-text">{assumption.text}</p>
-                {assumption.explanation && (
-                  <p className="assumption-explanation">{assumption.explanation}</p>
-                )}
-                <div className="assumption-confidence">
-                  Confidence: {Math.round(assumption.confidence * 100)}%
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              {assumption.status === "pending" && (
-                <div className="assumption-actions">
-                  <button
-                    type="button"
-                    onClick={() => onReject(assumption.id)}
-                    className="assumption-btn assumption-btn-reject"
-                    disabled={assumption.status !== "pending"}
-                  >
-                    Reject
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onAccept(assumption.id)}
-                    className="assumption-btn assumption-btn-accept"
-                    disabled={assumption.status !== "pending"}
-                  >
-                    Accept
-                  </button>
-                </div>
-              )}
-
-              {/* Status Indicator */}
-              {assumption.status !== "pending" && (
+                {/* Category Badge */}
                 <div
-                  className={`assumption-status assumption-status-${assumption.status}`}
+                  className="assumption-category"
+                  style={{ backgroundColor: getCategoryColor(assumption.category) }}
                 >
-                  {assumption.status === "accepted" ? "✓ Accepted" : "✗ Rejected"}
+                  {getCategoryLabel(assumption.category)}
                 </div>
-              )}
-            </div>
-          ))}
+
+                {/* Assumption Text */}
+                <div className="assumption-content">
+                  {isEditing ? (
+                    <div className="assumption-edit">
+                      <textarea
+                        className="assumption-edit-input"
+                        value={editText}
+                        onChange={(event) => setEditText(event.target.value)}
+                        rows={3}
+                        aria-label="Edit assumption"
+                      />
+                    </div>
+                  ) : (
+                    <p className="assumption-text">{assumption.text}</p>
+                  )}
+                  {assumption.explanation && (
+                    <p className="assumption-explanation">{assumption.explanation}</p>
+                  )}
+                  <div className="assumption-confidence">
+                    Confidence: {Math.round(assumption.confidence * 100)}%
+                  </div>
+                </div>
+
+                {/* Action Buttons */}
+                {assumption.status === "pending" && (
+                  <div className="assumption-actions">
+                    {isEditing ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={handleCancelEdit}
+                          className="assumption-btn assumption-btn-cancel"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveEdit(assumption.id)}
+                          className="assumption-btn assumption-btn-save"
+                          disabled={!editText.trim()}
+                        >
+                          Save
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => onReject(assumption.id)}
+                          className="assumption-btn assumption-btn-reject"
+                          disabled={assumption.status !== "pending"}
+                        >
+                          Reject
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleStartEdit(assumption)}
+                          className="assumption-btn assumption-btn-edit"
+                          disabled={assumption.status !== "pending"}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onAccept(assumption.id)}
+                          className="assumption-btn assumption-btn-confirm"
+                          disabled={assumption.status !== "pending"}
+                        >
+                          Confirm
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Status Indicator */}
+                {assumption.status !== "pending" && (
+                  <div
+                    className={`assumption-status assumption-status-${assumption.status}`}
+                  >
+                    {assumption.status === "accepted" ? "✓ Accepted" : "✗ Rejected"}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
 
         {/* Footer with Confirm Button */}
         <div className="assumptions-footer">
           {!allResolved ? (
             <p className="assumptions-footer-hint">
-              Please accept or reject all assumptions to continue
+              Please confirm or reject all assumptions to continue
             </p>
           ) : (
             <button
@@ -605,6 +675,31 @@ export function AssumptionsPanel({
             flex: 1;
           }
 
+          .assumption-edit {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+          }
+
+          .assumption-edit-input {
+            width: 100%;
+            resize: vertical;
+            padding: 0.6rem 0.75rem;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            border-radius: 0.5rem;
+            border: 1px solid var(--panel-border);
+            background-color: rgba(15, 23, 42, 0.7);
+            color: #f8fafc;
+            outline: none;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
+          }
+
+          .assumption-edit-input:focus {
+            border-color: rgba(56, 189, 248, 0.65);
+            box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+          }
+
           .assumption-text {
             margin: 0 0 0.5rem;
             color: #f1f5f9;
@@ -652,16 +747,51 @@ export function AssumptionsPanel({
             color: #fee2e2;
           }
 
-          .assumption-btn-accept {
+          .assumption-btn-edit {
             background-color: rgba(15, 23, 42, 0.75);
             color: var(--panel-muted);
             border-color: var(--panel-border);
           }
 
-          .assumption-btn-accept:hover:not(:disabled) {
+          .assumption-btn-edit:hover:not(:disabled) {
+            background-color: rgba(56, 189, 248, 0.12);
+            border-color: rgba(56, 189, 248, 0.6);
+            color: #e0f2fe;
+          }
+
+          .assumption-btn-confirm {
+            background-color: rgba(15, 23, 42, 0.75);
+            color: var(--panel-muted);
+            border-color: var(--panel-border);
+          }
+
+          .assumption-btn-confirm:hover:not(:disabled) {
             background-color: rgba(34, 197, 94, 0.16);
             border-color: rgba(34, 197, 94, 0.6);
             color: #dcfce7;
+          }
+
+          .assumption-btn-save {
+            background-color: rgba(34, 197, 94, 0.18);
+            color: #dcfce7;
+            border-color: rgba(34, 197, 94, 0.6);
+          }
+
+          .assumption-btn-save:hover:not(:disabled) {
+            background-color: rgba(34, 197, 94, 0.28);
+            border-color: rgba(34, 197, 94, 0.75);
+          }
+
+          .assumption-btn-cancel {
+            background-color: rgba(15, 23, 42, 0.75);
+            color: var(--panel-muted);
+            border-color: var(--panel-border);
+          }
+
+          .assumption-btn-cancel:hover:not(:disabled) {
+            background-color: rgba(148, 163, 184, 0.12);
+            border-color: rgba(148, 163, 184, 0.6);
+            color: #e2e8f0;
           }
 
           .assumption-btn:disabled {

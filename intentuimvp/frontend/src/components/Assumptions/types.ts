@@ -51,6 +51,8 @@ export interface AssumptionsPanelProps {
   onAccept: (id: string) => void;
   /** Callback when user rejects an assumption */
   onReject: (id: string) => void;
+  /** Callback when user edits an assumption */
+  onEdit: (id: string, text: string) => void;
   /** Callback when user confirms all assumptions and proceeds */
   onConfirm: () => void;
   /** Optional callback to dismiss the panel */
