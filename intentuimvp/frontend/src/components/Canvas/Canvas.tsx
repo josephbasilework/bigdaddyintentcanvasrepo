@@ -89,6 +89,7 @@ export function Canvas({ children }: CanvasProps) {
         minScale={0.1}
         maxScale={10}
         limitToBounds={false}
+        panning={{ excluded: ["canvas-node", "node-context-menu"] }}
       >
         <TransformComponent
           wrapperStyle={{

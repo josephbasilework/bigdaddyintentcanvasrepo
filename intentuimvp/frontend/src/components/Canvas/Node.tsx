@@ -2,6 +2,7 @@
 
 import { CSSProperties, useState, useRef } from "react";
 import Draggable, { DraggableData } from "react-draggable";
+import { useTransformComponent } from "react-zoom-pan-pinch";
 import { useCanvasStore, CanvasNode } from "../../state/canvasStore";
 import { NodeContextMenu } from "./NodeContextMenu";
 
@@ -24,6 +25,7 @@ export function Node({ node, onStartConnect }: NodeProps) {
   const [editTitle, setEditTitle] = useState(node.title);
   const [editContent, setEditContent] = useState(node.content || "");
   const nodeRef = useRef<HTMLDivElement>(null);
+  const scale = useTransformComponent(({ state }) => state.scale);
 
   const handleDrag = (e: unknown, data: DraggableData) => {
     // Update node position in store when dragging
@@ -99,8 +101,8 @@ export function Node({ node, onStartConnect }: NodeProps) {
   const getNodeStyle = (): CSSProperties => {
     const baseStyle: CSSProperties = {
       position: "absolute",
-      left: node.x,
-      top: node.y,
+      left: 0,
+      top: 0,
       zIndex: node.z,
       minWidth: "200px",
       maxWidth: "400px",
@@ -164,13 +166,16 @@ export function Node({ node, onStartConnect }: NodeProps) {
   return (
     <>
       <Draggable
+        nodeRef={nodeRef}
         position={{ x: node.x, y: node.y }}
         onDrag={handleDrag}
         onStop={handleDragStop}
+        scale={scale}
       >
         <div
           ref={nodeRef}
           style={getNodeStyle()}
+          className="canvas-node"
           onClick={handleClick}
           onFocus={handleFocus}
           onKeyDown={handleKeyDown}

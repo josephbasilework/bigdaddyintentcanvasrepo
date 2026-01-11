@@ -15,6 +15,8 @@ const mockTransformRef = vi.hoisted(() => ({
   instance: {} as unknown,
 }));
 
+const draggableProps = { current: null as null | Record<string, unknown> };
+
 vi.mock('react-zoom-pan-pinch', async () => {
   const React = await vi.importActual<typeof import('react')>('react');
   const { forwardRef, useEffect } = React;
@@ -38,14 +40,19 @@ vi.mock('react-zoom-pan-pinch', async () => {
     <div data-testid="transform-component">{children}</div>
   );
 
-  return { TransformWrapper, TransformComponent };
+  const useTransformComponent = <T,>(
+    callback: (state: { state: { scale: number; positionX: number; positionY: number } }) => T
+  ) => callback({ state: mockTransformRef.state });
+
+  return { TransformWrapper, TransformComponent, useTransformComponent };
 });
 
 vi.mock('react-draggable', () => ({
   __esModule: true,
-  default: ({ children }: { children: ReactNode }) => (
-    <div data-testid="draggable">{children}</div>
-  ),
+  default: (props: { children: ReactNode }) => {
+    draggableProps.current = props;
+    return <div data-testid="draggable">{props.children}</div>;
+  },
 }));
 
 describe('workspace canvas', () => {
@@ -62,6 +69,7 @@ describe('workspace canvas', () => {
     mockTransformRef.zoomIn.mockClear();
     mockTransformRef.zoomOut.mockClear();
     mockTransformRef.resetTransform.mockClear();
+    draggableProps.current = null;
 
     useCanvasStore.setState({
       nodes: [],
@@ -183,6 +191,28 @@ describe('workspace canvas', () => {
     expect(node.type).toBe('graph');
     expect(node.content).toBe('Build Q1 roadmap');
     expect(node.metadata).toMatchObject({ command: '/plan' });
+  });
+
+  it('uses the current zoom scale for draggable nodes', async () => {
+    mockTransformRef.state = { scale: 1.6, positionX: 0, positionY: 0 };
+    fetchMock.mockResolvedValueOnce(createResponse({
+      nodes: [{
+        id: 'node-1',
+        type: 'text',
+        x: 120,
+        y: 80,
+        z: 1,
+        title: 'Draggable node',
+      }],
+      edges: [],
+    }));
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(draggableProps.current).not.toBeNull());
+
+    expect(draggableProps.current?.scale).toBe(1.6);
   });
 
   it('falls back to an empty state when workspace data is corrupted', async () => {
