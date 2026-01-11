@@ -14,6 +14,7 @@ describe('canvasStore', () => {
       edges: [],
       documents: [],
       selectedNodeId: null,
+      selectedNodeIds: [],
       past: [],
       future: [],
     });

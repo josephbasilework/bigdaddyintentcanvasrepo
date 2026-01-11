@@ -43,6 +43,7 @@ interface CanvasState {
   edges: CanvasEdge[];
   documents: CanvasDocument[];
   selectedNodeId: string | null;
+  selectedNodeIds: string[];
 
   // History state
   past: CanvasSnapshot[];
@@ -51,6 +52,7 @@ interface CanvasState {
   // Actions
   addNode: (node: Omit<CanvasNode, 'id'>) => string;
   removeNode: (nodeId: string) => void;
+  removeNodes: (nodeIds: string[]) => void;
   updateNodePosition: (nodeId: string, x: number, y: number, z?: number) => void;
   selectNode: (nodeId: string | null) => void;
   updateNode: (nodeId: string, updates: Partial<CanvasNode>) => void;
@@ -93,6 +95,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     edges: [],
     documents: [],
     selectedNodeId: null,
+    selectedNodeIds: [],
     past: [],
     future: [],
 
@@ -111,14 +114,48 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
 
     // Remove a node from the canvas
     removeNode: (nodeId) => {
-      withHistory((state) => ({
-        nodes: state.nodes.filter((node) => node.id !== nodeId),
-        edges: state.edges.filter(
-          (edge) => edge.sourceNodeId !== nodeId && edge.targetNodeId !== nodeId
-        ),
-        documents: state.documents.filter((doc) => doc.nodeId !== nodeId),
-        selectedNodeId: state.selectedNodeId === nodeId ? null : state.selectedNodeId,
-      }));
+      withHistory((state) => {
+        const nextSelectedIds = state.selectedNodeIds.filter((id) => id !== nodeId);
+        let nextSelectedNodeId = state.selectedNodeId;
+        if (nextSelectedNodeId === nodeId) {
+          nextSelectedNodeId = nextSelectedIds.length > 0 ? nextSelectedIds[0] : null;
+        }
+        return {
+          nodes: state.nodes.filter((node) => node.id !== nodeId),
+          edges: state.edges.filter(
+            (edge) => edge.sourceNodeId !== nodeId && edge.targetNodeId !== nodeId
+          ),
+          documents: state.documents.filter((doc) => doc.nodeId !== nodeId),
+          selectedNodeIds: nextSelectedIds,
+          selectedNodeId: nextSelectedNodeId,
+        };
+      });
+    },
+
+    // Remove multiple nodes from the canvas
+    removeNodes: (nodeIds) => {
+      const uniqueIds = Array.from(new Set(nodeIds)).filter(Boolean);
+      if (uniqueIds.length === 0) return;
+      const idsToRemove = new Set(uniqueIds);
+      withHistory((state) => {
+        const nextSelectedIds = state.selectedNodeIds.filter((id) => !idsToRemove.has(id));
+        let nextSelectedNodeId = state.selectedNodeId;
+        if (nextSelectedNodeId && idsToRemove.has(nextSelectedNodeId)) {
+          nextSelectedNodeId = null;
+        }
+        if (!nextSelectedNodeId && nextSelectedIds.length > 0) {
+          nextSelectedNodeId = nextSelectedIds[0];
+        }
+        return {
+          nodes: state.nodes.filter((node) => !idsToRemove.has(node.id)),
+          edges: state.edges.filter(
+            (edge) => !idsToRemove.has(edge.sourceNodeId) && !idsToRemove.has(edge.targetNodeId)
+          ),
+          documents: state.documents.filter((doc) => !idsToRemove.has(doc.nodeId)),
+          selectedNodeId: nextSelectedNodeId,
+          selectedNodeIds: nextSelectedIds,
+        };
+      });
     },
 
     // Update node position
@@ -134,7 +171,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
 
     // Select a node
     selectNode: (nodeId) => {
-      set({ selectedNodeId: nodeId });
+      set({
+        selectedNodeId: nodeId,
+        selectedNodeIds: nodeId ? [nodeId] : [],
+      });
     },
 
     // Update node properties
@@ -148,7 +188,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
 
     // Clear selection
     clearSelection: () => {
-      set({ selectedNodeId: null });
+      set({ selectedNodeId: null, selectedNodeIds: [] });
     },
 
     // Set all nodes (for bulk loading) - doesn't record history

@@ -8,8 +8,12 @@ describe('canvasStore', () => {
     // Reset to initial state by creating a fresh store
     useCanvasStore.setState({
       nodes: [],
+      edges: [],
       documents: [],
       selectedNodeId: null,
+      selectedNodeIds: [],
+      past: [],
+      future: [],
     });
   });
 
@@ -27,6 +31,11 @@ describe('canvasStore', () => {
     it('should have null selectedNodeId', () => {
       const { result } = renderHook(() => useCanvasStore());
       expect(result.current.selectedNodeId).toBeNull();
+    });
+
+    it('should have empty selectedNodeIds array', () => {
+      const { result } = renderHook(() => useCanvasStore());
+      expect(result.current.selectedNodeIds).toEqual([]);
     });
   });
 
@@ -133,6 +142,7 @@ describe('canvasStore', () => {
       });
 
       expect(result.current.selectedNodeId).toBeNull();
+      expect(result.current.selectedNodeIds).toEqual([]);
     });
 
     it('should not affect selectedNodeId when removing non-selected node', () => {
@@ -166,6 +176,68 @@ describe('canvasStore', () => {
       });
 
       expect(result.current.selectedNodeId).toBe(nodeId1);
+      expect(result.current.selectedNodeIds).toEqual([nodeId1]);
+    });
+  });
+
+  describe('removeNodes', () => {
+    it('should remove multiple nodes and linked artifacts', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      let nodeId1 = '';
+      let nodeId2 = '';
+      let nodeId3 = '';
+
+      act(() => {
+        nodeId1 = result.current.addNode({
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Node 1',
+        });
+        nodeId2 = result.current.addNode({
+          type: 'text',
+          x: 100,
+          y: 100,
+          z: 0,
+          title: 'Node 2',
+        });
+        nodeId3 = result.current.addNode({
+          type: 'text',
+          x: 200,
+          y: 200,
+          z: 0,
+          title: 'Node 3',
+        });
+        result.current.addEdge({ sourceNodeId: nodeId1, targetNodeId: nodeId2 });
+        result.current.addEdge({ sourceNodeId: nodeId2, targetNodeId: nodeId3 });
+      });
+
+      act(() => {
+        useCanvasStore.setState({
+          documents: [{
+            id: 'doc-1',
+            nodeId: nodeId1,
+            title: 'Doc 1',
+            content: 'Content',
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          }],
+        });
+        useCanvasStore.setState({ selectedNodeId: nodeId1, selectedNodeIds: [nodeId1, nodeId2] });
+      });
+
+      act(() => {
+        result.current.removeNodes([nodeId1, nodeId2]);
+      });
+
+      expect(result.current.nodes).toHaveLength(1);
+      expect(result.current.nodes[0].id).toBe(nodeId3);
+      expect(result.current.edges).toHaveLength(0);
+      expect(result.current.documents).toHaveLength(0);
+      expect(result.current.selectedNodeId).toBeNull();
+      expect(result.current.selectedNodeIds).toEqual([]);
     });
   });
 
@@ -281,6 +353,7 @@ describe('canvasStore', () => {
       });
 
       expect(result.current.selectedNodeId).toBe(nodeId);
+      expect(result.current.selectedNodeIds).toEqual([nodeId]);
     });
 
     it('should allow selecting null to deselect', () => {
@@ -306,6 +379,7 @@ describe('canvasStore', () => {
       });
 
       expect(result.current.selectedNodeId).toBeNull();
+      expect(result.current.selectedNodeIds).toEqual([]);
     });
   });
 
@@ -333,6 +407,7 @@ describe('canvasStore', () => {
       });
 
       expect(result.current.selectedNodeId).toBeNull();
+      expect(result.current.selectedNodeIds).toEqual([]);
     });
   });
 

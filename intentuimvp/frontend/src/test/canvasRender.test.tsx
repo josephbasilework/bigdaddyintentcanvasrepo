@@ -76,6 +76,7 @@ describe('workspace canvas', () => {
       edges: [],
       documents: [],
       selectedNodeId: null,
+      selectedNodeIds: [],
       past: [],
       future: [],
     });

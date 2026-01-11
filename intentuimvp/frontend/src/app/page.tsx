@@ -152,6 +152,7 @@ export default function Home() {
   const addNode = useCanvasStore((state) => state.addNode);
   const selectNode = useCanvasStore((state) => state.selectNode);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
+  const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
 
   useEffect(() => {
     if (routingError) {
@@ -270,7 +271,11 @@ export default function Home() {
     setRoutingError(null);
     const attachmentsForSubmission = [...attachments];
     const selection: SelectionScope = {
-      selected_nodes: selectedNodeId ? [selectedNodeId] : [],
+      selected_nodes: selectedNodeIds.length > 0
+        ? selectedNodeIds
+        : selectedNodeId
+          ? [selectedNodeId]
+          : [],
       selected_edges: [],
     };
 

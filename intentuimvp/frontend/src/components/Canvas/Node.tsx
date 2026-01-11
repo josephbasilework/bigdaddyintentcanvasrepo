@@ -5,6 +5,7 @@ import Draggable, { DraggableData } from "react-draggable";
 import { useTransformComponent } from "react-zoom-pan-pinch";
 import { useCanvasStore, CanvasNode } from "../../state/canvasStore";
 import { NodeContextMenu } from "./NodeContextMenu";
+import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog";
 
 interface NodeProps {
   node: CanvasNode;
@@ -20,10 +21,26 @@ interface NodeProps {
  * and handles selection state.
  */
 export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarget }: NodeProps) {
-  const { selectNode, selectedNodeId, updateNodePosition, removeNode, updateNode, addNode } = useCanvasStore();
-  const isSelected = selectedNodeId === node.id;
+  const {
+    selectNode,
+    selectedNodeId,
+    selectedNodeIds,
+    updateNodePosition,
+    removeNode,
+    removeNodes,
+    updateNode,
+    addNode,
+  } = useCanvasStore();
+  const isSelected = selectedNodeIds.length > 0
+    ? selectedNodeIds.includes(node.id)
+    : selectedNodeId === node.id;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isEditing, setIsEditing] = useState(false);
+  const [deleteDialog, setDeleteDialog] = useState<{
+    nodeIds: string[];
+    edgeCount: number;
+    documentCount: number;
+  } | null>(null);
   const [editTitle, setEditTitle] = useState(node.title);
   const [editContent, setEditContent] = useState(node.content || "");
   const nodeRef = useRef<HTMLDivElement>(null);
@@ -90,6 +107,25 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
   };
 
   const handleDelete = () => {
+    const selectedIds = selectedNodeIds.length > 1 && selectedNodeIds.includes(node.id)
+      ? selectedNodeIds
+      : [node.id];
+
+    if (selectedIds.length > 1) {
+      const { edges, documents } = useCanvasStore.getState();
+      const idsToRemove = new Set(selectedIds);
+      const edgeCount = edges.filter(
+        (edge) => idsToRemove.has(edge.sourceNodeId) || idsToRemove.has(edge.targetNodeId)
+      ).length;
+      const documentCount = documents.filter((doc) => idsToRemove.has(doc.nodeId)).length;
+      setDeleteDialog({
+        nodeIds: selectedIds,
+        edgeCount,
+        documentCount,
+      });
+      return;
+    }
+
     removeNode(node.id);
   };
 
@@ -104,6 +140,16 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
       metadata: node.metadata,
     };
     addNode(newNode);
+  };
+
+  const handleCancelDelete = () => {
+    setDeleteDialog(null);
+  };
+
+  const handleConfirmDelete = () => {
+    if (!deleteDialog) return;
+    removeNodes(deleteDialog.nodeIds);
+    setDeleteDialog(null);
   };
 
   const handleConnect = () => {
@@ -418,6 +464,15 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
           </div>
         </div>
       )}
+
+      <DeleteConfirmationDialog
+        isOpen={Boolean(deleteDialog)}
+        nodeCount={deleteDialog?.nodeIds.length ?? 0}
+        edgeCount={deleteDialog?.edgeCount ?? 0}
+        documentCount={deleteDialog?.documentCount ?? 0}
+        onCancel={handleCancelDelete}
+        onConfirm={handleConfirmDelete}
+      />
     </>
   );
 }
