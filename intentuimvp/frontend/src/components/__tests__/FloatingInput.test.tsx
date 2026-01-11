@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import { FloatingInput } from "../ContextInput/FloatingInput";
 
 describe("FloatingInput", () => {
@@ -207,5 +207,33 @@ describe("FloatingInput", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove spec.pdf" }));
 
     expect(handleRemove).toHaveBeenCalledWith("spec.pdf");
+  });
+
+  it("shows selection scope context when selection is provided", () => {
+    render(
+      <FloatingInput
+        selection={[
+          { id: "node-1", label: "First node" },
+          { id: "node-2", label: "Second node" },
+        ]}
+      />
+    );
+
+    const selectionScope = screen.getByRole("region", { name: /selection scope/i });
+    expect(within(selectionScope).getByText("Selection scope")).toBeInTheDocument();
+    expect(within(selectionScope).getByText("2 nodes")).toBeInTheDocument();
+    expect(within(selectionScope).getByText("First node")).toBeInTheDocument();
+  });
+
+  it("collapses selection chips when too many items are selected", () => {
+    const selection = Array.from({ length: 6 }, (_, index) => ({
+      id: `node-${index}`,
+      label: `Node ${index}`,
+    }));
+
+    render(<FloatingInput selection={selection} />);
+
+    const selectionScope = screen.getByRole("region", { name: /selection scope/i });
+    expect(within(selectionScope).getByText("+2 more")).toBeInTheDocument();
   });
 });

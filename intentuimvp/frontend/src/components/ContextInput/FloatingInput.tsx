@@ -9,6 +9,8 @@ interface FloatingInputProps {
   onFilesDrop?: (files: File[]) => void;
   /** Optional list of attachment names to display */
   attachments?: string[];
+  /** Optional list of selection scope labels to display */
+  selection?: SelectionScopeItem[];
   /** Callback to remove an attachment by name */
   onRemoveAttachment?: (name: string) => void;
   /** Placeholder text for the input */
@@ -17,6 +19,11 @@ interface FloatingInputProps {
   autoFocus?: boolean;
   /** Maximum length of input */
   maxLength?: number;
+}
+
+interface SelectionScopeItem {
+  id: string;
+  label: string;
 }
 
 interface SlashTemplate {
@@ -78,6 +85,7 @@ export function FloatingInput({
   onSubmit,
   onFilesDrop,
   attachments,
+  selection,
   onRemoveAttachment,
   placeholder = "Type a command...",
   autoFocus = true,
@@ -86,6 +94,19 @@ export function FloatingInput({
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
   const [isDragActive, setIsDragActive] = useState(false);
+  const selectionItems = selection ?? [];
+  const selectionCount = selectionItems.length;
+  const maxSelectionChips = 4;
+  const visibleSelection = selectionItems.slice(0, maxSelectionChips);
+  const overflowSelectionCount = Math.max(selectionCount - visibleSelection.length, 0);
+
+  const formatSelectionLabel = (label: string) => {
+    const maxLength = 28;
+    if (label.length <= maxLength) {
+      return label;
+    }
+    return `${label.slice(0, maxLength - 3).trimEnd()}...`;
+  };
 
   // Auto-focus on mount
   useEffect(() => {
@@ -178,6 +199,37 @@ export function FloatingInput({
           Drop files to attach
         </div>
       )}
+      {selectionCount > 0 && (
+        <div className="selection-scope" role="region" aria-label="Selection scope">
+          <div className="selection-scope-header">
+            <span className="selection-scope-title">Selection scope</span>
+            <span className="selection-scope-count">
+              {selectionCount} node{selectionCount === 1 ? "" : "s"}
+            </span>
+          </div>
+          <div className="selection-scope-chips" role="list" aria-label="Selected nodes">
+            {visibleSelection.map((item) => (
+              <div
+                key={item.id}
+                className="selection-chip"
+                role="listitem"
+                title={item.label}
+              >
+                {formatSelectionLabel(item.label)}
+              </div>
+            ))}
+            {overflowSelectionCount > 0 && (
+              <div
+                className="selection-chip selection-chip-more"
+                role="listitem"
+                title={`${overflowSelectionCount} more selected nodes`}
+              >
+                +{overflowSelectionCount} more
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       {attachments && attachments.length > 0 && (
         <div className="attachment-list" role="list" aria-label="Attached files">
           {attachments.map((name) => (
@@ -261,6 +313,64 @@ export function FloatingInput({
           color: #e2e8f0;
           font-size: 0.85rem;
           pointer-events: none;
+        }
+
+        .selection-scope {
+          display: flex;
+          flex-direction: column;
+          gap: 0.4rem;
+          margin-bottom: 0.5rem;
+          padding: 0.5rem 0.7rem;
+          border-radius: 0.75rem;
+          background-color: rgba(15, 23, 42, 0.85);
+          border: 1px solid rgba(51, 65, 85, 0.7);
+          color: #e2e8f0;
+        }
+
+        .selection-scope-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.75rem;
+        }
+
+        .selection-scope-title {
+          font-size: 0.65rem;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+          color: #94a3b8;
+        }
+
+        .selection-scope-count {
+          font-size: 0.75rem;
+          color: #e2e8f0;
+          font-weight: 600;
+        }
+
+        .selection-scope-chips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.35rem;
+        }
+
+        .selection-chip {
+          display: inline-flex;
+          align-items: center;
+          padding: 0.3rem 0.55rem;
+          border-radius: 999px;
+          background-color: rgba(15, 23, 42, 0.9);
+          border: 1px solid rgba(71, 85, 105, 0.6);
+          color: #e2e8f0;
+          font-size: 0.75rem;
+          max-width: 200px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .selection-chip-more {
+          color: #94a3b8;
+          border-style: dashed;
         }
 
         .attachment-list {
@@ -414,6 +524,18 @@ export function FloatingInput({
           .floating-input-container {
             bottom: 1rem;
             width: 95%;
+          }
+
+          .selection-scope {
+            padding: 0.45rem 0.6rem;
+          }
+
+          .selection-scope-title {
+            font-size: 0.6rem;
+          }
+
+          .selection-scope-count {
+            font-size: 0.7rem;
           }
 
           .attachment-name {

@@ -90,6 +90,33 @@ type SelectionScope = {
   selected_edges: string[];
 };
 
+const getSelectionIds = (
+  selectedNodeIds: string[],
+  selectedNodeId: string | null
+): string[] => {
+  if (selectedNodeIds.length > 0) {
+    return selectedNodeIds;
+  }
+  return selectedNodeId ? [selectedNodeId] : [];
+};
+
+const getSelectionScopeItems = (
+  selectionIds: string[],
+  nodes: CanvasNode[]
+): Array<{ id: string; label: string }> => {
+  if (selectionIds.length === 0) {
+    return [];
+  }
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  return selectionIds.map((id) => {
+    const node = nodeById.get(id);
+    return {
+      id,
+      label: node?.title ?? "Unknown node",
+    };
+  });
+};
+
 type PendingCommand = {
   text: string;
   attachments: string[];
@@ -219,6 +246,12 @@ export default function Home() {
   const selectNode = useCanvasStore((state) => state.selectNode);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
+  const selectionIds = getSelectionIds(selectedNodeIds, selectedNodeId);
+  const selectionItems = getSelectionScopeItems(selectionIds, nodes);
+  const selectionScope: SelectionScope = {
+    selected_nodes: selectionIds,
+    selected_edges: [],
+  };
 
   useEffect(() => {
     if (routingError) {
@@ -336,14 +369,7 @@ export default function Home() {
   const handleCommandSubmit = async (value: string) => {
     setRoutingError(null);
     const attachmentsForSubmission = [...attachments];
-    const selection: SelectionScope = {
-      selected_nodes: selectedNodeIds.length > 0
-        ? selectedNodeIds
-        : selectedNodeId
-          ? [selectedNodeId]
-          : [],
-      selected_edges: [],
-    };
+    const selection = selectionScope;
 
     try {
       const assumptionResponse = await fetch(`${API_BASE_URL}/api/context/assumptions`, {
@@ -518,6 +544,7 @@ export default function Home() {
         onSubmit={handleCommandSubmit}
         onFilesDrop={handleFilesDrop}
         attachments={attachments}
+        selection={selectionItems}
         onRemoveAttachment={handleRemoveAttachment}
         placeholder="Type a command..."
       />
