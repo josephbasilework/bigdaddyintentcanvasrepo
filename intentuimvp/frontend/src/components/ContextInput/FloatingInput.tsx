@@ -212,10 +212,16 @@ export function FloatingInput({
           cursor: pointer;
         }
 
-        .slash-template-item:hover,
+        .slash-template-item:hover {
+          border-color: #3d3d3d;
+          background-color: #1a1a1a;
+        }
+
         .slash-template-item:focus-visible {
           border-color: #3d3d3d;
           background-color: #1a1a1a;
+          outline: 2px solid var(--focus-ring);
+          outline-offset: 2px;
         }
 
         .template-row {
@@ -265,6 +271,11 @@ export function FloatingInput({
           border-color: #666;
           box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5),
             0 0 0 2px rgba(255, 255, 255, 0.1);
+        }
+
+        .floating-input:focus-visible {
+          outline: 2px solid var(--focus-ring);
+          outline-offset: 2px;
         }
 
         .floating-input::placeholder {

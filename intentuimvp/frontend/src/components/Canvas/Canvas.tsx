@@ -56,6 +56,20 @@ export function Canvas({ children }: CanvasProps) {
           min-width: 100%;
           min-height: 100%;
         }
+
+        .canvas-content:focus-visible {
+          outline: 2px solid var(--focus-ring);
+          outline-offset: -2px;
+          box-shadow: inset 0 0 0 2px var(--focus-ring);
+        }
+
+        @supports not selector(:focus-visible) {
+          .canvas-content:focus {
+            outline: 2px solid var(--focus-ring);
+            outline-offset: -2px;
+            box-shadow: inset 0 0 0 2px var(--focus-ring);
+          }
+        }
       `}</style>
     </div>
   );

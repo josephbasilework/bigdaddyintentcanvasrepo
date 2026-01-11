@@ -311,6 +311,20 @@ export function DocumentBlock({ nodeId, title, content, onSave, onCancel }: Docu
           line-height: 1.6;
         }
 
+        .ProseMirror:focus-visible {
+          outline: 2px solid var(--focus-ring);
+          outline-offset: 2px;
+          border-radius: 6px;
+        }
+
+        @supports not selector(:focus-visible) {
+          .ProseMirror:focus {
+            outline: 2px solid var(--focus-ring);
+            outline-offset: 2px;
+            border-radius: 6px;
+          }
+        }
+
         .ProseMirror p.is-editor-empty:first-child::before {
           color: #718096;
           content: attr(data-placeholder);
