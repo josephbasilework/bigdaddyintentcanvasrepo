@@ -10,6 +10,13 @@ interface EdgeProps {
   targetNode: CanvasNode;
 }
 
+const DEFAULT_NODE_WIDTH = 200;
+const DEFAULT_NODE_HEIGHT = 80;
+const LABEL_OFFSET = 14;
+const EDGE_STROKE = "#94a3b8";
+const EDGE_LABEL_FILL = "#f8fafc";
+const EDGE_LABEL_STROKE = "#0f172a";
+
 /**
  * Edge component that renders a connection line between two nodes.
  *
@@ -22,31 +29,60 @@ export function Edge({ edge, sourceNode, targetNode }: EdgeProps) {
 
   // Calculate connection points on nodes
   const { path, labelPosition } = useMemo(() => {
-    // Estimate node dimensions (default to 200x80 if not calculated)
-    const nodeWidth = 200;
-    const nodeHeight = 80;
+    const nodeWidth = DEFAULT_NODE_WIDTH;
+    const nodeHeight = DEFAULT_NODE_HEIGHT;
 
-    // Calculate centers
-    const sourceCenterX = sourceNode.x + nodeWidth / 2;
-    const sourceCenterY = sourceNode.y + nodeHeight / 2;
-    const targetCenterX = targetNode.x + nodeWidth / 2;
-    const targetCenterY = targetNode.y + nodeHeight / 2;
+    const sourceCenter = {
+      x: sourceNode.x + nodeWidth / 2,
+      y: sourceNode.y + nodeHeight / 2,
+    };
+    const targetCenter = {
+      x: targetNode.x + nodeWidth / 2,
+      y: targetNode.y + nodeHeight / 2,
+    };
 
-    // Simple straight line for now
-    // TODO: Implement curved bezier lines for better visuals
-    const dx = targetCenterX - sourceCenterX;
-    const dy = targetCenterY - sourceCenterY;
+    const getAnchorPoint = (
+      from: { x: number; y: number },
+      to: { x: number; y: number },
+      width: number,
+      height: number
+    ) => {
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      if (dx === 0 && dy === 0) {
+        return { x: from.x, y: from.y };
+      }
 
-    // Calculate edge position (from center to center)
-    // The actual SVG coordinates will be relative to the canvas
+      const halfWidth = width / 2;
+      const halfHeight = height / 2;
+      const scaleX = dx === 0 ? Number.POSITIVE_INFINITY : halfWidth / Math.abs(dx);
+      const scaleY = dy === 0 ? Number.POSITIVE_INFINITY : halfHeight / Math.abs(dy);
+      const scale = Math.min(scaleX, scaleY);
+      return {
+        x: from.x + dx * scale,
+        y: from.y + dy * scale,
+      };
+    };
+
+    const start = getAnchorPoint(sourceCenter, targetCenter, nodeWidth, nodeHeight);
+    const end = getAnchorPoint(targetCenter, sourceCenter, nodeWidth, nodeHeight);
+
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const midX = start.x + dx / 2;
+    const midY = start.y + dy / 2;
+    const normalX = -dy / length;
+    const normalY = dx / length;
+
     return {
-      path: `M ${sourceCenterX} ${sourceCenterY} L ${targetCenterX} ${targetCenterY}`,
+      path: `M ${start.x} ${start.y} L ${end.x} ${end.y}`,
       labelPosition: {
-        x: sourceCenterX + dx / 2,
-        y: sourceCenterY + dy / 2,
+        x: midX + normalX * LABEL_OFFSET,
+        y: midY + normalY * LABEL_OFFSET,
       },
     };
-  }, [sourceNode, targetNode]);
+  }, [sourceNode.x, sourceNode.y, targetNode.x, targetNode.y]);
 
   const strokeDashArray = type === "dashed" ? "5,5" : type === "dotted" ? "2,2" : undefined;
 
@@ -55,11 +91,15 @@ export function Edge({ edge, sourceNode, targetNode }: EdgeProps) {
       {/* Edge line */}
       <path
         d={path}
-        stroke="#4a5568"
+        stroke={EDGE_STROKE}
         strokeWidth="2"
         fill="none"
         strokeDasharray={strokeDashArray}
-        opacity="0.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        opacity="0.85"
+        markerEnd={`url(#arrowhead-${edge.id})`}
+        vectorEffect="non-scaling-stroke"
       />
 
       {/* Arrow head */}
@@ -71,8 +111,9 @@ export function Edge({ edge, sourceNode, targetNode }: EdgeProps) {
           refX="9"
           refY="3.5"
           orient="auto"
+          markerUnits="strokeWidth"
         >
-          <polygon points="0 0, 10 3.5, 0 7" fill="#4a5568" opacity="0.8" />
+          <polygon points="0 0, 10 3.5, 0 7" fill={EDGE_STROKE} opacity="0.8" />
         </marker>
       </defs>
 
@@ -84,12 +125,11 @@ export function Edge({ edge, sourceNode, targetNode }: EdgeProps) {
           textAnchor="middle"
           dominantBaseline="middle"
           fontSize="12"
-          fill="#a0aec0"
-          style={{
-            backgroundColor: "#1a202c",
-            padding: "2px 6px",
-            borderRadius: "4px",
-          }}
+          fontWeight="500"
+          fill={EDGE_LABEL_FILL}
+          stroke={EDGE_LABEL_STROKE}
+          strokeWidth="4"
+          style={{ paintOrder: "stroke" }}
         >
           {resolvedLabel}
         </text>
@@ -133,6 +173,7 @@ export function EdgesLayer() {
         left: 0,
         width: "100%",
         height: "100%",
+        overflow: "visible",
         pointerEvents: "none",
         zIndex: 0, // Below nodes
       }}
