@@ -76,3 +76,5 @@ bd sync               # Sync with git
 - 2026-01-11 07:38 EST: `npm run build` in `intentuimvp/frontend` can take ~90s; use longer timeouts.
 - 2026-01-11 07:42 EST: `git pull --rebase` fails if `.beads/issues.jsonl` is dirty; stash that file before pulling, then pop it before `bd sync`.
 - 2026-01-11 08:27 EST: Pre-commit aborts if `.pre-commit-config.yaml` is modified but unstaged; stash it (or stage it intentionally) before committing.
+- 2026-01-11 09:05 EST: Gitleaks per-rule allowlist uses a single `[rules.allowlist]` map; include placeholder regexes there for `.env.example` and `PRD.md` to avoid false positives.
+- 2026-01-11 09:05 EST: Local Python installs may require `python3 -m pip install --break-system-packages` when venv creation isn't available.
