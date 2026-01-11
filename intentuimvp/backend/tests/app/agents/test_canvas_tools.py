@@ -9,8 +9,10 @@ from sqlalchemy import select
 
 from app.agents.tools import DEFAULT_USER_ID, ToolValidationError, get_tool_manager
 from app.database import AsyncSessionLocal, async_engine
+from app.models.edge import RelationType
 from app.models.node import Node, NodeType
 from app.repositories.canvas_repo import CanvasRepository
+from app.repositories.edge_repo import EdgeRepository
 from app.repositories.node_repo import NodeRepository
 
 
@@ -64,6 +66,138 @@ async def test_canvas_create_node_tool_rejects_invalid_type() -> None:
         node = query.scalar_one_or_none()
 
     assert node is None
+
+
+@pytest.mark.asyncio
+async def test_canvas_link_nodes_tool_creates_edge() -> None:
+    """Verify canvas.link_nodes persists an edge and returns its ID."""
+    manager = get_tool_manager()
+    token = uuid.uuid4().hex
+
+    async with AsyncSessionLocal() as session:
+        canvas_repo = CanvasRepository(session)
+        node_repo = NodeRepository(session)
+        canvas = await canvas_repo.create_canvas(
+            DEFAULT_USER_ID, name=f"tool-edge-{token}"
+        )
+        source_node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label=f"tool-edge-source-{token}",
+            type=NodeType.TEXT,
+            position={"x": 0, "y": 0, "z": 0},
+        )
+        target_node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label=f"tool-edge-target-{token}",
+            type=NodeType.TEXT,
+            position={"x": 10, "y": 0, "z": 0},
+        )
+
+    result = await manager.execute_tool(
+        "canvas.link_nodes",
+        {
+            "from_id": source_node.id,
+            "to_id": target_node.id,
+            "relation_type": RelationType.REFERENCES,
+            "metadata": {"source": "tool-test"},
+        },
+    )
+
+    assert result.success
+    edge_id = result.output["id"]
+
+    async with AsyncSessionLocal() as session:
+        edge_repo = EdgeRepository(session)
+        edge = await edge_repo.get_by_id(edge_id)
+        assert edge is not None
+        assert edge.canvas_id == canvas.id
+        assert edge.from_node_id == source_node.id
+        assert edge.to_node_id == target_node.id
+        assert edge.relation_type == RelationType.REFERENCES
+
+        source_edges = await edge_repo.get_by_node(
+            source_node.id, as_source=True, as_target=True
+        )
+        target_edges = await edge_repo.get_by_node(
+            target_node.id, as_source=True, as_target=True
+        )
+        assert edge_id in {edge.id for edge in source_edges}
+        assert edge_id in {edge.id for edge in target_edges}
+
+
+@pytest.mark.asyncio
+async def test_canvas_link_nodes_tool_rejects_invalid_relation_type() -> None:
+    """Verify invalid relation types are rejected before execution."""
+    manager = get_tool_manager()
+    token = uuid.uuid4().hex
+
+    async with AsyncSessionLocal() as session:
+        canvas_repo = CanvasRepository(session)
+        node_repo = NodeRepository(session)
+        canvas = await canvas_repo.create_canvas(
+            DEFAULT_USER_ID, name=f"tool-edge-invalid-{token}"
+        )
+        source_node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label=f"tool-edge-source-{token}",
+            type=NodeType.TEXT,
+            position={"x": 0, "y": 0, "z": 0},
+        )
+        target_node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label=f"tool-edge-target-{token}",
+            type=NodeType.TEXT,
+            position={"x": 10, "y": 0, "z": 0},
+        )
+
+    with pytest.raises(ToolValidationError):
+        await manager.execute_tool(
+            "canvas.link_nodes",
+            {
+                "from_id": source_node.id,
+                "to_id": target_node.id,
+                "relation_type": "invalid-relation",
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_canvas_link_nodes_tool_rejects_invalid_node() -> None:
+    """Verify invalid node IDs fail without creating edges."""
+    manager = get_tool_manager()
+    token = uuid.uuid4().hex
+
+    async with AsyncSessionLocal() as session:
+        canvas_repo = CanvasRepository(session)
+        node_repo = NodeRepository(session)
+        canvas = await canvas_repo.create_canvas(
+            DEFAULT_USER_ID, name=f"tool-edge-missing-{token}"
+        )
+        source_node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label=f"tool-edge-source-{token}",
+            type=NodeType.TEXT,
+            position={"x": 0, "y": 0, "z": 0},
+        )
+
+    result = await manager.execute_tool(
+        "canvas.link_nodes",
+        {
+            "from_id": source_node.id,
+            "to_id": 999999,
+            "relation_type": RelationType.DEPENDS_ON,
+        },
+    )
+
+    assert not result.success
+
+    async with AsyncSessionLocal() as session:
+        edge_repo = EdgeRepository(session)
+        edges = await edge_repo.get_by_node(
+            source_node.id, as_source=True, as_target=True
+        )
+
+    assert edges == []
 
 
 @pytest.mark.asyncio

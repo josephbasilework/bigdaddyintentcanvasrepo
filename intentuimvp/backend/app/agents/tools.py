@@ -19,8 +19,10 @@ from sqlalchemy import or_, select
 
 from app.database import AsyncSessionLocal
 from app.models.canvas import Canvas
+from app.models.edge import RelationType
 from app.models.node import Node, NodeType
 from app.repositories.canvas_repo import CanvasRepository
+from app.repositories.edge_repo import EdgeRepository
 from app.repositories.node_repo import NodeRepository
 
 logger = logging.getLogger(__name__)
@@ -92,6 +94,21 @@ class CanvasCreateNodeParams(BaseModel):
     position: CanvasNodePosition = Field(..., description="Node position")
     metadata: dict[str, Any] | None = Field(
         default=None, description="Optional node metadata"
+    )
+
+
+class CanvasLinkNodesParams(BaseModel):
+    """Parameters for linking two nodes."""
+
+    from_id: int = Field(..., ge=1, description="Source node identifier")
+    to_id: int = Field(..., ge=1, description="Target node identifier")
+    relation_type: RelationType = Field(
+        default=RelationType.DEPENDS_ON,
+        description="Edge relation type",
+    )
+    metadata: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional edge metadata",
     )
 
 
@@ -252,6 +269,49 @@ class ToolManager:
 
             return {"id": node.id}
 
+        async def canvas_link_nodes(
+            from_id: int,
+            to_id: int,
+            relation_type: RelationType,
+            metadata: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            """Create a new edge between two nodes."""
+            params = CanvasLinkNodesParams(
+                from_id=from_id,
+                to_id=to_id,
+                relation_type=relation_type,
+                metadata=metadata,
+            )
+
+            async with AsyncSessionLocal() as session:
+                node_repo = NodeRepository(session)
+                from_node = await node_repo.get_by_id(params.from_id)
+                if from_node is None:
+                    raise ValueError(
+                        f"Source node not found: {params.from_id}"
+                    )
+
+                to_node = await node_repo.get_by_id(params.to_id)
+                if to_node is None:
+                    raise ValueError(
+                        f"Target node not found: {params.to_id}"
+                    )
+
+                if from_node.canvas_id != to_node.canvas_id:
+                    raise ValueError(
+                        "Nodes must belong to the same canvas"
+                    )
+
+                edge_repo = EdgeRepository(session)
+                edge = await edge_repo.create_edge(
+                    canvas_id=from_node.canvas_id,
+                    from_node_id=from_node.id,
+                    to_node_id=to_node.id,
+                    relation_type=params.relation_type,
+                )
+
+            return {"id": edge.id}
+
         async def workspace_search(
             query: str,
             scope: str,
@@ -345,6 +405,14 @@ class ToolManager:
             description="Create a new node on the canvas",
             func=canvas_create_node,
             parameters=CanvasCreateNodeParams,
+            is_async=True,
+        )
+
+        self.register_function(
+            name="canvas.link_nodes",
+            description="Create a typed edge between two nodes",
+            func=canvas_link_nodes,
+            parameters=CanvasLinkNodesParams,
             is_async=True,
         )
 
