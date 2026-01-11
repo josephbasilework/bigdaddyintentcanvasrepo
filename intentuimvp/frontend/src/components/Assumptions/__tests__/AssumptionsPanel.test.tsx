@@ -6,6 +6,7 @@ import type { Assumption, AssumptionSet } from "../types";
 const mockAssumptions: Assumption[] = [
   {
     id: "1",
+    originalText: "You want to search for recent Python documentation",
     text: "You want to search for recent Python documentation",
     confidence: 0.95,
     category: "intent",
@@ -14,6 +15,7 @@ const mockAssumptions: Assumption[] = [
   },
   {
     id: "2",
+    originalText: "Focus on Python 3.12+ features",
     text: "Focus on Python 3.12+ features",
     confidence: 0.7,
     category: "context",
@@ -21,6 +23,7 @@ const mockAssumptions: Assumption[] = [
   },
   {
     id: "3",
+    originalText: "Include code examples in results",
     text: "Include code examples in results",
     confidence: 0.85,
     category: "parameter",

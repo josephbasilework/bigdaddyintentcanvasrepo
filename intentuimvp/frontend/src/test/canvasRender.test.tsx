@@ -194,6 +194,74 @@ describe('workspace canvas', () => {
     expect(node.metadata).toMatchObject({ command: '/plan' });
   });
 
+  it('persists assumption resolutions before executing commands', async () => {
+    let batchPayload: Record<string, unknown> | null = null;
+
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/api/workspace')) {
+        return Promise.resolve(createResponse({ nodes: [], edges: [] }));
+      }
+      if (url.includes('/api/context/assumptions/batch-resolve')) {
+        const rawBody = init?.body ? String(init.body) : '';
+        batchPayload = rawBody ? JSON.parse(rawBody) : null;
+        return Promise.resolve(createResponse({ resolved_count: 1 }));
+      }
+      if (url.includes('/api/context/assumptions')) {
+        return Promise.resolve(createResponse({
+          intent: 'capture',
+          confidence: 0.4,
+          alternatives: [],
+          assumptions: [
+            {
+              id: 'assumption-1',
+              text: 'Use last quarter data',
+              confidence: 0.4,
+              category: 'parameter',
+              explanation: null,
+            },
+          ],
+          reasoning: '',
+          should_auto_execute: false,
+          session_id: 'session-123',
+        }));
+      }
+      if (url.includes('/api/commands')) {
+        return Promise.resolve(createResponse({ correlation_id: 'cmd-3', status: 'queued' }));
+      }
+      return Promise.resolve(createResponse({}));
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const commandInput = screen.getByRole('textbox', { name: /command input/i });
+    fireEvent.change(commandInput, { target: { value: 'Capture metrics' } });
+    fireEvent.keyDown(commandInput, { key: 'Enter' });
+
+    const confirmAssumptionButton = await screen.findByRole('button', { name: 'Confirm' });
+    fireEvent.click(confirmAssumptionButton);
+
+    const continueButton = await screen.findByRole('button', {
+      name: /continue with execution/i,
+    });
+    fireEvent.click(continueButton);
+
+    await waitFor(() => expect(batchPayload).not.toBeNull());
+    expect(batchPayload).toMatchObject({
+      session_id: 'session-123',
+      resolutions: [
+        {
+          assumption_id: 'assumption-1',
+          action: 'accept',
+          original_text: 'Use last quarter data',
+          category: 'parameter',
+        },
+      ],
+    });
+  });
+
   it('uses the current zoom scale for draggable nodes', async () => {
     mockTransformRef.state = { scale: 1.6, positionX: 0, positionY: 0 };
     fetchMock.mockResolvedValueOnce(createResponse({

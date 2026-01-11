@@ -6,6 +6,8 @@ export type AssumptionStatus = "pending" | "accepted" | "rejected";
 export interface Assumption {
   /** Unique identifier for this assumption */
   id: string;
+  /** Original assumption text received from the agent */
+  originalText: string;
   /** The assumption text extracted by the agent */
   text: string;
   /** Confidence score (0-1) for this assumption */

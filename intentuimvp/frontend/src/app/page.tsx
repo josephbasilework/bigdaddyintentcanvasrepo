@@ -119,6 +119,19 @@ type AssumptionSetResponse = {
   session_id?: string | null;
 };
 
+type AssumptionResolutionPayload = {
+  assumption_id: string;
+  action: "accept" | "reject" | "edit";
+  edited_text?: string | null;
+  original_text?: string | null;
+  category?: string | null;
+};
+
+type AssumptionResolutionBatch = {
+  session_id?: string | null;
+  resolutions: AssumptionResolutionPayload[];
+};
+
 const normalizeCategory = (category: string): Assumption["category"] => {
   switch (category) {
     case "context":
@@ -133,12 +146,65 @@ const normalizeCategory = (category: string): Assumption["category"] => {
 
 const mapAssumptionResponse = (assumption: AssumptionResponse): Assumption => ({
   id: assumption.id,
+  originalText: assumption.text,
   text: assumption.text,
   confidence: assumption.confidence,
   category: normalizeCategory(assumption.category),
   status: "pending",
   explanation: assumption.explanation ?? undefined,
 });
+
+const buildAssumptionResolutions = (
+  assumptions: Assumption[]
+): AssumptionResolutionPayload[] =>
+  assumptions
+    .filter((assumption) => assumption.status !== "pending")
+    .map((assumption) => {
+      const normalizedText = assumption.text.trim();
+      const normalizedOriginal = assumption.originalText.trim();
+      const isEdited = normalizedText !== normalizedOriginal;
+      const base = {
+        assumption_id: assumption.id,
+        original_text: assumption.originalText,
+        category: assumption.category,
+      };
+
+      if (assumption.status === "rejected") {
+        return { ...base, action: "reject" };
+      }
+
+      if (isEdited) {
+        return {
+          ...base,
+          action: "edit",
+          edited_text: normalizedText,
+        };
+      }
+
+      return { ...base, action: "accept" };
+    });
+
+const persistAssumptionResolutions = async (
+  payload: AssumptionResolutionBatch
+): Promise<void> => {
+  if (payload.resolutions.length === 0) {
+    return;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/context/assumptions/batch-resolve`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      `Assumption resolution error: ${response.status} ${response.statusText}`
+    );
+  }
+};
 
 export default function Home() {
   const [commands, setCommands] = useState<CommandSubmissionLog[]>([]);
@@ -351,12 +417,22 @@ export default function Home() {
     const accepted = assumptions.filter((a) => a.status === "accepted");
     const rejected = assumptions.filter((a) => a.status === "rejected");
     const commandToSend = pendingCommand;
+    const resolutions = buildAssumptionResolutions(assumptions);
 
     console.log("Assumptions confirmed:", {
       accepted,
       rejected,
       sessionId: assumptionSet?.sessionId,
     });
+
+    try {
+      await persistAssumptionResolutions({
+        session_id: assumptionSet?.sessionId ?? undefined,
+        resolutions,
+      });
+    } catch (error) {
+      console.error("Failed to store assumption resolutions:", error);
+    }
 
     clearAssumptions();
 
