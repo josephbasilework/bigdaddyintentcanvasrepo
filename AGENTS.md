@@ -61,3 +61,4 @@ bd sync               # Sync with git
 - 2026-01-10 15:49 EST: Backend source-of-truth for tests is `intentuimvp/backend/app`; the `intentuimvp/backend/src/intentuimvp-backend` tree is not tracked.
 - 2026-01-10 16:29 EST: AsyncSessionLocal-based pytest runs can hang unless `async_engine.dispose()` is called in a fixture.
 - 2026-01-10 18:48 EST: Keep floating UI like the command input outside the zoom/pan transform so it stays fixed over the canvas.
+- 2026-01-10 19:12 EST: Pre-commit hooks can touch tracked `intentuimvp/backend/app/__pycache__/main.cpython-312.pyc`; stash/restore that file (or stash all unstaged changes) before committing to avoid hook conflicts.
