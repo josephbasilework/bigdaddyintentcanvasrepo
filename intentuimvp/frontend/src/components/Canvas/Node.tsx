@@ -9,6 +9,8 @@ import { NodeContextMenu } from "./NodeContextMenu";
 interface NodeProps {
   node: CanvasNode;
   onStartConnect?: (nodeId: string) => void;
+  connectSourceNodeId?: string | null;
+  onConnectTarget?: (nodeId: string) => void;
 }
 
 /**
@@ -17,7 +19,7 @@ interface NodeProps {
  * Displays a node with its title and content, supports drag-to-move,
  * and handles selection state.
  */
-export function Node({ node, onStartConnect }: NodeProps) {
+export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarget }: NodeProps) {
   const { selectNode, selectedNodeId, updateNodePosition, removeNode, updateNode, addNode } = useCanvasStore();
   const isSelected = selectedNodeId === node.id;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
@@ -56,6 +58,9 @@ export function Node({ node, onStartConnect }: NodeProps) {
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (connectSourceNodeId && onConnectTarget && connectSourceNodeId !== node.id) {
+      onConnectTarget(node.id);
+    }
     selectNode(node.id);
   };
 

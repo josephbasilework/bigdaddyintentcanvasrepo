@@ -315,4 +315,55 @@ describe('workspace canvas', () => {
 
     expect(screen.getByDisplayValue('First node')).toBeInTheDocument();
   });
+
+  it('connects nodes from the context menu', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'text',
+            x: 0,
+            y: 0,
+            z: 1,
+            title: 'First node',
+          },
+          {
+            id: 'node-2',
+            type: 'text',
+            x: 240,
+            y: 0,
+            z: 2,
+            title: 'Second node',
+          },
+        ],
+        edges: [],
+      }),
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const sourceNode = screen.getByRole('button', { name: /first node/i });
+    fireEvent.contextMenu(sourceNode);
+
+    const connectItem = screen.getByRole('menuitem', { name: /connect node/i });
+    fireEvent.click(connectItem);
+
+    await waitFor(() => expect(screen.getByTestId('connect-mode-banner')).toBeInTheDocument());
+
+    const targetNode = screen.getByRole('button', { name: /second node/i });
+    fireEvent.click(targetNode);
+
+    await waitFor(() => expect(useCanvasStore.getState().edges).toHaveLength(1));
+
+    const [edge] = useCanvasStore.getState().edges;
+    expect(edge.sourceNodeId).toBe('node-1');
+    expect(edge.targetNodeId).toBe('node-2');
+    await waitFor(() =>
+      expect(screen.queryByTestId('connect-mode-banner')).not.toBeInTheDocument()
+    );
+  });
 });

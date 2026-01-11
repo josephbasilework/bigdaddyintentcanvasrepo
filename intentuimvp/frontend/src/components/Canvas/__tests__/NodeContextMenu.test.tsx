@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { NodeContextMenu } from "../NodeContextMenu";
 
 describe("NodeContextMenu", () => {
@@ -27,5 +27,27 @@ describe("NodeContextMenu", () => {
     expect(screen.getByRole("menuitem", { name: /duplicate node/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /connect node/i })).toBeInTheDocument();
     expect(screen.getByRole("menuitem", { name: /delete node/i })).toBeInTheDocument();
+  });
+
+  it("closes on escape or outside click", () => {
+    const onClose = vi.fn();
+
+    render(
+      <NodeContextMenu
+        x={120}
+        y={80}
+        onClose={onClose}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onDuplicate={vi.fn()}
+        onConnect={vi.fn()}
+      />
+    );
+
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
+
+    fireEvent.mouseDown(document.body);
+    expect(onClose).toHaveBeenCalledTimes(2);
   });
 });

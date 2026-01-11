@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useCallback, useState } from "react";
+import { createPortal } from "react-dom";
 import { useCanvasStore, CanvasEdge, CanvasNode } from "../../state/canvasStore";
 import { Node } from "./Node";
 import { EdgesLayer } from "./Edge";
@@ -114,8 +115,59 @@ const normalizeWorkspaceState = (
  * - Clearing selection when clicking empty space
  */
 export function CanvasWorkspace() {
-  const { nodes, edges, clearSelection, setNodes, setEdges } = useCanvasStore();
+  const { nodes, edges, clearSelection, setNodes, setEdges, addEdge } = useCanvasStore();
   const [loadStatus, setLoadStatus] = useState<"loading" | "loaded" | "error">("loading");
+  const [connectSourceNodeId, setConnectSourceNodeId] = useState<string | null>(null);
+
+  const handleCancelConnect = useCallback(() => {
+    setConnectSourceNodeId(null);
+  }, []);
+
+  const handleStartConnect = useCallback((nodeId: string) => {
+    setConnectSourceNodeId(nodeId);
+  }, []);
+
+  const handleConnectTarget = useCallback((targetNodeId: string) => {
+    if (!connectSourceNodeId) return;
+
+    if (connectSourceNodeId === targetNodeId) {
+      setConnectSourceNodeId(null);
+      return;
+    }
+
+    const hasEdge = edges.some(
+      (edge) => edge.sourceNodeId === connectSourceNodeId && edge.targetNodeId === targetNodeId
+    );
+
+    if (!hasEdge) {
+      addEdge({ sourceNodeId: connectSourceNodeId, targetNodeId });
+    }
+
+    setConnectSourceNodeId(null);
+  }, [addEdge, connectSourceNodeId, edges]);
+
+  useEffect(() => {
+    if (!connectSourceNodeId) return;
+    const sourceExists = nodes.some((node) => node.id === connectSourceNodeId);
+    if (!sourceExists) {
+      setConnectSourceNodeId(null);
+    }
+  }, [connectSourceNodeId, nodes]);
+
+  useEffect(() => {
+    if (!connectSourceNodeId) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setConnectSourceNodeId(null);
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [connectSourceNodeId]);
 
   // Load canvas state on mount
   useEffect(() => {
@@ -180,9 +232,12 @@ export function CanvasWorkspace() {
   const handleCanvasClick = useCallback((e: React.MouseEvent) => {
     // Only clear selection if clicking directly on canvas (not on a node)
     if (e.target === e.currentTarget) {
+      if (connectSourceNodeId) {
+        setConnectSourceNodeId(null);
+      }
       clearSelection();
     }
-  }, [clearSelection]);
+  }, [clearSelection, connectSourceNodeId]);
 
   const showEmptyState = loadStatus === "loaded" && nodes.length === 0 && edges.length === 0;
   const loadStatusMessage = (() => {
@@ -197,6 +252,63 @@ export function CanvasWorkspace() {
         return "";
     }
   })();
+
+  const connectSourceNode = connectSourceNodeId
+    ? nodes.find((node) => node.id === connectSourceNodeId)
+    : null;
+  const connectSourceLabel = connectSourceNode?.title ?? "node";
+  const connectBanner = connectSourceNodeId && typeof document !== "undefined"
+    ? createPortal(
+      <div
+        data-testid="connect-mode-banner"
+        role="region"
+        aria-label="Connect nodes"
+        style={{
+          position: "fixed",
+          top: "16px",
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 10002,
+          backgroundColor: "rgba(15, 23, 42, 0.95)",
+          border: "1px solid rgba(148, 163, 184, 0.4)",
+          borderRadius: "10px",
+          padding: "12px 16px",
+          display: "flex",
+          alignItems: "center",
+          gap: "16px",
+          color: "#e2e8f0",
+          boxShadow: "0 8px 18px rgba(0, 0, 0, 0.45)",
+          maxWidth: "520px",
+        }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+          <div style={{ fontSize: "11px", letterSpacing: "0.08em", textTransform: "uppercase", color: "#94a3b8" }}>
+            Connect mode
+          </div>
+          <div style={{ fontSize: "14px", lineHeight: 1.4 }}>
+            Connecting from <span style={{ fontWeight: 600 }}>{connectSourceLabel}</span>. Select another node to create an edge.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={handleCancelConnect}
+          style={{
+            border: "1px solid rgba(148, 163, 184, 0.5)",
+            backgroundColor: "transparent",
+            color: "#e2e8f0",
+            borderRadius: "999px",
+            padding: "6px 12px",
+            fontSize: "12px",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          Cancel
+        </button>
+      </div>,
+      document.body
+    )
+    : null;
 
   return (
     <div
@@ -216,7 +328,13 @@ export function CanvasWorkspace() {
       </div>
       <EdgesLayer />
       {nodes.map((node) => (
-        <Node key={node.id} node={node} />
+        <Node
+          key={node.id}
+          node={node}
+          onStartConnect={handleStartConnect}
+          connectSourceNodeId={connectSourceNodeId}
+          onConnectTarget={handleConnectTarget}
+        />
       ))}
       {showEmptyState && (
         <div
@@ -272,6 +390,7 @@ export function CanvasWorkspace() {
           </div>
         </div>
       )}
+      {connectBanner}
     </div>
   );
 }
