@@ -40,6 +40,10 @@ export function Node({ node, onStartConnect }: NodeProps) {
     selectNode(node.id);
   };
 
+  const handleFocus = () => {
+    selectNode(node.id);
+  };
+
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -81,6 +85,13 @@ export function Node({ node, onStartConnect }: NodeProps) {
   const handleConnect = () => {
     if (onStartConnect) {
       onStartConnect(node.id);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      handleEdit();
     }
   };
 
@@ -161,7 +172,13 @@ export function Node({ node, onStartConnect }: NodeProps) {
           ref={nodeRef}
           style={getNodeStyle()}
           onClick={handleClick}
+          onFocus={handleFocus}
+          onKeyDown={handleKeyDown}
           onContextMenu={handleContextMenu}
+          role="button"
+          tabIndex={0}
+          aria-label={node.title}
+          aria-pressed={isSelected}
         >
           {/* Node header */}
           <div style={{

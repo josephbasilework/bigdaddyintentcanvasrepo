@@ -4,10 +4,80 @@ import { Canvas, CanvasWorkspace } from "@/components/Canvas";
 import { FloatingInput } from "@/components/ContextInput/FloatingInput";
 import { AssumptionsPanel } from "@/components/Assumptions";
 import type { Assumption, AssumptionSet } from "@/components/Assumptions";
-import { useCanvasStore } from "@/state/canvasStore";
+import { useCanvasStore, type CanvasNode } from "@/state/canvasStore";
 import { useEffect, useState } from "react";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+const MAX_NODE_TITLE_LENGTH = 72;
+const DEFAULT_NODE_TYPE: CanvasNode["type"] = "text";
+const COMMAND_NODE_TYPES: Record<string, CanvasNode["type"]> = {
+  "/research": "document",
+  "/judge": "document",
+  "/plan": "graph",
+  "/dashboard": "graph",
+  "/graph": "graph",
+  "/export": "document",
+};
+const COMMAND_LABELS: Record<string, string> = {
+  "/research": "Research",
+  "/judge": "Judge",
+  "/plan": "Plan",
+  "/dashboard": "Dashboard",
+  "/graph": "Graph",
+  "/export": "Export",
+};
+
+const truncateText = (value: string, maxLength: number): string => {
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const sliceLength = Math.max(0, maxLength - 3);
+  return `${value.slice(0, sliceLength).trimEnd()}...`;
+};
+
+const getViewportCenter = (): { x: number; y: number } => {
+  if (typeof window === "undefined") {
+    return { x: 160, y: 120 };
+  }
+  const x = Math.max(40, Math.round(window.innerWidth / 2) - 120);
+  const y = Math.max(40, Math.round(window.innerHeight / 2) - 80);
+  return { x, y };
+};
+
+const getNextNodePosition = (
+  nodes: CanvasNode[],
+  selectedNodeId: string | null
+): { x: number; y: number; z: number } => {
+  const maxZ = nodes.reduce((max, node) => Math.max(max, node.z), 0);
+  const selectedNode = selectedNodeId
+    ? nodes.find((node) => node.id === selectedNodeId)
+    : undefined;
+
+  if (selectedNode) {
+    return {
+      x: selectedNode.x + 240,
+      y: selectedNode.y,
+      z: maxZ + 1,
+    };
+  }
+
+  if (nodes.length > 0) {
+    const lastNode = nodes[nodes.length - 1];
+    return {
+      x: lastNode.x + 48,
+      y: lastNode.y + 48,
+      z: maxZ + 1,
+    };
+  }
+
+  const fallback = getViewportCenter();
+  return {
+    x: fallback.x,
+    y: fallback.y,
+    z: maxZ + 1,
+  };
+};
 
 type CommandSubmissionLog = {
   id: string;
@@ -78,6 +148,9 @@ export default function Home() {
   const [routingError, setRoutingError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("Ready for commands.");
   const [attachments, setAttachments] = useState<string[]>([]);
+  const nodes = useCanvasStore((state) => state.nodes);
+  const addNode = useCanvasStore((state) => state.addNode);
+  const selectNode = useCanvasStore((state) => state.selectNode);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
 
   useEffect(() => {
@@ -120,6 +193,48 @@ export default function Home() {
     setPendingCommand(null);
   };
 
+  const createNodeFromCommand = (value: string, attachmentsForSubmission: string[]) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+
+    const [commandToken, ...restTokens] = trimmed.split(/\s+/);
+    const isSlashCommand = commandToken.startsWith("/");
+    const commandKey = isSlashCommand ? commandToken.toLowerCase() : null;
+    const commandLabel = commandKey ? COMMAND_LABELS[commandKey] : undefined;
+    const commandType = commandKey ? COMMAND_NODE_TYPES[commandKey] : undefined;
+    const body = isSlashCommand ? restTokens.join(" ").trim() : trimmed;
+
+    const titleBase = isSlashCommand && commandLabel
+      ? body
+        ? `${commandLabel}: ${body}`
+        : commandLabel
+      : body || trimmed;
+    const title = truncateText(titleBase, MAX_NODE_TITLE_LENGTH);
+    const content = isSlashCommand ? (body || undefined) : (
+      trimmed.length > MAX_NODE_TITLE_LENGTH ? trimmed : undefined
+    );
+
+    const metadata: Record<string, unknown> = {};
+    if (commandKey) {
+      metadata.command = commandKey;
+    }
+    if (attachmentsForSubmission.length > 0) {
+      metadata.attachments = attachmentsForSubmission;
+    }
+
+    const { x, y, z } = getNextNodePosition(nodes, selectedNodeId);
+    const nodeId = addNode({
+      type: commandType ?? DEFAULT_NODE_TYPE,
+      x,
+      y,
+      z,
+      title,
+      content,
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+    });
+    selectNode(nodeId);
+  };
+
   const queueCommand = async (
     value: string,
     attachmentsForSubmission: string[],
@@ -147,6 +262,7 @@ export default function Home() {
       { id: data.correlation_id, text: value, attachments: attachmentsForSubmission },
     ]);
     setAttachments([]);
+    createNodeFromCommand(value, attachmentsForSubmission);
     console.log("Command queued:", data);
   };
 

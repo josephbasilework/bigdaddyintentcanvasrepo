@@ -1,11 +1,13 @@
 "use client";
 
 import { ReactZoomPanPinchRef, TransformComponent, TransformWrapper } from "react-zoom-pan-pinch";
-import { useRef } from "react";
+import { useCallback, useRef } from "react";
 
 interface CanvasProps {
   children?: React.ReactNode;
 }
+
+const PAN_STEP = 40;
 
 /**
  * Canvas component for the IntentUI workspace.
@@ -16,8 +18,71 @@ interface CanvasProps {
 export function Canvas({ children }: CanvasProps) {
   const transformRef = useRef<ReactZoomPanPinchRef>(null);
 
+  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.currentTarget !== event.target) return;
+
+    const transform = transformRef.current;
+    if (!transform) return;
+
+    const { positionX, positionY, scale } = transform.state;
+    const hasModifier = event.metaKey || event.ctrlKey;
+    const key = event.key;
+
+    if (hasModifier && (key === "=" || key === "+")) {
+      event.preventDefault();
+      transform.zoomIn();
+      return;
+    }
+
+    if (hasModifier && key === "-") {
+      event.preventDefault();
+      transform.zoomOut();
+      return;
+    }
+
+    if (hasModifier && key === "0") {
+      event.preventDefault();
+      transform.resetTransform();
+      return;
+    }
+
+    let nextX = positionX;
+    let nextY = positionY;
+    let handled = true;
+
+    switch (key) {
+      case "ArrowRight":
+        nextX = positionX - PAN_STEP;
+        break;
+      case "ArrowLeft":
+        nextX = positionX + PAN_STEP;
+        break;
+      case "ArrowDown":
+        nextY = positionY - PAN_STEP;
+        break;
+      case "ArrowUp":
+        nextY = positionY + PAN_STEP;
+        break;
+      default:
+        handled = false;
+        break;
+    }
+
+    if (!handled) return;
+
+    event.preventDefault();
+    transform.setTransform(nextX, nextY, scale, 0);
+  }, []);
+
   return (
-    <div className="canvas-container" data-testid="canvas-container">
+    <div
+      className="canvas-container"
+      data-testid="canvas-container"
+      role="region"
+      aria-label="Canvas workspace"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+    >
       <TransformWrapper
         ref={transformRef}
         initialScale={1}
@@ -57,14 +122,14 @@ export function Canvas({ children }: CanvasProps) {
           min-height: 100%;
         }
 
-        .canvas-content:focus-visible {
+        .canvas-container:focus-visible {
           outline: 2px solid var(--focus-ring);
           outline-offset: -2px;
           box-shadow: inset 0 0 0 2px var(--focus-ring);
         }
 
         @supports not selector(:focus-visible) {
-          .canvas-content:focus {
+          .canvas-container:focus {
             outline: 2px solid var(--focus-ring);
             outline-offset: -2px;
             box-shadow: inset 0 0 0 2px var(--focus-ring);
