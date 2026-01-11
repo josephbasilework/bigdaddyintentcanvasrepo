@@ -385,6 +385,50 @@ describe('workspace canvas', () => {
     expect(screen.getByDisplayValue('First node')).toBeInTheDocument();
   });
 
+  it('preserves multi-selection when focus follows pointer interactions', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'text',
+            x: 0,
+            y: 0,
+            z: 1,
+            title: 'First node',
+          },
+          {
+            id: 'node-2',
+            type: 'text',
+            x: 240,
+            y: 0,
+            z: 2,
+            title: 'Second node',
+          },
+        ],
+        edges: [],
+      }),
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const firstNode = screen.getByRole('button', { name: /first node/i });
+    const secondNode = screen.getByRole('button', { name: /second node/i });
+
+    fireEvent.click(firstNode);
+    expect(useCanvasStore.getState().selectedNodeIds).toEqual(['node-1']);
+
+    fireEvent.mouseDown(secondNode);
+    fireEvent.focus(secondNode);
+    fireEvent.click(secondNode, { shiftKey: true });
+
+    expect(useCanvasStore.getState().selectedNodeIds).toEqual(['node-1', 'node-2']);
+    expect(useCanvasStore.getState().selectedNodeId).toBe('node-2');
+  });
+
   it('connects nodes from the context menu', async () => {
     fetchMock.mockResolvedValueOnce({
       ok: true,

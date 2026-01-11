@@ -45,6 +45,7 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
   const [editTitle, setEditTitle] = useState(node.title);
   const [editContent, setEditContent] = useState(node.content || "");
   const nodeRef = useRef<HTMLDivElement>(null);
+  const focusFromPointerRef = useRef(false);
   const scale = useTransformComponent(({ state }) => state.scale);
   const descriptionId = useId();
   const editTitleId = useId();
@@ -76,13 +77,36 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    focusFromPointerRef.current = false;
     if (connectSourceNodeId && onConnectTarget && connectSourceNodeId !== node.id) {
       onConnectTarget(node.id);
+    }
+    const toggleSelection = e.metaKey || e.ctrlKey;
+    const additiveSelection = !toggleSelection && e.shiftKey;
+    if (toggleSelection) {
+      selectNode(node.id, { toggle: true });
+      return;
+    }
+    if (additiveSelection) {
+      selectNode(node.id, { additive: true });
+      return;
     }
     selectNode(node.id);
   };
 
+  const handlePointerDown = () => {
+    focusFromPointerRef.current = true;
+  };
+
+  const handlePointerUp = () => {
+    focusFromPointerRef.current = false;
+  };
+
   const handleFocus = () => {
+    if (focusFromPointerRef.current) {
+      focusFromPointerRef.current = false;
+      return;
+    }
     selectNode(node.id);
   };
 
@@ -252,6 +276,10 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
           ref={nodeRef}
           style={getNodeStyle()}
           className="canvas-node"
+          onPointerDown={handlePointerDown}
+          onMouseDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+          onMouseUp={handlePointerUp}
           onClick={handleClick}
           onFocus={handleFocus}
           onKeyDown={handleKeyDown}
