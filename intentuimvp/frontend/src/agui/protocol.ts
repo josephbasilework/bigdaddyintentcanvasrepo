@@ -326,6 +326,10 @@ export function applyJSONPatch(
   return result;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
 /**
  * Set a value at a JSON Pointer path
  */
@@ -346,8 +350,8 @@ function setAtPath(obj: Record<string, unknown>, path: string, value: unknown): 
       current[part] = {};
     }
     const next = current[part];
-    if (typeof next === 'object' && next !== null) {
-      current = next as Record<string, unknown>;
+    if (isRecord(next)) {
+      current = next;
     } else {
       current = {};
     }
@@ -395,10 +399,10 @@ function removeAtPath(obj: Record<string, unknown>, path: string): void {
       throw new Error(`Path not found: ${path}`);
     }
     const next = current[part];
-    if (typeof next !== 'object' || next === null) {
+    if (!isRecord(next)) {
       throw new Error(`Path not found: ${path}`);
     }
-    current = next as Record<string, unknown>;
+    current = next;
   }
 
   const lastPart = parts[parts.length - 1];
