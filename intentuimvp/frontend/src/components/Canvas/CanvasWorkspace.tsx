@@ -185,10 +185,23 @@ export function CanvasWorkspace() {
   }, [clearSelection]);
 
   const showEmptyState = loadStatus === "loaded" && nodes.length === 0 && edges.length === 0;
+  const loadStatusMessage = (() => {
+    switch (loadStatus) {
+      case "loading":
+        return "Loading canvas.";
+      case "loaded":
+        return showEmptyState ? "Canvas loaded. Workspace is empty." : "Canvas loaded.";
+      case "error":
+        return "Failed to load canvas.";
+      default:
+        return "";
+    }
+  })();
 
   return (
     <div
       onClick={handleCanvasClick}
+      aria-busy={loadStatus === "loading"}
       style={{
         position: "absolute",
         top: 0,
@@ -198,6 +211,9 @@ export function CanvasWorkspace() {
         pointerEvents: "auto",
       }}
     >
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {loadStatusMessage}
+      </div>
       <EdgesLayer />
       {nodes.map((node) => (
         <Node key={node.id} node={node} />

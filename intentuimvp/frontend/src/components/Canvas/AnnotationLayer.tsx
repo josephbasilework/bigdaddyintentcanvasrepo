@@ -102,6 +102,7 @@ export function AnnotationLayer({
     <>
       {/* Toggle button */}
       <button
+        type="button"
         onClick={onToggleActive}
         style={{
           position: "fixed",
@@ -121,6 +122,8 @@ export function AnnotationLayer({
           alignItems: "center",
           gap: "8px",
         }}
+        aria-pressed={isActive}
+        aria-label={isActive ? "Disable annotation mode" : "Enable annotation mode"}
         onMouseEnter={(e) => {
           e.currentTarget.style.backgroundColor = isActive ? "#3182ce" : "#4a5568";
         }}
@@ -145,11 +148,16 @@ export function AnnotationLayer({
           zIndex: 100,
           cursor: isActive ? "crosshair" : "default",
         }}
+        role="region"
+        aria-label="Annotation canvas"
       >
         {/* Existing annotations */}
         {annotations.map((annotation) => {
           const isEditing = editingId === annotation.id;
           const isHovered = hoveredId === annotation.id;
+          const contentLabel = annotation.content
+            ? `Annotation: ${annotation.content.slice(0, 60).trimEnd()}${annotation.content.length > 60 ? "..." : ""}`
+            : "Annotation marker";
 
           return (
             <div
@@ -165,7 +173,8 @@ export function AnnotationLayer({
               }}
             >
               {/* Annotation marker */}
-              <div
+              <button
+                type="button"
                 style={{
                   position: "absolute",
                   left: "50%",
@@ -179,7 +188,9 @@ export function AnnotationLayer({
                   cursor: "pointer",
                   transition: "all 0.2s",
                   boxShadow: "0 2px 8px rgba(0, 0, 0, 0.3)",
+                  padding: 0,
                 }}
+                aria-label={contentLabel}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (!isEditing && !isActive) {
@@ -212,6 +223,7 @@ export function AnnotationLayer({
                         onKeyDown={(e) => handleKeyDown(e, annotation.id)}
                         placeholder="Add a note..."
                         autoFocus
+                        aria-label="Annotation text"
                         style={{
                           width: "100%",
                           minHeight: "60px",
@@ -233,6 +245,7 @@ export function AnnotationLayer({
                         }}
                       >
                         <button
+                          type="button"
                           onClick={handleCancel}
                           style={{
                             padding: "4px 8px",
@@ -246,6 +259,7 @@ export function AnnotationLayer({
                           Cancel
                         </button>
                         <button
+                          type="button"
                           onClick={() => handleSave(annotation.id)}
                           style={{
                             padding: "4px 8px",
@@ -290,10 +304,12 @@ export function AnnotationLayer({
                           {new Date(annotation.createdAt).toLocaleDateString()}
                         </span>
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation();
                             handleEdit(annotation);
                           }}
+                          aria-label="Edit annotation"
                           style={{
                             padding: "2px 6px",
                             backgroundColor: "rgba(0, 0, 0, 0.1)",
@@ -331,6 +347,9 @@ export function AnnotationLayer({
               pointerEvents: "none",
               zIndex: 1000,
             }}
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
           >
             Click anywhere on the canvas to add an annotation
           </div>

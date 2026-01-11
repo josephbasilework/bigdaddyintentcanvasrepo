@@ -1,6 +1,6 @@
 "use client";
 
-import { CSSProperties, useState, useRef } from "react";
+import { CSSProperties, useState, useRef, useId } from "react";
 import Draggable, { DraggableData } from "react-draggable";
 import { useTransformComponent } from "react-zoom-pan-pinch";
 import { useCanvasStore, CanvasNode } from "../../state/canvasStore";
@@ -26,6 +26,23 @@ export function Node({ node, onStartConnect }: NodeProps) {
   const [editContent, setEditContent] = useState(node.content || "");
   const nodeRef = useRef<HTMLDivElement>(null);
   const scale = useTransformComponent(({ state }) => state.scale);
+  const descriptionId = useId();
+  const editTitleId = useId();
+  const editContentId = useId();
+  const editDialogTitleId = useId();
+
+  const contentSummary = node.content
+    ? node.content.length > 140
+      ? `${node.content.slice(0, 137).trimEnd()}...`
+      : node.content
+    : null;
+  const metadataKeys = node.metadata ? Object.keys(node.metadata) : [];
+  const descriptionParts = [
+    `Type: ${node.type}.`,
+    contentSummary ? `Content: ${contentSummary}.` : null,
+    metadataKeys.length > 0 ? `Metadata keys: ${metadataKeys.join(", ")}.` : null,
+  ].filter(Boolean);
+  const descriptionText = descriptionParts.join(" ");
 
   const handleDrag = (e: unknown, data: DraggableData) => {
     // Update node position in store when dragging
@@ -182,9 +199,18 @@ export function Node({ node, onStartConnect }: NodeProps) {
           onContextMenu={handleContextMenu}
           role="button"
           tabIndex={0}
-          aria-label={node.title}
+          aria-label={`${node.title} ${node.type} node`}
+          aria-describedby={descriptionText ? descriptionId : undefined}
+          aria-haspopup="menu"
+          aria-expanded={Boolean(contextMenu)}
+          aria-roledescription="canvas node"
           aria-pressed={isSelected}
         >
+          {descriptionText && (
+            <span id={descriptionId} className="sr-only">
+              {descriptionText}
+            </span>
+          )}
           {/* Node header */}
           <div style={{
             display: "flex",
@@ -291,14 +317,26 @@ export function Node({ node, onStartConnect }: NodeProps) {
               overflow: "auto",
             }}
             onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={editDialogTitleId}
           >
-            <h3 style={{ marginTop: 0, marginBottom: "16px", color: "#fff" }}>Edit Node</h3>
+            <h3
+              style={{ marginTop: 0, marginBottom: "16px", color: "#fff" }}
+              id={editDialogTitleId}
+            >
+              Edit Node
+            </h3>
 
             <div style={{ marginBottom: "16px" }}>
-              <label style={{ display: "block", marginBottom: "8px", color: "#a0aec0", fontSize: "13px" }}>
+              <label
+                htmlFor={editTitleId}
+                style={{ display: "block", marginBottom: "8px", color: "#a0aec0", fontSize: "13px" }}
+              >
                 Title
               </label>
               <input
+                id={editTitleId}
                 type="text"
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
@@ -317,10 +355,14 @@ export function Node({ node, onStartConnect }: NodeProps) {
             </div>
 
             <div style={{ marginBottom: "20px" }}>
-              <label style={{ display: "block", marginBottom: "8px", color: "#a0aec0", fontSize: "13px" }}>
+              <label
+                htmlFor={editContentId}
+                style={{ display: "block", marginBottom: "8px", color: "#a0aec0", fontSize: "13px" }}
+              >
                 Content
               </label>
               <textarea
+                id={editContentId}
                 value={editContent}
                 onChange={(e) => setEditContent(e.target.value)}
                 rows={8}

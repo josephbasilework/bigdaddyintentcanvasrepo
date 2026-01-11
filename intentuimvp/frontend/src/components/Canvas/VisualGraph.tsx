@@ -126,6 +126,10 @@ export function VisualGraph({
       .enter()
       .append("g")
       .attr("class", "node")
+      .attr("tabindex", onNodeClick ? 0 : null)
+      .attr("role", onNodeClick ? "button" : "group")
+      .attr("aria-roledescription", "graph node")
+      .attr("aria-label", (d) => `Graph node ${d.label}`)
       .call(
         d3
           .drag<SVGGElement, SimulationNode>()
@@ -155,6 +159,14 @@ export function VisualGraph({
       .on("dblclick", (event, d) => {
         event.stopPropagation();
         onNodeDoubleClick?.(d.id);
+      })
+      .on("keydown", (event, d) => {
+        if (!onNodeClick) return;
+        const keyboardEvent = event as unknown as KeyboardEvent;
+        if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") {
+          keyboardEvent.preventDefault();
+          onNodeClick(d.id);
+        }
       });
 
     // Node labels
@@ -234,6 +246,8 @@ export function VisualGraph({
         borderRadius: "8px",
         overflow: "hidden",
       }}
+      role="region"
+      aria-label="Relationship graph"
     >
       <svg
         ref={svgRef}
@@ -243,6 +257,8 @@ export function VisualGraph({
           display: "block",
           cursor: "grab",
         }}
+        role="group"
+        aria-label="Relationship graph"
         onMouseDown={(e) => {
           e.currentTarget.style.cursor = "grabbing";
         }}

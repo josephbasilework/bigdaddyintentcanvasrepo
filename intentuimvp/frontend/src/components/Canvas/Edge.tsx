@@ -134,6 +134,7 @@ export function EdgesLayer() {
         pointerEvents: "none",
         zIndex: 0, // Below nodes
       }}
+      aria-hidden="true"
     >
       {validEdges.map((edge) => {
         const sourceNode = nodeMap.get(edge.sourceNodeId)!;

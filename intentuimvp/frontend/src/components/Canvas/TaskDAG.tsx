@@ -171,6 +171,8 @@ export function TaskDAG({
     }
   };
 
+  const getStatusText = (status: TaskNode["status"]) => status.replace("_", " ");
+
   const getPriorityColor = (priority?: TaskNode["priority"]) => {
     switch (priority) {
       case "P0":
@@ -183,6 +185,14 @@ export function TaskDAG({
         return "#718096";
       default:
         return "#718096";
+    }
+  };
+
+  const handleTaskKeyDown = (event: React.KeyboardEvent<SVGGElement>, taskId: string) => {
+    if (!onTaskClick) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onTaskClick(taskId);
     }
   };
 
@@ -211,6 +221,8 @@ export function TaskDAG({
         overflow: "auto",
         position: "relative",
       }}
+      role="region"
+      aria-label="Task dependency graph"
     >
       <svg
         width={width}
@@ -220,6 +232,8 @@ export function TaskDAG({
           minWidth: "100%",
           minHeight: "100%",
         }}
+        role="group"
+        aria-label={`Task dependency graph with ${tasks.length} tasks`}
       >
         {/* Connections */}
         {layout.connections.map((conn, index) => (
@@ -259,6 +273,13 @@ export function TaskDAG({
         {tasks.map((task) => {
           const pos = layout.positions.get(task.id);
           if (!pos) return null;
+          const labelParts = [
+            task.title,
+            `Status: ${getStatusText(task.status)}`,
+            task.priority ? `Priority ${task.priority}` : null,
+            task.assignee ? `Assignee ${task.assignee}` : null,
+          ].filter(Boolean);
+          const nodeLabel = labelParts.join(". ");
 
           return (
             <g
@@ -266,6 +287,11 @@ export function TaskDAG({
               transform={`translate(${pos.x}, ${pos.y})`}
               style={{ cursor: onTaskClick ? "pointer" : "default" }}
               onClick={() => onTaskClick?.(task.id)}
+              onKeyDown={(event) => handleTaskKeyDown(event, task.id)}
+              tabIndex={onTaskClick ? 0 : -1}
+              role={onTaskClick ? "button" : "group"}
+              aria-roledescription="task node"
+              aria-label={nodeLabel}
             >
               {/* Node background */}
               <rect

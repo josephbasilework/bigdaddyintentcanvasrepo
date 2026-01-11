@@ -3,7 +3,7 @@
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
-import { useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useState, useId } from "react";
 
 interface DocumentBlockProps {
   nodeId: string;
@@ -25,6 +25,8 @@ interface DocumentBlockProps {
  * - Undo/redo
  */
 export function DocumentBlock({ nodeId, title, content, onSave, onCancel }: DocumentBlockProps) {
+  const dialogTitleId = useId();
+  const titleInputId = useId();
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -40,6 +42,7 @@ export function DocumentBlock({ nodeId, title, content, onSave, onCancel }: Docu
     editorProps: {
       attributes: {
         class: "prose prose-invert max-w-none focus:outline-none",
+        "aria-label": "Document content editor",
       },
     },
   });
@@ -110,7 +113,13 @@ export function DocumentBlock({ nodeId, title, content, onSave, onCancel }: Docu
           overflow: "hidden",
         }}
         onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={dialogTitleId}
       >
+        <h2 id={dialogTitleId} className="sr-only">
+          Document editor
+        </h2>
         {/* Header */}
         <div
           style={{
@@ -121,7 +130,11 @@ export function DocumentBlock({ nodeId, title, content, onSave, onCancel }: Docu
             gap: "12px",
           }}
         >
+          <label htmlFor={titleInputId} className="sr-only">
+            Document title
+          </label>
           <input
+            id={titleInputId}
             type="text"
             value={localTitle}
             onChange={(e) => setLocalTitle(e.target.value)}
@@ -272,6 +285,7 @@ export function DocumentBlock({ nodeId, title, content, onSave, onCancel }: Docu
           </div>
           <div style={{ display: "flex", gap: "8px" }}>
             <button
+              type="button"
               onClick={onCancel}
               style={{
                 padding: "8px 16px",
@@ -286,6 +300,7 @@ export function DocumentBlock({ nodeId, title, content, onSave, onCancel }: Docu
               Cancel
             </button>
             <button
+              type="button"
               onClick={handleSave}
               style={{
                 padding: "8px 16px",
@@ -424,9 +439,12 @@ interface ToolbarButtonProps {
 function ToolbarButton({ children, onClick, active = false, disabled = false, label }: ToolbarButtonProps) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
       title={label}
+      aria-label={label}
+      aria-pressed={active}
       style={{
         minWidth: "32px",
         height: "32px",

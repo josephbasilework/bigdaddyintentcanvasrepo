@@ -101,6 +101,9 @@ export function NodeContextMenu({
         minWidth: "160px",
       }}
       className="node-context-menu"
+      role="menu"
+      aria-label="Node actions"
+      tabIndex={-1}
     >
       <div
         style={{
@@ -111,9 +114,17 @@ export function NodeContextMenu({
           overflow: "hidden",
         }}
       >
-        <MenuItem onClick={() => handleAction(onEdit)}>✏️ Edit</MenuItem>
-        {onDuplicate && <MenuItem onClick={() => handleAction(onDuplicate)}>📋 Duplicate</MenuItem>}
-        {onConnect && <MenuItem onClick={() => handleAction(onConnect)}>🔗 Connect...</MenuItem>}
+        <MenuItem label="Edit node" onClick={() => handleAction(onEdit)}>✏️ Edit</MenuItem>
+        {onDuplicate && (
+          <MenuItem label="Duplicate node" onClick={() => handleAction(onDuplicate)}>
+            📋 Duplicate
+          </MenuItem>
+        )}
+        {onConnect && (
+          <MenuItem label="Connect node" onClick={() => handleAction(onConnect)}>
+            🔗 Connect...
+          </MenuItem>
+        )}
         <div
           style={{
             height: "1px",
@@ -121,7 +132,7 @@ export function NodeContextMenu({
             margin: "4px 0",
           }}
         />
-        <MenuItem onClick={() => handleAction(onDelete)} danger>
+        <MenuItem label="Delete node" onClick={() => handleAction(onDelete)} danger>
           🗑️ Delete
         </MenuItem>
       </div>
@@ -151,15 +162,22 @@ export function NodeContextMenu({
 interface MenuItemProps {
   children: React.ReactNode;
   onClick: () => void;
+  label: string;
   danger?: boolean;
 }
 
-function MenuItem({ children, onClick, danger = false }: MenuItemProps) {
+function MenuItem({ children, onClick, label, danger = false }: MenuItemProps) {
   return (
-    <div
+    <button
+      type="button"
       className={`menu-item ${danger ? "danger" : ""}`}
       onClick={onClick}
+      role="menuitem"
+      aria-label={label}
       style={{
+        width: "100%",
+        background: "transparent",
+        border: "none",
         padding: "8px 12px",
         cursor: "pointer",
         display: "flex",
@@ -170,6 +188,6 @@ function MenuItem({ children, onClick, danger = false }: MenuItemProps) {
       }}
     >
       {children}
-    </div>
+    </button>
   );
 }
