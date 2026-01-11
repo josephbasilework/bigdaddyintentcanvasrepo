@@ -137,4 +137,49 @@ describe("FloatingInput", () => {
 
     expect(input).toHaveFocus();
   });
+
+  it("shows slash templates when typing /", () => {
+    render(<FloatingInput />);
+
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "/" } });
+
+    expect(screen.getByText("/research")).toBeInTheDocument();
+    expect(screen.getByText("/export")).toBeInTheDocument();
+  });
+
+  it("filters slash templates as the query narrows", () => {
+    render(<FloatingInput />);
+
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "/pl" } });
+
+    expect(screen.getByText("/plan")).toBeInTheDocument();
+    expect(screen.queryByText("/research")).not.toBeInTheDocument();
+  });
+
+  it("inserts the template stub when a template is selected", () => {
+    render(<FloatingInput />);
+
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "/" } });
+
+    const template = screen.getByText("/graph");
+    const button = template.closest("button");
+    expect(button).not.toBeNull();
+    fireEvent.mouseDown(button as HTMLElement);
+
+    expect(input).toHaveValue("/graph ");
+  });
+
+  it("submits a selected template command", () => {
+    const handleSubmit = vi.fn();
+    render(<FloatingInput onSubmit={handleSubmit} />);
+
+    const input = screen.getByRole("textbox");
+    fireEvent.change(input, { target: { value: "/research " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(handleSubmit).toHaveBeenCalledWith("/research");
+  });
 });
