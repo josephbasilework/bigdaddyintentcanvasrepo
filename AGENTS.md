@@ -69,3 +69,4 @@ bd sync               # Sync with git
 - 2026-01-11 00:58 EST: `git stash push -a` can be slow due to `.cache/pre-commit`; use `git stash push -u --keep-index` to stash unstaged work without pulling ignored caches.
 - 2026-01-11 01:54 EST: When using `react-zoom-pan-pinch` with draggable nodes, pass the zoom `scale` to `react-draggable` and set `panning.excluded` to the node class so dragging stays aligned and doesn't pan the canvas.
 - 2026-01-11 03:46 EST: git commands may warn about `.git/gc.log` and unreachable loose objects; remove `.git/gc.log` and run `git prune` if you want auto-gc to resume.
+- 2026-01-11 04:03 EST: Workspace saves now honor node `id` values to map edge endpoints; include node `id` when posting edges for reliable persistence.
