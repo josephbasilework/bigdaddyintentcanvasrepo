@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { MutableRefObject, ReactNode } from 'react';
 import { useCanvasStore } from '../state/canvasStore';
 import Home from '../app/page';
@@ -16,6 +16,17 @@ const mockTransformRef = vi.hoisted(() => ({
 }));
 
 const draggableProps = { current: null as null | Record<string, unknown> };
+const createRect = (left: number, top: number, width: number, height: number): DOMRect => ({
+  left,
+  top,
+  width,
+  height,
+  right: left + width,
+  bottom: top + height,
+  x: left,
+  y: top,
+  toJSON: () => '',
+});
 
 vi.mock('react-zoom-pan-pinch', async () => {
   const React = await vi.importActual<typeof import('react')>('react');
@@ -383,6 +394,174 @@ describe('workspace canvas', () => {
     fireEvent.keyDown(node, { key: 'Enter' });
 
     expect(screen.getByDisplayValue('First node')).toBeInTheDocument();
+  });
+
+  it('supports additive and toggle multi-selection via clicks', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'text',
+            x: 0,
+            y: 0,
+            z: 1,
+            title: 'First node',
+          },
+          {
+            id: 'node-2',
+            type: 'text',
+            x: 240,
+            y: 0,
+            z: 2,
+            title: 'Second node',
+          },
+        ],
+        edges: [],
+      }),
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const firstNode = screen.getByRole('button', { name: /first node/i });
+    const secondNode = screen.getByRole('button', { name: /second node/i });
+
+    fireEvent.click(firstNode);
+    expect(useCanvasStore.getState().selectedNodeIds).toEqual(['node-1']);
+    expect(useCanvasStore.getState().selectedNodeId).toBe('node-1');
+
+    fireEvent.click(secondNode, { shiftKey: true });
+    expect(useCanvasStore.getState().selectedNodeIds).toEqual(['node-1', 'node-2']);
+    expect(useCanvasStore.getState().selectedNodeId).toBe('node-2');
+
+    fireEvent.click(secondNode, { ctrlKey: true });
+    expect(useCanvasStore.getState().selectedNodeIds).toEqual(['node-1']);
+    expect(useCanvasStore.getState().selectedNodeId).toBe('node-1');
+  });
+
+  it('selects nodes within a shift-drag region', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'text',
+            x: 0,
+            y: 0,
+            z: 1,
+            title: 'First node',
+          },
+          {
+            id: 'node-2',
+            type: 'text',
+            x: 240,
+            y: 0,
+            z: 2,
+            title: 'Second node',
+          },
+        ],
+        edges: [],
+      }),
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const workspace = screen.getByTestId('canvas-workspace');
+    const firstNode = screen.getByRole('button', { name: /first node/i });
+    const secondNode = screen.getByRole('button', { name: /second node/i });
+
+    Object.defineProperty(firstNode, 'getBoundingClientRect', {
+      value: () => createRect(120, 120, 200, 100),
+    });
+    Object.defineProperty(secondNode, 'getBoundingClientRect', {
+      value: () => createRect(360, 120, 200, 100),
+    });
+
+    fireEvent.mouseDown(workspace, { clientX: 80, clientY: 80, shiftKey: true });
+    fireEvent.mouseMove(window, { clientX: 620, clientY: 260 });
+    fireEvent.mouseUp(window, { clientX: 620, clientY: 260 });
+
+    await waitFor(() =>
+      expect(useCanvasStore.getState().selectedNodeIds).toEqual(['node-1', 'node-2'])
+    );
+  });
+
+  it('toggles selection state with ctrl-drag region selection', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'text',
+            x: 0,
+            y: 0,
+            z: 1,
+            title: 'First node',
+          },
+          {
+            id: 'node-2',
+            type: 'text',
+            x: 240,
+            y: 0,
+            z: 2,
+            title: 'Second node',
+          },
+          {
+            id: 'node-3',
+            type: 'text',
+            x: 480,
+            y: 0,
+            z: 3,
+            title: 'Third node',
+          },
+        ],
+        edges: [],
+      }),
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const workspace = screen.getByTestId('canvas-workspace');
+    const firstNode = screen.getByRole('button', { name: /first node/i });
+    const secondNode = screen.getByRole('button', { name: /second node/i });
+    const thirdNode = screen.getByRole('button', { name: /third node/i });
+
+    Object.defineProperty(firstNode, 'getBoundingClientRect', {
+      value: () => createRect(120, 120, 200, 100),
+    });
+    Object.defineProperty(secondNode, 'getBoundingClientRect', {
+      value: () => createRect(360, 120, 200, 100),
+    });
+    Object.defineProperty(thirdNode, 'getBoundingClientRect', {
+      value: () => createRect(760, 120, 200, 100),
+    });
+
+    act(() => {
+      useCanvasStore.setState({
+        selectedNodeId: 'node-3',
+        selectedNodeIds: ['node-1', 'node-3'],
+      });
+    });
+
+    act(() => {
+      fireEvent.mouseDown(workspace, { clientX: 80, clientY: 80, ctrlKey: true });
+      fireEvent.mouseMove(window, { clientX: 620, clientY: 260 });
+      fireEvent.mouseUp(window, { clientX: 620, clientY: 260 });
+    });
+
+    await waitFor(() => {
+      expect(useCanvasStore.getState().selectedNodeIds).toEqual(['node-3', 'node-2']);
+      expect(useCanvasStore.getState().selectedNodeId).toBe('node-2');
+    });
   });
 
   it('preserves multi-selection when focus follows pointer interactions', async () => {

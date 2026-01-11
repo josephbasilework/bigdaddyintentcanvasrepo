@@ -38,6 +38,11 @@ export interface CanvasDocument {
   updatedAt: Date;
 }
 
+export type NodeSelectionOptions = {
+  additive?: boolean;
+  toggle?: boolean;
+};
+
 // History snapshot type
 interface CanvasSnapshot {
   nodes: CanvasNode[];
@@ -63,7 +68,8 @@ interface CanvasState {
   removeNode: (nodeId: string) => void;
   removeNodes: (nodeIds: string[]) => void;
   updateNodePosition: (nodeId: string, x: number, y: number, z?: number) => void;
-  selectNode: (nodeId: string | null) => void;
+  selectNode: (nodeId: string | null, options?: NodeSelectionOptions) => void;
+  setSelectedNodes: (nodeIds: string[]) => void;
   updateNode: (nodeId: string, updates: Partial<CanvasNode>) => void;
   clearSelection: () => void;
   setNodes: (nodes: CanvasNode[]) => void;
@@ -179,10 +185,59 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     },
 
     // Select a node
-    selectNode: (nodeId) => {
+    selectNode: (nodeId, options) => {
+      set((state) => {
+        if (!nodeId) {
+          return {
+            selectedNodeId: null,
+            selectedNodeIds: [],
+          };
+        }
+
+        const { additive, toggle } = options ?? {};
+        if (!additive && !toggle) {
+          return {
+            selectedNodeId: nodeId,
+            selectedNodeIds: [nodeId],
+          };
+        }
+
+        const currentIds = state.selectedNodeIds.length > 0
+          ? state.selectedNodeIds
+          : state.selectedNodeId
+            ? [state.selectedNodeId]
+            : [];
+        const uniqueIds = Array.from(new Set(currentIds));
+        const isSelected = uniqueIds.includes(nodeId);
+        let nextSelectedIds = uniqueIds;
+
+        if (toggle) {
+          nextSelectedIds = isSelected
+            ? uniqueIds.filter((id) => id !== nodeId)
+            : [...uniqueIds, nodeId];
+        } else if (additive) {
+          nextSelectedIds = isSelected ? uniqueIds : [...uniqueIds, nodeId];
+        }
+
+        const nextSelectedNodeId = nextSelectedIds.length === 0
+          ? null
+          : nextSelectedIds.includes(nodeId)
+            ? nodeId
+            : nextSelectedIds[0];
+
+        return {
+          selectedNodeId: nextSelectedNodeId,
+          selectedNodeIds: nextSelectedIds,
+        };
+      });
+    },
+
+    // Select multiple nodes at once
+    setSelectedNodes: (nodeIds) => {
+      const uniqueIds = Array.from(new Set(nodeIds.filter(Boolean)));
       set({
-        selectedNodeId: nodeId,
-        selectedNodeIds: nodeId ? [nodeId] : [],
+        selectedNodeId: uniqueIds.length > 0 ? uniqueIds[uniqueIds.length - 1] : null,
+        selectedNodeIds: uniqueIds,
       });
     },
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useState, useId } from "react";
+import { useEffect, useCallback, useState, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useCanvasStore, CanvasEdge, CanvasNode, CanvasEdgeRelationType } from "../../state/canvasStore";
 import { Node } from "./Node";
@@ -127,9 +127,18 @@ const normalizeWorkspaceState = (
  * - Loading/saving canvas state from/to the backend API
  * - Rendering all nodes and edges from the store
  * - Clearing selection when clicking empty space
+ * - Shift/Command-drag region selection
  */
 export function CanvasWorkspace() {
-  const { nodes, edges, clearSelection, setNodes, setEdges, addEdge } = useCanvasStore();
+  const {
+    nodes,
+    edges,
+    clearSelection,
+    setNodes,
+    setEdges,
+    addEdge,
+    setSelectedNodes,
+  } = useCanvasStore();
   const [loadStatus, setLoadStatus] = useState<"loading" | "loaded" | "error">("loading");
   const [connectSourceNodeId, setConnectSourceNodeId] = useState<string | null>(null);
   const [connectRelationType, setConnectRelationType] = useState<CanvasEdgeRelationType>(
@@ -139,6 +148,33 @@ export function CanvasWorkspace() {
   const [connectLabelTouched, setConnectLabelTouched] = useState(false);
   const connectRelationId = useId();
   const connectLabelId = useId();
+  const selectionStartRef = useRef<{
+    x: number;
+    y: number;
+    mode: "replace" | "additive" | "toggle";
+  } | null>(null);
+  const selectionHandlersRef = useRef<{
+    move?: (event: MouseEvent) => void;
+    up?: (event: MouseEvent) => void;
+  } | null>(null);
+  const skipClickRef = useRef(false);
+  const [selectionBox, setSelectionBox] = useState<{
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  } | null>(null);
+
+  const scheduleSkipClickReset = useCallback(() => {
+    if (typeof window === "undefined") {
+      skipClickRef.current = false;
+      return;
+    }
+
+    window.setTimeout(() => {
+      skipClickRef.current = false;
+    }, 0);
+  }, []);
 
   const handleCancelConnect = useCallback(() => {
     setConnectSourceNodeId(null);
@@ -196,12 +232,88 @@ export function CanvasWorkspace() {
     setConnectLabelTouched(true);
   }, []);
 
+  const cleanupSelectionHandlers = useCallback(() => {
+    if (!selectionHandlersRef.current) return;
+    const { move, up } = selectionHandlersRef.current;
+    if (move) {
+      window.removeEventListener("mousemove", move);
+    }
+    if (up) {
+      window.removeEventListener("mouseup", up);
+    }
+    selectionHandlersRef.current = null;
+  }, []);
+
+  const updateSelectionBox = useCallback((startX: number, startY: number, endX: number, endY: number) => {
+    const left = Math.min(startX, endX);
+    const top = Math.min(startY, endY);
+    const width = Math.abs(endX - startX);
+    const height = Math.abs(endY - startY);
+    setSelectionBox({ left, top, width, height });
+  }, []);
+
+  const applyRegionSelection = useCallback((endX: number, endY: number) => {
+    const start = selectionStartRef.current;
+    if (!start) return;
+
+    const left = Math.min(start.x, endX);
+    const right = Math.max(start.x, endX);
+    const top = Math.min(start.y, endY);
+    const bottom = Math.max(start.y, endY);
+
+    const nodeElements = Array.from(
+      document.querySelectorAll<HTMLElement>("[data-node-id]")
+    );
+    const idsInRegion = nodeElements
+      .map((element) => {
+        const nodeId = element.dataset.nodeId;
+        if (!nodeId) return null;
+        const rect = element.getBoundingClientRect();
+        const intersects =
+          rect.right >= left &&
+          rect.left <= right &&
+          rect.bottom >= top &&
+          rect.top <= bottom;
+        return intersects ? nodeId : null;
+      })
+      .filter((id): id is string => Boolean(id));
+
+    const state = useCanvasStore.getState();
+    const currentSelection = state.selectedNodeIds.length > 0
+      ? state.selectedNodeIds
+      : state.selectedNodeId
+        ? [state.selectedNodeId]
+        : [];
+    let nextSelection = idsInRegion;
+
+    if (start.mode === "additive") {
+      nextSelection = [...currentSelection, ...idsInRegion];
+    } else if (start.mode === "toggle") {
+      const nextSet = new Set(currentSelection);
+      for (const id of idsInRegion) {
+        if (nextSet.has(id)) {
+          nextSet.delete(id);
+        } else {
+          nextSet.add(id);
+        }
+      }
+      nextSelection = Array.from(nextSet);
+    }
+
+    const uniqueSelection = Array.from(new Set(nextSelection));
+    setSelectedNodes(uniqueSelection);
+  }, [setSelectedNodes]);
+
   useEffect(() => {
     if (connectSourceNodeId) return;
     setConnectRelationType(DEFAULT_RELATION_TYPE);
     setConnectLabel(DEFAULT_RELATION_LABEL);
     setConnectLabelTouched(false);
   }, [connectSourceNodeId]);
+
+  useEffect(() => () => {
+    cleanupSelectionHandlers();
+  }, [cleanupSelectionHandlers]);
 
   useEffect(() => {
     if (!connectSourceNodeId) return;
@@ -285,8 +397,56 @@ export function CanvasWorkspace() {
     return () => clearTimeout(timeoutId);
   }, [nodes, edges]);
 
+  const handleCanvasMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (connectSourceNodeId) return;
+
+    const isSelectionGesture = event.shiftKey || event.metaKey || event.ctrlKey;
+    if (!isSelectionGesture) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    skipClickRef.current = true;
+
+    const mode = event.metaKey || event.ctrlKey ? "toggle" : "additive";
+    selectionStartRef.current = { x: event.clientX, y: event.clientY, mode };
+    updateSelectionBox(event.clientX, event.clientY, event.clientX, event.clientY);
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const start = selectionStartRef.current;
+      if (!start) return;
+      updateSelectionBox(start.x, start.y, moveEvent.clientX, moveEvent.clientY);
+    };
+
+    const handleMouseUp = (upEvent: MouseEvent) => {
+      applyRegionSelection(upEvent.clientX, upEvent.clientY);
+      selectionStartRef.current = null;
+      setSelectionBox(null);
+      cleanupSelectionHandlers();
+      scheduleSkipClickReset();
+    };
+
+    selectionHandlersRef.current = {
+      move: handleMouseMove,
+      up: handleMouseUp,
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+  }, [
+    applyRegionSelection,
+    cleanupSelectionHandlers,
+    connectSourceNodeId,
+    scheduleSkipClickReset,
+    updateSelectionBox,
+  ]);
+
   // Handle click on empty canvas area
   const handleCanvasClick = useCallback((e: React.MouseEvent) => {
+    if (skipClickRef.current) {
+      skipClickRef.current = false;
+      return;
+    }
     // Only clear selection if clicking directly on canvas (not on a node)
     if (e.target === e.currentTarget) {
       if (connectSourceNodeId) {
@@ -414,9 +574,31 @@ export function CanvasWorkspace() {
       document.body
     )
     : null;
+  const selectionOverlay = selectionBox && typeof document !== "undefined"
+    ? createPortal(
+      <div
+        aria-hidden="true"
+        style={{
+          position: "fixed",
+          left: selectionBox.left,
+          top: selectionBox.top,
+          width: selectionBox.width,
+          height: selectionBox.height,
+          border: "1px solid rgba(96, 165, 250, 0.9)",
+          backgroundColor: "rgba(96, 165, 250, 0.18)",
+          borderRadius: "4px",
+          pointerEvents: "none",
+          zIndex: 10001,
+        }}
+      />,
+      document.body
+    )
+    : null;
 
   return (
     <div
+      data-testid="canvas-workspace"
+      onMouseDown={handleCanvasMouseDown}
       onClick={handleCanvasClick}
       aria-busy={loadStatus === "loading"}
       style={{
@@ -496,6 +678,7 @@ export function CanvasWorkspace() {
         </div>
       )}
       {connectBanner}
+      {selectionOverlay}
     </div>
   );
 }

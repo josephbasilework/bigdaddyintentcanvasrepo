@@ -356,6 +356,78 @@ describe('canvasStore', () => {
       expect(result.current.selectedNodeIds).toEqual([nodeId]);
     });
 
+    it('should add to selection when additive option is provided', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      let nodeId1 = '';
+      let nodeId2 = '';
+
+      act(() => {
+        nodeId1 = result.current.addNode({
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Node 1',
+        });
+        nodeId2 = result.current.addNode({
+          type: 'text',
+          x: 100,
+          y: 100,
+          z: 0,
+          title: 'Node 2',
+        });
+        result.current.selectNode(nodeId1);
+        result.current.selectNode(nodeId2, { additive: true });
+      });
+
+      expect(result.current.selectedNodeIds).toEqual([nodeId1, nodeId2]);
+      expect(result.current.selectedNodeId).toBe(nodeId2);
+    });
+
+    it('should toggle selection when toggle option is provided', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      let nodeId1 = '';
+      let nodeId2 = '';
+
+      act(() => {
+        nodeId1 = result.current.addNode({
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Node 1',
+        });
+        nodeId2 = result.current.addNode({
+          type: 'text',
+          x: 100,
+          y: 100,
+          z: 0,
+          title: 'Node 2',
+        });
+        result.current.selectNode(nodeId1);
+        result.current.selectNode(nodeId2, { toggle: true });
+      });
+
+      expect(result.current.selectedNodeIds).toEqual([nodeId1, nodeId2]);
+      expect(result.current.selectedNodeId).toBe(nodeId2);
+
+      act(() => {
+        result.current.selectNode(nodeId2, { toggle: true });
+      });
+
+      expect(result.current.selectedNodeIds).toEqual([nodeId1]);
+      expect(result.current.selectedNodeId).toBe(nodeId1);
+
+      act(() => {
+        result.current.selectNode(nodeId1, { toggle: true });
+      });
+
+      expect(result.current.selectedNodeIds).toEqual([]);
+      expect(result.current.selectedNodeId).toBeNull();
+    });
+
     it('should allow selecting null to deselect', () => {
       const { result } = renderHook(() => useCanvasStore());
 
@@ -380,6 +452,36 @@ describe('canvasStore', () => {
 
       expect(result.current.selectedNodeId).toBeNull();
       expect(result.current.selectedNodeIds).toEqual([]);
+    });
+  });
+
+  describe('setSelectedNodes', () => {
+    it('should set selectedNodeIds and selectedNodeId', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      let nodeId1 = '';
+      let nodeId2 = '';
+
+      act(() => {
+        nodeId1 = result.current.addNode({
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Node 1',
+        });
+        nodeId2 = result.current.addNode({
+          type: 'text',
+          x: 100,
+          y: 100,
+          z: 0,
+          title: 'Node 2',
+        });
+        result.current.setSelectedNodes([nodeId1, nodeId2]);
+      });
+
+      expect(result.current.selectedNodeIds).toEqual([nodeId1, nodeId2]);
+      expect(result.current.selectedNodeId).toBe(nodeId2);
     });
   });
 

@@ -276,6 +276,7 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
           ref={nodeRef}
           style={getNodeStyle()}
           className="canvas-node"
+          data-node-id={node.id}
           onPointerDown={handlePointerDown}
           onMouseDown={handlePointerDown}
           onPointerUp={handlePointerUp}
