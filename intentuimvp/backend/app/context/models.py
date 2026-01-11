@@ -61,6 +61,21 @@ class Assumption:
         }
 
 
+@dataclass
+class SelectionScope:
+    """Selection scope from the UI (selected nodes and edges)."""
+
+    selected_nodes: list[str] = field(default_factory=list)
+    selected_edges: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, list[str]]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "selected_nodes": self.selected_nodes,
+            "selected_edges": self.selected_edges,
+        }
+
+
 def parse_assumption(payload: Mapping[str, Any]) -> Assumption:
     """Parse and validate a raw assumption payload."""
     if not isinstance(payload, Mapping):
@@ -110,15 +125,52 @@ class ContextPayload:
     Attributes:
         text: The user's text input.
         attachments: Optional list of attachment identifiers.
+        selection: Optional selection scope for the command.
     """
 
     text: str
     attachments: list[str] | None = None
+    selection: SelectionScope | None = None
 
     def __post_init__(self) -> None:
         """Initialize default values."""
         if self.attachments is None:
             self.attachments = []
+        self.selection = self._normalize_selection(self.selection)
+
+    @staticmethod
+    def _normalize_selection(
+        selection: SelectionScope | Mapping[str, Any] | None
+    ) -> SelectionScope:
+        if selection is None:
+            return SelectionScope()
+        if isinstance(selection, SelectionScope):
+            return selection
+        raw: Mapping[str, Any]
+        if hasattr(selection, "model_dump"):
+            raw = selection.model_dump()
+        elif hasattr(selection, "dict"):
+            raw = selection.dict()
+        elif isinstance(selection, Mapping):
+            raw = selection
+        else:
+            return SelectionScope()
+
+        def coerce_list(value: Any) -> list[str]:
+            if value is None:
+                return []
+            if isinstance(value, str):
+                return [value]
+            if isinstance(value, list | tuple | set):
+                return [str(item) for item in value if item is not None]
+            return [str(value)]
+
+        selected_nodes = raw.get("selected_nodes", raw.get("selectedNodes"))
+        selected_edges = raw.get("selected_edges", raw.get("selectedEdges"))
+        return SelectionScope(
+            selected_nodes=coerce_list(selected_nodes),
+            selected_edges=coerce_list(selected_edges),
+        )
 
 
 @dataclass
@@ -146,13 +198,16 @@ class RoutingDecision:
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
+        payload: dict[str, Any] = {
+            "text": self.payload.text,
+            "attachments": self.payload.attachments,
+        }
+        if self.payload.selection is not None:
+            payload["selection"] = self.payload.selection.to_dict()
         return {
             "handler": self.handler,
             "confidence": self.confidence,
-            "payload": {
-                "text": self.payload.text,
-                "attachments": self.payload.attachments,
-            },
+            "payload": payload,
             "reason": self.reason,
             "assumptions": [a.to_dict() for a in self.assumptions],
         }
