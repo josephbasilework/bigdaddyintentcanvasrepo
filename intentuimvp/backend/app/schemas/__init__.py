@@ -8,6 +8,12 @@ from app.schemas.backup import (
     ManualBackupRequest,
     RestoreResponse,
 )
+from app.schemas.edge import (
+    EdgeCreateRequest,
+    EdgeListResponse,
+    EdgeResponse,
+    EdgeUpdateRequest,
+)
 from app.schemas.mcp import (
     GoogleCalendarEventRequest,
     GoogleCalendarEventResponse,
@@ -39,6 +45,10 @@ __all__ = [
     "CanvasResponse",
     "NodeData",
     "WorkspaceSaveRequest",
+    "EdgeCreateRequest",
+    "EdgeUpdateRequest",
+    "EdgeResponse",
+    "EdgeListResponse",
     "NodeCreateRequest",
     "NodeUpdateRequest",
     "NodeResponse",
