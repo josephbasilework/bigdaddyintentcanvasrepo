@@ -187,6 +187,23 @@ async def test_canvas_update_node_tool_rejects_empty_patch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_canvas_update_node_tool_rejects_missing_node() -> None:
+    """Verify canvas.update_node fails on missing nodes."""
+    manager = get_tool_manager()
+
+    result = await manager.execute_tool(
+        "canvas.update_node",
+        {
+            "node_id": 999999,
+            "patch": {"label": "missing-node"},
+        },
+    )
+
+    assert not result.success
+    assert "Node not found" in (result.error or "")
+
+
+@pytest.mark.asyncio
 async def test_canvas_link_nodes_tool_creates_edge() -> None:
     """Verify canvas.link_nodes persists an edge and returns its ID."""
     manager = get_tool_manager()
