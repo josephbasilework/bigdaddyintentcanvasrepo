@@ -68,3 +68,4 @@ bd sync               # Sync with git
 - 2026-01-10 23:16 EST: If `.beads/beads.db` is missing and `bd sync` fails, `bd init --from-jsonl --skip-hooks` recreates the SQLite DB without re-installing hooks.
 - 2026-01-11 00:58 EST: `git stash push -a` can be slow due to `.cache/pre-commit`; use `git stash push -u --keep-index` to stash unstaged work without pulling ignored caches.
 - 2026-01-11 01:54 EST: When using `react-zoom-pan-pinch` with draggable nodes, pass the zoom `scale` to `react-draggable` and set `panning.excluded` to the node class so dragging stays aligned and doesn't pan the canvas.
+- 2026-01-11 03:46 EST: git commands may warn about `.git/gc.log` and unreachable loose objects; remove `.git/gc.log` and run `git prune` if you want auto-gc to resume.
