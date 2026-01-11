@@ -43,6 +43,7 @@ class Edge(Base):
         ForeignKey("node.id", ondelete="CASCADE"), nullable=False, index=True
     )
     relation_type: Mapped[RelationType] = mapped_column(String, nullable=False)
+    label: Mapped[str | None] = mapped_column(String, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
@@ -64,5 +65,6 @@ class Edge(Base):
             "fromNodeId": self.from_node_id,
             "toNodeId": self.to_node_id,
             "relationType": self.relation_type,
+            "label": self.label,
             "created_at": self.created_at.isoformat(),
         }

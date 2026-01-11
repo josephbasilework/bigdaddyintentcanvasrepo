@@ -42,6 +42,7 @@ def _serialize_edge(edge: Edge) -> dict[str, Any]:
         "from_node_id": edge.from_node_id,
         "to_node_id": edge.to_node_id,
         "relation_type": edge.relation_type,
+        "label": edge.label,
         "created_at": edge.created_at.isoformat(),
     }
 
@@ -99,6 +100,7 @@ async def create_edge(
             from_node_id=payload.from_node_id,
             to_node_id=payload.to_node_id,
             relation_type=payload.relation_type,
+            label=payload.label,
         )
         logger.info(
             f"Created edge {edge.id} on canvas {payload.canvas_id} for user {user_id}"
@@ -245,6 +247,9 @@ async def update_edge(
                 detail="Relation type cannot be null",
             )
         updates["relation_type"] = payload.relation_type
+
+    if "label" in fields_set:
+        updates["label"] = payload.label
 
     if not updates:
         raise HTTPException(

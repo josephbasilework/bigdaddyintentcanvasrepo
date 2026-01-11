@@ -109,6 +109,7 @@ class TestWorkspaceEndpoint:
                 from_node_id=node1_id,
                 to_node_id=node2_id,
                 relation_type=RelationType.SUPPORTS,
+                label="Supports",
             )
             db.add(edge)
             db.commit()
@@ -121,6 +122,7 @@ class TestWorkspaceEndpoint:
         assert len(data["edges"]) == 1
         assert data["edges"][0]["fromNodeId"] == node1_id
         assert data["edges"][0]["toNodeId"] == node2_id
+        assert data["edges"][0]["label"] == "Supports"
 
     def test_get_workspace_corrupted_state_returns_blank(
         self,
@@ -203,6 +205,38 @@ class TestWorkspaceEndpoint:
         assert data["id"] == canvas_id
         assert len(data["nodes"]) == 2
         assert data["nodes"][0]["label"] == "Updated Node 1"
+
+    def test_save_workspace_persists_edges_with_labels(
+        self,
+        client: testclient.TestClient,
+    ) -> None:
+        """Test PUT /api/workspace persists edges with labels."""
+        payload = {
+            "nodes": [
+                {"id": "node-a", "label": "Node A", "x": 10, "y": 20, "z": 0},
+                {"id": "node-b", "label": "Node B", "x": 30, "y": 40, "z": 0},
+            ],
+            "edges": [
+                {
+                    "sourceNodeId": "node-a",
+                    "targetNodeId": "node-b",
+                    "relationType": "supports",
+                    "label": "Supports",
+                }
+            ],
+            "name": "edge_save_test",
+        }
+
+        response = client.put("/api/workspace", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["edges"]) == 1
+        edge = data["edges"][0]
+        node_ids = {node["id"] for node in data["nodes"]}
+        assert edge["fromNodeId"] in node_ids
+        assert edge["toNodeId"] in node_ids
+        assert edge["relationType"] == "supports"
+        assert edge["label"] == "Supports"
 
     def test_round_trip_save_load(self, client: testclient.TestClient) -> None:
         """Test round-trip: save then load returns same data."""

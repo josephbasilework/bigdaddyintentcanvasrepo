@@ -8,6 +8,7 @@ from app.models.node import NodeType
 class NodeData(BaseModel):
     """Node data for workspace save."""
 
+    id: int | str | None = Field(default=None, description="Optional node identifier")
     label: str | None = Field(default=None, description="Node label/text")
     title: str | None = Field(default=None, description="Node title (alias for label)")
     type: NodeType | str | None = Field(default=None, description="Node type")

@@ -190,6 +190,7 @@ class TestEdgeModel:
             from_node_id=node1.id,
             to_node_id=node2.id,
             relation_type=RelationType.DEPENDS_ON,
+            label="Depends on",
         )
         db_session.add(edge)
         db_session.commit()
@@ -200,6 +201,7 @@ class TestEdgeModel:
         assert edge.from_node_id == node1.id
         assert edge.to_node_id == node2.id
         assert edge.relation_type == RelationType.DEPENDS_ON
+        assert edge.label == "Depends on"
         assert edge.created_at is not None
 
     def test_edge_to_dict(self, db_session: Session):
@@ -222,6 +224,7 @@ class TestEdgeModel:
             from_node_id=node1.id,
             to_node_id=node2.id,
             relation_type=RelationType.SUPPORTS,
+            label="Supports",
         )
         db_session.add(edge)
         db_session.commit()
@@ -233,6 +236,7 @@ class TestEdgeModel:
         assert result["fromNodeId"] == node1.id
         assert result["toNodeId"] == node2.id
         assert result["relationType"] == RelationType.SUPPORTS
+        assert result["label"] == "Supports"
         assert "created_at" in result
 
 

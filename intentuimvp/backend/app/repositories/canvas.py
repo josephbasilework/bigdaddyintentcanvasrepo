@@ -148,6 +148,8 @@ class CanvasRepository:
 
         # Add new nodes
         nodes_data = canvas_data.get("nodes", [])
+        node_id_map: dict[str, int] = {}
+        created_nodes: list[Node] = []
         for node_data in nodes_data:
             position = _position_from_node(node_data)
             node_metadata = _metadata_from_node(node_data)
@@ -161,6 +163,14 @@ class CanvasRepository:
                 node_metadata=json.dumps(node_metadata) if node_metadata else None,
             )
             self.db.add(node)
+            created_nodes.append(node)
+
+        if created_nodes:
+            self.db.flush()
+            for node_data, node in zip(nodes_data, created_nodes, strict=False):
+                raw_id = node_data.get("id") or node_data.get("nodeId")
+                if raw_id is not None:
+                    node_id_map[str(raw_id)] = node.id
 
         # Add new edges
         edges_data = canvas_data.get("edges", [])
@@ -175,13 +185,31 @@ class CanvasRepository:
                 or edge_data.get("targetNodeId")
                 or edge_data.get("to_node_id")
             )
+
+            def resolve_node_id(raw_value: object) -> int | None:
+                if raw_value is None:
+                    return None
+                mapped = node_id_map.get(str(raw_value))
+                if mapped is not None:
+                    return mapped
+                try:
+                    if isinstance(raw_value, bool):
+                        return None
+                    if isinstance(raw_value, int | str):
+                        return int(raw_value)
+                    if isinstance(raw_value, float) and raw_value.is_integer():
+                        return int(raw_value)
+                except ValueError:
+                    return None
+                return None
+
+            from_node_id = resolve_node_id(from_node_id)
+            to_node_id = resolve_node_id(to_node_id)
             if from_node_id is None or to_node_id is None:
                 continue
-            try:
-                from_node_id = int(from_node_id)
-                to_node_id = int(to_node_id)
-            except (TypeError, ValueError):
-                continue
+
+            label_value = edge_data.get("label")
+            label = label_value if isinstance(label_value, str) else None
 
             edge = Edge(
                 canvas_id=canvas.id,
@@ -192,6 +220,7 @@ class CanvasRepository:
                     or edge_data.get("relation_type")
                     or edge_data.get("type")
                 ),
+                label=label,
             )
             self.db.add(edge)
 
@@ -237,6 +266,7 @@ class CanvasRepository:
                     "fromNodeId": edge.from_node_id,
                     "toNodeId": edge.to_node_id,
                     "relationType": edge.relation_type,
+                    "label": edge.label,
                     "created_at": edge.created_at.isoformat(),
                 }
                 for edge in sorted(canvas.edges, key=lambda e: e.id)

@@ -141,6 +141,7 @@ class TestEdgeEndpoints:
             "from_node_id": node_ids[0],
             "to_node_id": node_ids[1],
             "relation_type": "depends_on",
+            "label": "Depends on",
         }
         response = client.post("/api/edges", json=payload)
         assert response.status_code == 201
@@ -149,6 +150,7 @@ class TestEdgeEndpoints:
         assert data["from_node_id"] == node_ids[0]
         assert data["to_node_id"] == node_ids[1]
         assert data["relation_type"] == "depends_on"
+        assert data["label"] == "Depends on"
         assert "created_at" in data
 
         edge_id = data["id"]
@@ -172,6 +174,7 @@ class TestEdgeEndpoints:
                 "from_node_id": node_ids[0],
                 "to_node_id": node_ids[1],
                 "relation_type": "supports",
+                "label": "Supports",
             },
         )
         assert create_response.status_code == 201
@@ -182,11 +185,12 @@ class TestEdgeEndpoints:
 
         update_response = client.put(
             f"/api/edges/{edge_id}",
-            json={"relation_type": "conflicts"},
+            json={"relation_type": "conflicts", "label": "Conflicts"},
         )
         assert update_response.status_code == 200
         updated = update_response.json()
         assert updated["relation_type"] == "conflicts"
+        assert updated["label"] == "Conflicts"
 
     def test_list_and_delete_edges(
         self,
@@ -207,6 +211,7 @@ class TestEdgeEndpoints:
                 "from_node_id": node_ids[0],
                 "to_node_id": node_ids[1],
                 "relation_type": "depends_on",
+                "label": "Depends",
             },
         )
         assert edge_a.status_code == 201
@@ -218,6 +223,7 @@ class TestEdgeEndpoints:
                 "from_node_id": node_ids[1],
                 "to_node_id": node_ids[2],
                 "relation_type": "references",
+                "label": "References",
             },
         )
         assert edge_b.status_code == 201
@@ -229,6 +235,7 @@ class TestEdgeEndpoints:
                 "from_node_id": other_node_ids[0],
                 "to_node_id": other_node_ids[1],
                 "relation_type": "supports",
+                "label": "Supports",
             },
         )
         assert other_edge.status_code == 201
@@ -278,6 +285,7 @@ class TestEdgeEndpoints:
                 "from_node_id": node_ids[0],
                 "to_node_id": node_ids[1],
                 "relation_type": "supports",
+                "label": "Supports",
             },
         )
         assert response.status_code == 400

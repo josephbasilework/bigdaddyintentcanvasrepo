@@ -122,6 +122,7 @@ class EdgeRepository(BaseRepository[Edge, Any, Any]):
         from_node_id: int,
         to_node_id: int,
         relation_type: RelationType,
+        label: str | None = None,
     ) -> Edge:
         """Create a new edge.
 
@@ -130,6 +131,7 @@ class EdgeRepository(BaseRepository[Edge, Any, Any]):
             from_node_id: Source node identifier
             to_node_id: Target node identifier
             relation_type: Type of relation
+            label: Optional edge label
 
         Returns:
             Created edge
@@ -139,6 +141,7 @@ class EdgeRepository(BaseRepository[Edge, Any, Any]):
             from_node_id=from_node_id,
             to_node_id=to_node_id,
             relation_type=relation_type,
+            label=label,
         )
 
     async def update_relation_type(

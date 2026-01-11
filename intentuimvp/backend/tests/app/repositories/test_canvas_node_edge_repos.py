@@ -337,6 +337,7 @@ class TestEdgeRepository:
             from_node_id=node1.id,
             to_node_id=node2.id,
             relation_type=RelationType.DEPENDS_ON,
+            label="Depends on",
         )
 
         assert edge.id is not None
@@ -344,6 +345,7 @@ class TestEdgeRepository:
         assert edge.from_node_id == node1.id
         assert edge.to_node_id == node2.id
         assert edge.relation_type == RelationType.DEPENDS_ON
+        assert edge.label == "Depends on"
 
     async def test_get_by_id(self, async_db: AsyncSession) -> None:
         """Test getting edge by ID."""
@@ -359,12 +361,14 @@ class TestEdgeRepository:
             from_node_id=node1.id,
             to_node_id=node2.id,
             relation_type=RelationType.DEPENDS_ON,
+            label="Depends on",
         )
 
         retrieved = await edge_repo.get_by_id(created.id)
         assert retrieved is not None
         assert retrieved.id == created.id
         assert retrieved.relation_type == RelationType.DEPENDS_ON
+        assert retrieved.label == "Depends on"
 
     async def test_get_by_canvas(self, async_db: AsyncSession) -> None:
         """Test getting edges by canvas ID."""

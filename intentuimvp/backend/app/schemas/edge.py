@@ -11,6 +11,7 @@ class EdgeCreateRequest(BaseModel):
     canvas_id: int = Field(..., description="Canvas identifier")
     from_node_id: int = Field(..., description="Source node identifier")
     to_node_id: int = Field(..., description="Target node identifier")
+    label: str | None = Field(default=None, description="Optional edge label")
     relation_type: RelationType = Field(
         default=RelationType.DEPENDS_ON,
         description="Edge relation type",
@@ -24,6 +25,7 @@ class EdgeUpdateRequest(BaseModel):
         default=None,
         description="Updated relation type",
     )
+    label: str | None = Field(default=None, description="Updated edge label")
 
 
 class EdgeResponse(BaseModel):
@@ -36,6 +38,7 @@ class EdgeResponse(BaseModel):
     from_node_id: int
     to_node_id: int
     relation_type: RelationType
+    label: str | None = None
     created_at: str
 
 
