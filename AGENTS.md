@@ -71,3 +71,4 @@ bd sync               # Sync with git
 - 2026-01-11 03:46 EST: git commands may warn about `.git/gc.log` and unreachable loose objects; remove `.git/gc.log` and run `git prune` if you want auto-gc to resume.
 - 2026-01-11 04:03 EST: Workspace saves now honor node `id` values to map edge endpoints; include node `id` when posting edges for reliable persistence.
 - 2026-01-11 04:46 EST: `git stash apply` after `bd sync` can reintroduce `.beads/issues.jsonl` changes; restore `.beads/issues.jsonl` to `HEAD` to keep the synced state.
+- 2026-01-11 05:12 EST: Pointer-driven focus can override multi-select; gate focus selection with a pointer-down flag so shift/ctrl clicks preserve selection.
