@@ -63,3 +63,4 @@ bd sync               # Sync with git
 - 2026-01-10 18:48 EST: Keep floating UI like the command input outside the zoom/pan transform so it stays fixed over the canvas.
 - 2026-01-10 19:12 EST: Pre-commit hooks can touch tracked `intentuimvp/backend/app/__pycache__/main.cpython-312.pyc`; stash/restore that file (or stash all unstaged changes) before committing to avoid hook conflicts.
 - 2026-01-10 19:48 EST: `bd sync --flush-only` updates `.beads/issues.jsonl` if status changes are only in the Beads DB.
+- 2026-01-10 20:11 EST: `bd sync` runs git commit hooks; stash unstaged changes to avoid hook conflicts during the sync commit.
