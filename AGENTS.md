@@ -67,3 +67,4 @@ bd sync               # Sync with git
 - 2026-01-10 20:32 EST: The tracked `intentuimvp/backend/app/__pycache__/main.cpython-312.pyc` is ignored, so use `git stash push -a -- intentuimvp/backend/app/__pycache__/main.cpython-312.pyc` to stash it when needed.
 - 2026-01-10 23:16 EST: If `.beads/beads.db` is missing and `bd sync` fails, `bd init --from-jsonl --skip-hooks` recreates the SQLite DB without re-installing hooks.
 - 2026-01-11 00:58 EST: `git stash push -a` can be slow due to `.cache/pre-commit`; use `git stash push -u --keep-index` to stash unstaged work without pulling ignored caches.
+- 2026-01-11 01:54 EST: When using `react-zoom-pan-pinch` with draggable nodes, pass the zoom `scale` to `react-draggable` and set `panning.excluded` to the node class so dragging stays aligned and doesn't pan the canvas.
