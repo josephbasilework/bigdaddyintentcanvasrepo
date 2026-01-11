@@ -18,9 +18,14 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import or_, select
 
+from app.agui import AgentRequestMessage
+from app.agui.schemas import AgentRequestPayload
+from app.api.assumption_store import get_assumption_store
+from app.context.models import parse_assumption
 from app.database import AsyncSessionLocal
 from app.models.canvas import Canvas
 from app.models.edge import RelationType
+from app.models.intent import AssumptionResolutionDB
 from app.models.node import Node, NodeType
 from app.repositories.canvas_repo import CanvasRepository
 from app.repositories.edge_repo import EdgeRepository
@@ -130,6 +135,7 @@ class CanvasUpdateNodeParams(BaseModel):
         ..., description="Fields to update on the node"
     )
 
+
 class CanvasLinkNodesParams(BaseModel):
     """Parameters for linking two nodes."""
 
@@ -157,6 +163,39 @@ class WorkspaceSearchParams(BaseModel):
     )
     canvas_id: int | None = Field(
         default=None, description="Optional canvas ID for canvas scope"
+    )
+
+
+class HITLAssumptionInput(BaseModel):
+    """Input payload for a HITL assumption."""
+
+    id: str | None = Field(default=None, description="Assumption identifier")
+    text: str = Field(..., min_length=1, description="Assumption text")
+    confidence: float | None = Field(
+        default=None, ge=0.0, le=1.0, description="Assumption confidence"
+    )
+    category: Literal["context", "intent", "parameter", "other"] | None = Field(
+        default=None, description="Assumption category"
+    )
+    explanation: str | None = Field(
+        default=None, description="Optional assumption explanation"
+    )
+
+
+class HITLRequestApprovalParams(BaseModel):
+    """Parameters for requesting HITL approval."""
+
+    assumptions: list[HITLAssumptionInput] = Field(
+        ..., min_length=1, description="Assumptions requiring approval"
+    )
+    session_id: str | None = Field(
+        default=None, description="Optional session identifier"
+    )
+    prompt: str | None = Field(
+        default=None, description="Prompt to display to the user"
+    )
+    timeout_s: float | None = Field(
+        default=None, ge=0.0, description="Optional timeout in seconds"
     )
 
 
@@ -470,6 +509,139 @@ class ToolManager:
                 nodes = result.scalars().all()
                 return [node.to_dict() for node in nodes]
 
+        async def _notify_hitl_request(
+            session_id: str,
+            assumptions: list[dict[str, Any]],
+            prompt: str | None = None,
+        ) -> None:
+            """Notify the UI about a HITL approval request."""
+            if not assumptions:
+                return
+
+            try:
+                from app.ws.websocket import manager as ws_manager
+
+                choices = [
+                    {
+                        "id": item["id"],
+                        "text": item["text"],
+                        "category": item["category"],
+                        "confidence": item["confidence"],
+                        "explanation": item.get("explanation"),
+                    }
+                    for item in assumptions
+                ]
+
+                request_payload = AgentRequestPayload(
+                    agent_id="hitl",
+                    request_id=session_id,
+                    request_type="confirmation",
+                    prompt=prompt
+                    or "Review and resolve the following assumptions.",
+                    choices=choices,
+                    required=True,
+                )
+                request_message = AgentRequestMessage(
+                    payload=request_payload,
+                    correlation_id=session_id,
+                )
+                await ws_manager.broadcast_agui(request_message)
+            except Exception:
+                logger.warning(
+                    "Failed to notify UI about HITL request", exc_info=True
+                )
+
+        async def _persist_assumption_resolutions(
+            session_id: str, resolutions: list[dict[str, Any]]
+        ) -> None:
+            """Persist assumption resolutions for learning analysis."""
+            if not resolutions:
+                return
+
+            assumption_ids = [
+                resolution["assumption_id"] for resolution in resolutions
+            ]
+            async with AsyncSessionLocal() as session:
+                existing = await session.execute(
+                    select(AssumptionResolutionDB.assumption_id)
+                    .where(AssumptionResolutionDB.session_id == session_id)
+                    .where(
+                        AssumptionResolutionDB.assumption_id.in_(
+                            assumption_ids
+                        )
+                    )
+                )
+                existing_ids = set(existing.scalars().all())
+                new_records = [
+                    AssumptionResolutionDB(
+                        session_id=session_id,
+                        assumption_id=resolution["assumption_id"],
+                        action=resolution["action"],
+                        original_text=resolution["original_text"],
+                        final_text=resolution["final_text"],
+                        category=resolution["category"],
+                    )
+                    for resolution in resolutions
+                    if resolution["assumption_id"] not in existing_ids
+                ]
+
+                if new_records:
+                    session.add_all(new_records)
+                    await session.commit()
+
+        async def hitl_request_approval(
+            assumptions: list[HITLAssumptionInput],
+            session_id: str | None = None,
+            prompt: str | None = None,
+            timeout_s: float | None = None,
+        ) -> dict[str, Any]:
+            """Request user approval for an assumption set."""
+            params = HITLRequestApprovalParams(
+                assumptions=assumptions,
+                session_id=session_id,
+                prompt=prompt,
+                timeout_s=timeout_s,
+            )
+
+            parsed_assumptions: list[dict[str, Any]] = []
+            for item in params.assumptions:
+                parsed = parse_assumption(
+                    item.model_dump(exclude_none=True)
+                )
+                parsed_assumptions.append(parsed.to_dict())
+
+            store = get_assumption_store()
+            session_id = store.create_session(
+                session_id=params.session_id,
+                assumptions=parsed_assumptions,
+            )
+
+            await _notify_hitl_request(
+                session_id=session_id,
+                assumptions=parsed_assumptions,
+                prompt=params.prompt,
+            )
+
+            completed = await store.wait_for_completion(
+                session_id, timeout_s=params.timeout_s
+            )
+            if not completed:
+                raise TimeoutError(
+                    "Timed out waiting for HITL approval decisions"
+                )
+
+            resolved_assumptions = store.get_resolved_assumptions(session_id)
+            await _persist_assumption_resolutions(
+                session_id, resolved_assumptions
+            )
+
+            return {
+                "session_id": session_id,
+                "status": "resolved",
+                "assumptions": parsed_assumptions,
+                "resolved_assumptions": resolved_assumptions,
+            }
+
         # Register the tools
         self.register_function(
             name="web_search",
@@ -539,6 +711,14 @@ class ToolManager:
             description="Search nodes/documents in the workspace",
             func=workspace_search,
             parameters=WorkspaceSearchParams,
+            is_async=True,
+        )
+
+        self.register_function(
+            name="hitl.request_approval",
+            description="Request human approval for assumptions",
+            func=hitl_request_approval,
+            parameters=HITLRequestApprovalParams,
             is_async=True,
         )
 

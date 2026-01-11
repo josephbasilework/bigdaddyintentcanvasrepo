@@ -29,8 +29,10 @@ def pytest_configure(config):
         sys.path.insert(0, str(backend_root))
     import app.models  # noqa: F401
     from app.database import Base, engine
+    from app.models.intent import Base as IntentBase
 
     Base.metadata.create_all(bind=engine)
+    IntentBase.metadata.create_all(bind=engine)
 
 
 def pytest_sessionfinish(session, exitstatus):

@@ -1,7 +1,10 @@
 """Tests for Tool Manager and tool calling."""
 
+import asyncio
+import uuid
 
 import pytest
+import pytest_asyncio
 from pydantic import BaseModel, Field
 
 from app.agents.tools import (
@@ -13,6 +16,8 @@ from app.agents.tools import (
     call_tool,
     get_tool_manager,
 )
+from app.api.assumption_store import get_assumption_store
+from app.database import async_engine
 
 
 class SearchParams(BaseModel):
@@ -35,6 +40,7 @@ class TestToolManager:
         assert manager.get_tool("write_file") is not None
         assert manager.get_tool("get_current_time") is not None
         assert manager.get_tool("calculate") is not None
+        assert manager.get_tool("hitl.request_approval") is not None
 
     def test_register_function(self):
         """Test registering a function as a tool."""
@@ -334,6 +340,60 @@ class TestToolManager:
         confidences = [r.confidence for r in recommendations]
         assert confidences == sorted(confidences, reverse=True)
 
+    @pytest.mark.asyncio
+    async def test_hitl_request_approval_waits_for_resolution(self):
+        """HITL tool should wait for approvals and return resolutions."""
+        manager = get_tool_manager()
+        store = get_assumption_store()
+        session_id = f"hitl-session-{uuid.uuid4().hex}"
+        assumptions = [
+            {
+                "id": "assumption-a",
+                "text": "Assume dataset A is current.",
+                "confidence": 0.42,
+                "category": "context",
+                "explanation": "No timeframe provided.",
+            },
+            {
+                "id": "assumption-b",
+                "text": "Deliver summary output.",
+                "confidence": 0.55,
+                "category": "intent",
+            },
+        ]
+
+        task = asyncio.create_task(
+            manager.execute_tool(
+                "hitl.request_approval",
+                {"session_id": session_id, "assumptions": assumptions},
+            )
+        )
+
+        store.resolve_assumption(
+            session_id=session_id,
+            assumption_id="assumption-a",
+            action="accept",
+            original_text=assumptions[0]["text"],
+            category=assumptions[0]["category"],
+        )
+        store.resolve_assumption(
+            session_id=session_id,
+            assumption_id="assumption-b",
+            action="edit",
+            original_text=assumptions[1]["text"],
+            category=assumptions[1]["category"],
+            edited_text="Deliver a detailed report.",
+        )
+
+        result = await asyncio.wait_for(task, timeout=2)
+
+        assert result.success
+        assert result.output["session_id"] == session_id
+        assert result.output["status"] == "resolved"
+        assert len(result.output["resolved_assumptions"]) == 2
+
+        store.delete_session(session_id)
+
 
 class TestGlobalToolManager:
     """Tests for global tool manager functions."""
@@ -455,3 +515,10 @@ class TestToolValidationError:
             )
 
             assert tool_error.validation_errors is not None
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _dispose_async_engine():
+    """Dispose the async engine to avoid lingering background threads."""
+    yield
+    await async_engine.dispose()
