@@ -182,4 +182,30 @@ describe("FloatingInput", () => {
 
     expect(handleSubmit).toHaveBeenCalledWith("/research");
   });
+
+  it("calls onFilesDrop when files are dropped", () => {
+    const handleFilesDrop = vi.fn();
+    render(<FloatingInput onFilesDrop={handleFilesDrop} />);
+
+    const input = screen.getByRole("textbox");
+    const file = new File(["content"], "notes.txt", { type: "text/plain" });
+    fireEvent.drop(input, { dataTransfer: { files: [file] } });
+
+    expect(handleFilesDrop).toHaveBeenCalledWith([file]);
+  });
+
+  it("renders attachments and allows removal", () => {
+    const handleRemove = vi.fn();
+    render(
+      <FloatingInput
+        attachments={["spec.pdf"]}
+        onRemoveAttachment={handleRemove}
+      />
+    );
+
+    expect(screen.getByText("spec.pdf")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Remove spec.pdf" }));
+
+    expect(handleRemove).toHaveBeenCalledWith("spec.pdf");
+  });
 });

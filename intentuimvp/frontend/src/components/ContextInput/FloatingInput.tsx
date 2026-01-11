@@ -5,6 +5,12 @@ import { useEffect, useRef, useState } from "react";
 interface FloatingInputProps {
   /** Callback when user submits input (pressed Enter) */
   onSubmit?: (value: string) => void;
+  /** Callback when files are dropped on the input */
+  onFilesDrop?: (files: File[]) => void;
+  /** Optional list of attachment names to display */
+  attachments?: string[];
+  /** Callback to remove an attachment by name */
+  onRemoveAttachment?: (name: string) => void;
   /** Placeholder text for the input */
   placeholder?: string;
   /** Whether to auto-focus on mount */
@@ -70,12 +76,16 @@ const SLASH_TEMPLATES: SlashTemplate[] = [
  */
 export function FloatingInput({
   onSubmit,
+  onFilesDrop,
+  attachments,
+  onRemoveAttachment,
   placeholder = "Type a command...",
   autoFocus = true,
   maxLength = 1000,
 }: FloatingInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
+  const [isDragActive, setIsDragActive] = useState(false);
 
   // Auto-focus on mount
   useEffect(() => {
@@ -123,6 +133,28 @@ export function FloatingInput({
     }
   };
 
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!onFilesDrop) return;
+    event.preventDefault();
+    setIsDragActive(true);
+  };
+
+  const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!onFilesDrop) return;
+    event.preventDefault();
+    setIsDragActive(false);
+  };
+
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!onFilesDrop) return;
+    event.preventDefault();
+    setIsDragActive(false);
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length > 0) {
+      onFilesDrop(files);
+    }
+  };
+
   const trimmedValue = value.trimStart();
   const hasCommandArgs = trimmedValue.includes(" ");
   const commandToken = trimmedValue.split(/\s+/)[0];
@@ -135,7 +167,36 @@ export function FloatingInput({
     : [];
 
   return (
-    <div className="floating-input-container">
+    <div
+      className={`floating-input-container${isDragActive ? " is-drag-active" : ""}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDragActive && (
+        <div className="drop-hint" role="status" aria-live="polite">
+          Drop files to attach
+        </div>
+      )}
+      {attachments && attachments.length > 0 && (
+        <div className="attachment-list" role="list" aria-label="Attached files">
+          {attachments.map((name) => (
+            <div key={name} className="attachment-chip" role="listitem">
+              <span className="attachment-name">{name}</span>
+              {onRemoveAttachment && (
+                <button
+                  type="button"
+                  className="attachment-remove"
+                  onClick={() => onRemoveAttachment(name)}
+                  aria-label={`Remove ${name}`}
+                >
+                  x
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
       {visibleTemplates.length > 0 && (
         <div className="slash-templates" role="listbox" aria-label="Slash command templates">
           {visibleTemplates.map((template) => (
@@ -147,6 +208,9 @@ export function FloatingInput({
                 event.preventDefault();
                 applyTemplate(template);
               }}
+              role="option"
+              aria-label={`${template.command} ${template.label}: ${template.description}`}
+              aria-selected={false}
             >
               <div className="template-row">
                 <span className="template-command">{template.command}</span>
@@ -177,6 +241,70 @@ export function FloatingInput({
           z-index: 1000;
           width: 90%;
           max-width: 600px;
+        }
+
+        .floating-input-container.is-drag-active .floating-input {
+          border-color: #38bdf8;
+          box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
+        }
+
+        .drop-hint {
+          position: absolute;
+          inset: 0;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          background: rgba(15, 23, 42, 0.85);
+          border: 1px dashed #38bdf8;
+          border-radius: 0.75rem;
+          color: #e2e8f0;
+          font-size: 0.85rem;
+          pointer-events: none;
+        }
+
+        .attachment-list {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.4rem;
+          margin-bottom: 0.5rem;
+        }
+
+        .attachment-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+          padding: 0.35rem 0.6rem;
+          border-radius: 999px;
+          background-color: #111827;
+          border: 1px solid #2a2a2a;
+          color: #e5e5e5;
+          font-size: 0.75rem;
+        }
+
+        .attachment-name {
+          max-width: 220px;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .attachment-remove {
+          border: none;
+          background: transparent;
+          color: #9ca3af;
+          cursor: pointer;
+          padding: 0;
+          font-size: 0.75rem;
+        }
+
+        .attachment-remove:hover {
+          color: #e5e5e5;
+        }
+
+        .attachment-remove:focus-visible {
+          outline: 2px solid var(--focus-ring);
+          outline-offset: 2px;
         }
 
         .slash-templates {
@@ -286,6 +414,10 @@ export function FloatingInput({
           .floating-input-container {
             bottom: 1rem;
             width: 95%;
+          }
+
+          .attachment-name {
+            max-width: 160px;
           }
 
           .slash-templates {
