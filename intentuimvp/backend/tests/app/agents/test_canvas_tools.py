@@ -69,6 +69,124 @@ async def test_canvas_create_node_tool_rejects_invalid_type() -> None:
 
 
 @pytest.mark.asyncio
+async def test_canvas_update_node_tool_updates_fields() -> None:
+    """Verify canvas.update_node updates stored fields."""
+    manager = get_tool_manager()
+    token = uuid.uuid4().hex
+
+    async with AsyncSessionLocal() as session:
+        canvas_repo = CanvasRepository(session)
+        node_repo = NodeRepository(session)
+        canvas = await canvas_repo.create_canvas(
+            DEFAULT_USER_ID, name=f"tool-update-{token}"
+        )
+        node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label=f"tool-update-{token}",
+            type=NodeType.TEXT,
+            position={"x": 1, "y": 2, "z": 3},
+            node_metadata={"status": "old"},
+        )
+
+    result = await manager.execute_tool(
+        "canvas.update_node",
+        {
+            "node_id": node.id,
+            "patch": {
+                "label": f"tool-update-label-{token}",
+                "type": NodeType.DOCUMENT,
+                "position": {"x": 9},
+                "metadata": {"status": "new"},
+            },
+        },
+    )
+
+    assert result.success
+    output = result.output
+    assert output["id"] == node.id
+    assert output["label"] == f"tool-update-label-{token}"
+    assert output["type"] == NodeType.DOCUMENT
+    assert output["position"] == {"x": 9, "y": 2, "z": 3}
+    assert output["metadata"] == {"status": "new"}
+
+    async with AsyncSessionLocal() as session:
+        updated_node = await NodeRepository(session).get_by_id(node.id)
+
+    assert updated_node is not None
+    assert updated_node.label == f"tool-update-label-{token}"
+    assert updated_node.type == NodeType.DOCUMENT
+    assert updated_node.get_position() == {"x": 9, "y": 2, "z": 3}
+    assert updated_node.get_metadata() == {"status": "new"}
+
+
+@pytest.mark.asyncio
+async def test_canvas_update_node_tool_accepts_content_alias() -> None:
+    """Verify canvas.update_node accepts content as label alias."""
+    manager = get_tool_manager()
+    token = uuid.uuid4().hex
+
+    async with AsyncSessionLocal() as session:
+        canvas_repo = CanvasRepository(session)
+        node_repo = NodeRepository(session)
+        canvas = await canvas_repo.create_canvas(
+            DEFAULT_USER_ID, name=f"tool-update-content-{token}"
+        )
+        node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label=f"tool-content-{token}",
+            type=NodeType.TEXT,
+            position={"x": 0, "y": 0, "z": 0},
+        )
+
+    result = await manager.execute_tool(
+        "canvas.update_node",
+        {
+            "node_id": node.id,
+            "patch": {"content": f"tool-content-updated-{token}"},
+        },
+    )
+
+    assert result.success
+
+    async with AsyncSessionLocal() as session:
+        updated_node = await NodeRepository(session).get_by_id(node.id)
+
+    assert updated_node is not None
+    assert updated_node.label == f"tool-content-updated-{token}"
+
+
+@pytest.mark.asyncio
+async def test_canvas_update_node_tool_rejects_empty_patch() -> None:
+    """Verify canvas.update_node fails on empty patches."""
+    manager = get_tool_manager()
+    token = uuid.uuid4().hex
+
+    async with AsyncSessionLocal() as session:
+        canvas_repo = CanvasRepository(session)
+        node_repo = NodeRepository(session)
+        canvas = await canvas_repo.create_canvas(
+            DEFAULT_USER_ID, name=f"tool-update-empty-{token}"
+        )
+        node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label=f"tool-update-empty-{token}",
+            type=NodeType.TEXT,
+            position={"x": 0, "y": 0, "z": 0},
+        )
+
+    result = await manager.execute_tool(
+        "canvas.update_node",
+        {
+            "node_id": node.id,
+            "patch": {},
+        },
+    )
+
+    assert not result.success
+    assert "No fields to update" in (result.error or "")
+
+
+@pytest.mark.asyncio
 async def test_canvas_link_nodes_tool_creates_edge() -> None:
     """Verify canvas.link_nodes persists an edge and returns its ID."""
     manager = get_tool_manager()

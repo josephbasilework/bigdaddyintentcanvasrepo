@@ -8,6 +8,7 @@ Provides:
 - Automatic tool recommendation for agents
 """
 
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -96,6 +97,38 @@ class CanvasCreateNodeParams(BaseModel):
         default=None, description="Optional node metadata"
     )
 
+
+class CanvasUpdateNodePosition(BaseModel):
+    """Partial updates to node position."""
+
+    x: float | None = Field(default=None, description="X coordinate")
+    y: float | None = Field(default=None, description="Y coordinate")
+    z: float | None = Field(default=None, description="Z coordinate")
+
+
+class CanvasUpdateNodePatch(BaseModel):
+    """Patch fields for updating a canvas node."""
+
+    label: str | None = Field(default=None, description="Updated node label")
+    content: str | None = Field(
+        default=None, description="Updated node content (alias for label)"
+    )
+    type: NodeType | None = Field(default=None, description="Updated node type")
+    position: CanvasUpdateNodePosition | None = Field(
+        default=None, description="Updated node position"
+    )
+    metadata: dict[str, Any] | None = Field(
+        default=None, description="Updated node metadata"
+    )
+
+
+class CanvasUpdateNodeParams(BaseModel):
+    """Parameters for updating a canvas node."""
+
+    node_id: int = Field(..., ge=1, description="Node identifier")
+    patch: CanvasUpdateNodePatch = Field(
+        ..., description="Fields to update on the node"
+    )
 
 class CanvasLinkNodesParams(BaseModel):
     """Parameters for linking two nodes."""
@@ -269,6 +302,83 @@ class ToolManager:
 
             return {"id": node.id}
 
+        async def canvas_update_node(
+            node_id: int,
+            patch: CanvasUpdateNodePatch | dict[str, Any],
+        ) -> dict[str, Any]:
+            """Update an existing canvas node."""
+            parsed_patch = (
+                patch
+                if isinstance(patch, CanvasUpdateNodePatch)
+                else CanvasUpdateNodePatch.model_validate(patch)
+            )
+            fields_set = parsed_patch.model_fields_set
+            if not fields_set:
+                raise ValueError("No fields to update")
+
+            async with AsyncSessionLocal() as session:
+                node_repo = NodeRepository(session)
+                node = await node_repo.get_by_id(node_id)
+                if node is None:
+                    raise ValueError(f"Node not found: {node_id}")
+
+                updates: dict[str, Any] = {}
+
+                label_value: str | None = None
+                if "label" in fields_set:
+                    if parsed_patch.label is None:
+                        raise ValueError("Label cannot be null")
+                    label_value = parsed_patch.label
+                elif "content" in fields_set:
+                    if parsed_patch.content is None:
+                        raise ValueError("Content cannot be null")
+                    label_value = parsed_patch.content
+
+                if label_value is not None:
+                    updates["label"] = label_value
+
+                if "type" in fields_set:
+                    if parsed_patch.type is None:
+                        raise ValueError("Type cannot be null")
+                    updates["type"] = parsed_patch.type
+
+                if "metadata" in fields_set:
+                    if parsed_patch.metadata is None:
+                        updates["node_metadata"] = None
+                    else:
+                        updates["node_metadata"] = json.dumps(
+                            parsed_patch.metadata
+                        )
+
+                if "position" in fields_set:
+                    if parsed_patch.position is None:
+                        updated_position = {"x": 0, "y": 0, "z": 0}
+                    else:
+                        position_updates = parsed_patch.position.model_dump(
+                            exclude_unset=True
+                        )
+                        position_updates = {
+                            key: value
+                            for key, value in position_updates.items()
+                            if value is not None
+                        }
+                        current_position = node.get_position()
+                        updated_position = (
+                            {**current_position, **position_updates}
+                            if position_updates
+                            else current_position
+                        )
+                    updates["position"] = json.dumps(updated_position)
+
+                if not updates:
+                    raise ValueError("No fields to update")
+
+                updated_node = await node_repo.update(node_id, **updates)
+                if updated_node is None:
+                    raise ValueError(f"Node not found: {node_id}")
+
+            return updated_node.to_dict()
+
         async def canvas_link_nodes(
             from_id: int,
             to_id: int,
@@ -405,6 +515,14 @@ class ToolManager:
             description="Create a new node on the canvas",
             func=canvas_create_node,
             parameters=CanvasCreateNodeParams,
+            is_async=True,
+        )
+
+        self.register_function(
+            name="canvas.update_node",
+            description="Update an existing node on the canvas",
+            func=canvas_update_node,
+            parameters=CanvasUpdateNodeParams,
             is_async=True,
         )
 
