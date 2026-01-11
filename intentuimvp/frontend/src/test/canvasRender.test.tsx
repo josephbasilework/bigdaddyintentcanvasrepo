@@ -367,4 +367,53 @@ describe('workspace canvas', () => {
       expect(screen.queryByTestId('connect-mode-banner')).not.toBeInTheDocument()
     );
   });
+
+  it('requires confirmation when deleting a node with linked artifacts', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'text',
+            x: 0,
+            y: 0,
+            z: 1,
+            title: 'First node',
+          },
+          {
+            id: 'node-2',
+            type: 'text',
+            x: 240,
+            y: 0,
+            z: 2,
+            title: 'Second node',
+          },
+        ],
+        edges: [
+          {
+            id: 'edge-1',
+            sourceNodeId: 'node-1',
+            targetNodeId: 'node-2',
+          },
+        ],
+      }),
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(useCanvasStore.getState().edges).toHaveLength(1));
+
+    const sourceNode = screen.getByRole('button', { name: /first node/i });
+    fireEvent.contextMenu(sourceNode);
+
+    const deleteItem = screen.getByRole('menuitem', { name: /delete node/i });
+    fireEvent.click(deleteItem);
+
+    const dialog = await screen.findByRole('dialog', { name: /delete 1 node/i });
+
+    expect(dialog).toHaveTextContent(/linked edges:/i);
+    expect(dialog).toHaveTextContent(/1 edge/i);
+  });
 });
