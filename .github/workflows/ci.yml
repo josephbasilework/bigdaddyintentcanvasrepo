@@ -17,10 +17,25 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install Python tooling
-        run: python -m pip install --upgrade pip ruff==0.14.10 pyright==1.1.407
+      - name: Install Ruff
+        run: python -m pip install --upgrade pip ruff==0.14.10
       - name: Ruff check
         run: ruff check .
+
+  typecheck-python:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: intentuimvp/backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Pyright
+        run: python -m pip install --upgrade pip pyright==1.1.407
       - name: Pyright
         run: python -m pyright
 
@@ -45,7 +60,7 @@ jobs:
       - name: Pytest
         run: pytest
 
-  frontend-checks:
+  lint-frontend:
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -63,8 +78,44 @@ jobs:
         run: npm ci
       - name: ESLint
         run: npm run lint
+      - name: Canvas-first enforcement
+        run: python3 scripts/check_canvas_first.py
+
+  typecheck-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: intentuimvp/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: intentuimvp/frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
       - name: TypeScript type check
         run: npx tsc --noEmit
+
+  test-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: intentuimvp/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: intentuimvp/frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci
       - name: Vitest
         run: npm run test -- --run
 
@@ -84,3 +135,26 @@ jobs:
           GITLEAKS_CONFIG: .gitleaks.toml
           GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
           GITLEAKS_ENABLE_COMMENTS: "false"
+
+  gateway-import-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run gateway import check
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_dir="intentuimvp/backend/app"
+          if [ ! -d "$target_dir" ]; then
+            echo "::error ::Gateway import check failed: ${target_dir} not found."
+            exit 2
+          fi
+          pattern='import.*openai|import.*anthropic|from.*openai|from.*anthropic'
+          matches=$(grep -RInE "$pattern" "$target_dir" || true)
+          if [ -n "$matches" ]; then
+            echo "::error ::Direct provider imports detected. Use GatewayClient (app/gateway/client.py)."
+            echo "$matches"
+            exit 1
+          fi
+          echo "Gateway import check passed."

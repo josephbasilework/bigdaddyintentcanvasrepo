@@ -27,9 +27,9 @@ keywords = ["api_key", "apikey", "secret", "token"]
   paths = [
     '''intentuimvp/backend/\.env\.example''',
   ]
-  regexTarget = "match"
+  regexTarget = "line"
   regexes = [
-    '''your-[a-z0-9-]*api-key-here''',
+    '''(?i)api[_-]?key\s*[:=]\s*your-[a-z0-9-]*api-key-here''',
   ]
 
   [[rules.allowlists]]
@@ -38,9 +38,9 @@ keywords = ["api_key", "apikey", "secret", "token"]
   paths = [
     '''intentuimvp/PRD\.md''',
   ]
-  regexTarget = "match"
+  regexTarget = "line"
   regexes = [
-    '''PYDANTIC_GATEWAY_API_KEY''',
+    '''(?i)api[_-]?key\s*[:=]\s*PYDANTIC_GATEWAY_API_KEY''',
   ]
 
 [[rules]]
