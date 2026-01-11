@@ -47,4 +47,14 @@ describe("canvas-first UX", () => {
 
     expect(matches).toEqual([]);
   });
+
+  it("keeps the command box and canvas as the primary surface", () => {
+    const pagePath = path.join(SRC_ROOT, "app", "page.tsx");
+    const contents = fs.readFileSync(pagePath, "utf8");
+
+    expect(contents).toMatch(/<Canvas\b/);
+    expect(contents).toMatch(/<CanvasWorkspace\b/);
+    expect(contents).toMatch(/<FloatingInput\b/);
+    expect(contents).toMatch(/placeholder="Type a command\.\.\."/);
+  });
 });
