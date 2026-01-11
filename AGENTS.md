@@ -75,3 +75,4 @@ bd sync               # Sync with git
 - 2026-01-11 07:06 EST: `npm test -- --run` in `intentuimvp/frontend` can take ~35s; allow longer timeouts.
 - 2026-01-11 07:38 EST: `npm run build` in `intentuimvp/frontend` can take ~90s; use longer timeouts.
 - 2026-01-11 07:42 EST: `git pull --rebase` fails if `.beads/issues.jsonl` is dirty; stash that file before pulling, then pop it before `bd sync`.
+- 2026-01-11 08:27 EST: Pre-commit aborts if `.pre-commit-config.yaml` is modified but unstaged; stash it (or stage it intentionally) before committing.
