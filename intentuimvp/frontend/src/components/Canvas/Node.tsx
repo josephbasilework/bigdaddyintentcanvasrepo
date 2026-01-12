@@ -1,11 +1,12 @@
 "use client";
 
-import { CSSProperties, useState, useRef, useId } from "react";
+import { CSSProperties, useState, useRef, useId, useCallback } from "react";
 import Draggable, { DraggableData } from "react-draggable";
 import { useTransformComponent } from "react-zoom-pan-pinch";
 import { useCanvasStore, CanvasNode } from "../../state/canvasStore";
 import { NodeContextMenu } from "./NodeContextMenu";
 import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog";
+import { AudioCapture, AudioRecording } from "./AudioCapture";
 
 interface NodeProps {
   node: CanvasNode;
@@ -44,6 +45,10 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
   } | null>(null);
   const [editTitle, setEditTitle] = useState(node.title);
   const [editContent, setEditContent] = useState(node.content || "");
+  // Audio recording state for audio-type nodes
+  const [audioRecording, setAudioRecording] = useState<AudioRecording | null>(
+    node.metadata?.audioRecording as AudioRecording | null ?? null
+  );
   const nodeRef = useRef<HTMLDivElement>(null);
   const focusFromPointerRef = useRef(false);
   const scale = useTransformComponent(({ state }) => state.scale);
@@ -197,6 +202,23 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
     }
   };
 
+  // Handle audio recording completion
+  const handleRecordingComplete = useCallback((recording: AudioRecording) => {
+    setAudioRecording(recording);
+    // Store recording reference in node metadata
+    updateNode(node.id, {
+      metadata: {
+        ...node.metadata,
+        audioRecording: {
+          url: recording.url,
+          duration: recording.duration,
+          createdAt: recording.createdAt.toISOString(),
+        },
+      },
+      content: `Audio recording (${Math.floor(recording.duration / 1000)}s)`,
+    });
+  }, [node.id, node.metadata, updateNode]);
+
   // Get node style based on type
   const getNodeStyle = (): CSSProperties => {
     const baseStyle: CSSProperties = {
@@ -344,7 +366,16 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
           </div>
 
           {/* Node content */}
-          {node.content && (
+          {node.type === "audio" ? (
+            <AudioCapture
+              onRecordingComplete={handleRecordingComplete}
+              existingRecording={audioRecording}
+              style={{
+                minWidth: "280px",
+              }}
+              aria-label={`Audio capture for ${node.title}`}
+            />
+          ) : node.content && (
             <div style={{
               fontSize: "13px",
               color: "#aaa",
