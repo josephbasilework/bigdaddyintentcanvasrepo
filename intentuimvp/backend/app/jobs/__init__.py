@@ -46,6 +46,7 @@ from app.jobs.client import (
     get_job_status,
     get_queue_stats,
 )
+from app.jobs.service import JobService, get_job_service
 from app.jobs.worker import WorkerSettings
 
 __all__ = [
@@ -67,6 +68,9 @@ __all__ = [
     "cancel_job",
     "get_queue_stats",
     "JobEnqueueError",
+    # JobService - unified service layer
+    "JobService",
+    "get_job_service",
     # Worker and utilities
     "WorkerSettings",
     "get_redis_pool",
