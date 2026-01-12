@@ -2,6 +2,8 @@
 
 Provides:
 - Action classification (safe, requires_approval, blocked)
+- Tool-based action classification per PRD matrix (§13.1)
+- Novel action handling for unknown tools
 - Content filtering for agent outputs
 - Prompt injection detection
 - Rate limiting per user/agent
@@ -19,6 +21,24 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+class ActionDomain(str, Enum):
+    """Action domains per PRD §13.1 Action Classification Matrix."""
+
+    CANVAS = "canvas"
+    DOCUMENTS = "documents"
+    JOBS = "jobs"
+    MCP = "mcp"
+    EXTERNAL = "external"
+
+
+class ActionApproval(str, Enum):
+    """Approval requirement levels per PRD §13.1."""
+
+    SAFE = "safe"  # No confirmation required
+    NEEDS_CONFIRM = "needs_confirm"  # Requires user approval
+    BLOCKED = "blocked"  # Not allowed
 
 
 class ActionRiskLevel(str, Enum):
@@ -67,6 +87,16 @@ class SafetyCheckResult(BaseModel):
     requires_approval: bool = False
     filtered_content: str | None = None
     warnings: list[str] = Field(default_factory=list)
+
+
+class ToolActionClassification(BaseModel):
+    """Classification result for a tool action per PRD §13.1."""
+
+    domain: ActionDomain
+    approval: ActionApproval
+    reason: str
+    requires_approval: bool = False
+    is_blocked: bool = False
 
 
 class SecurityEvent(BaseModel):
@@ -285,6 +315,64 @@ class SafetyGuardrails:
             ActionCategory.OTHER: ActionRiskLevel.LOW_RISK,
         }
 
+        # PRD §13.1 Action Classification Matrix
+        # Maps domain actions to approval requirements
+        self._tool_action_matrix: dict[ActionDomain, dict[str, ActionApproval]] = {
+            ActionDomain.CANVAS: {
+                "create_node": ActionApproval.SAFE,
+                "update_label": ActionApproval.SAFE,
+                "move": ActionApproval.SAFE,
+                "update_node": ActionApproval.SAFE,
+                "delete_node": ActionApproval.NEEDS_CONFIRM,
+                "clear_canvas": ActionApproval.NEEDS_CONFIRM,
+            },
+            ActionDomain.DOCUMENTS: {
+                "create": ActionApproval.SAFE,
+                "update": ActionApproval.SAFE,
+                "delete": ActionApproval.NEEDS_CONFIRM,
+            },
+            ActionDomain.JOBS: {
+                "create": ActionApproval.SAFE,
+                "query": ActionApproval.SAFE,
+                "cancel": ActionApproval.NEEDS_CONFIRM,
+                "delete_history": ActionApproval.NEEDS_CONFIRM,
+            },
+            ActionDomain.MCP: {
+                "query_": ActionApproval.SAFE,  # Prefix match for query_*
+                "write_": ActionApproval.NEEDS_CONFIRM,
+                "send_": ActionApproval.NEEDS_CONFIRM,
+                "configure_global": ActionApproval.BLOCKED,
+            },
+            ActionDomain.EXTERNAL: {
+                "calendar_create": ActionApproval.NEEDS_CONFIRM,
+                "email_draft": ActionApproval.NEEDS_CONFIRM,
+                "email_send_bulk": ActionApproval.BLOCKED,
+                "email_send": ActionApproval.NEEDS_CONFIRM,
+            },
+        }
+
+        # Verbs that suggest dangerous actions for novel action handling
+        self._dangerous_verbs = {
+            "delete",
+            "remove",
+            "clear",
+            "send",
+            "upload",
+            "destroy",
+            "drop",
+            "truncate",
+        }
+
+        # Targets that suggest dangerous actions
+        self._dangerous_targets = {
+            "system",
+            "config",
+            "external",
+            "global",
+            "admin",
+            "root",
+        }
+
     def classify_action(
         self,
         agent_name: str,
@@ -412,6 +500,143 @@ class SafetyGuardrails:
             return True
 
         return False
+
+    def classify_tool_action(
+        self, tool_name: str, arguments: dict[str, Any] | None = None
+    ) -> ToolActionClassification:
+        """Classify a tool action using the PRD §13.1 Action Classification Matrix.
+
+        Args:
+            tool_name: Name of the tool being called (e.g., "canvas.create_node").
+            arguments: Optional tool arguments for context.
+
+        Returns:
+            ToolActionClassification with domain and approval requirement.
+        """
+        # Parse the tool name to extract domain and action
+        domain = self._parse_tool_domain(tool_name)
+        action = self._extract_action_name(tool_name)
+
+        # Look up in the matrix
+        if domain in self._tool_action_matrix:
+            domain_actions = self._tool_action_matrix[domain]
+
+            # Check for exact match first
+            if action in domain_actions:
+                approval = domain_actions[action]
+                return ToolActionClassification(
+                    domain=domain,
+                    approval=approval,
+                    reason=f"Tool '{tool_name}' found in {domain.value} matrix",
+                    requires_approval=approval == ActionApproval.NEEDS_CONFIRM,
+                    is_blocked=approval == ActionApproval.BLOCKED,
+                )
+
+            # Check for prefix matches (e.g., "query_" for MCP)
+            for matrix_action, matrix_approval in domain_actions.items():
+                if matrix_action.endswith("_") and action.startswith(matrix_action):
+                    return ToolActionClassification(
+                        domain=domain,
+                        approval=matrix_approval,
+                        reason=f"Tool '{tool_name}' matches prefix '{matrix_action}' in {domain.value} matrix",
+                        requires_approval=matrix_approval == ActionApproval.NEEDS_CONFIRM,
+                        is_blocked=matrix_approval == ActionApproval.BLOCKED,
+                    )
+
+        # Not found in matrix - use novel action handling (PRD §13.2)
+        return self._classify_novel_action(tool_name, action, domain)
+
+    def _parse_tool_domain(self, tool_name: str) -> ActionDomain:
+        """Extract the domain from a tool name.
+
+        Args:
+            tool_name: Full tool name (e.g., "canvas.create_node", "mcp.query_calendar").
+
+        Returns:
+            ActionDomain for the tool.
+        """
+        tool_lower = tool_name.lower()
+
+        # Check for domain prefixes
+        if tool_lower.startswith("canvas."):
+            return ActionDomain.CANVAS
+        if tool_lower.startswith("document") or "_document" in tool_lower:
+            return ActionDomain.DOCUMENTS
+        if tool_lower.startswith("job") or "_job" in tool_lower:
+            return ActionDomain.JOBS
+        if tool_lower.startswith("mcp.") or tool_lower.startswith("mcp_"):
+            return ActionDomain.MCP
+
+        # Check for external integrations
+        for external_keyword in ["calendar", "email", "slack", "notion", "github"]:
+            if external_keyword in tool_lower:
+                return ActionDomain.EXTERNAL
+
+        # Default to canvas for unknown tools
+        return ActionDomain.CANVAS
+
+    def _extract_action_name(self, tool_name: str) -> str:
+        """Extract the action name from a tool name.
+
+        Args:
+            tool_name: Full tool name (e.g., "canvas.create_node").
+
+        Returns:
+            Action name (e.g., "create_node").
+        """
+        # Remove domain prefix if present
+        if "." in tool_name:
+            return tool_name.split(".", 1)[1].lower()
+        return tool_name.lower()
+
+    def _classify_novel_action(
+        self, tool_name: str, action: str, domain: ActionDomain
+    ) -> ToolActionClassification:
+        """Classify a novel action not in the matrix using PRD §13.2 rules.
+
+        Args:
+            tool_name: Full tool name.
+            action: Extracted action name.
+            domain: Inferred domain.
+
+        Returns:
+            ToolActionClassification for the novel action.
+        """
+        action_lower = action.lower()
+        tool_lower = tool_name.lower()
+
+        # Extract verb (first word before underscore or the whole action)
+        verb = action_lower.split("_")[0] if "_" in action_lower else action_lower
+
+        # PRD §13.2 Rule 1: If verb in dangerous set → Needs Confirm
+        if verb in self._dangerous_verbs:
+            return ToolActionClassification(
+                domain=domain,
+                approval=ActionApproval.NEEDS_CONFIRM,
+                reason=f"Novel action '{tool_name}': verb '{verb}' requires confirmation",
+                requires_approval=True,
+                is_blocked=False,
+            )
+
+        # PRD §13.2 Rule 2: If target in dangerous set → Needs Confirm
+        for target in self._dangerous_targets:
+            if target in tool_lower or target in action_lower:
+                return ToolActionClassification(
+                    domain=domain,
+                    approval=ActionApproval.NEEDS_CONFIRM,
+                    reason=f"Novel action '{tool_name}': target '{target}' requires confirmation",
+                    requires_approval=True,
+                    is_blocked=False,
+                )
+
+        # PRD §13.2 Rule 3: Default to Safe
+        return ToolActionClassification(
+            domain=domain,
+            approval=ActionApproval.SAFE,
+            reason=f"Novel action '{tool_name}': defaulting to safe",
+            requires_approval=False,
+            is_blocked=False,
+        )
 
     async def check_safety(
         self,

@@ -3,7 +3,9 @@
 import pytest
 
 from app.agents.safety import (
+    ActionApproval,
     ActionCategory,
+    ActionDomain,
     ActionRiskLevel,
     ContentFilter,
     PromptInjectionDetector,
@@ -369,6 +371,181 @@ class TestSafetyGuardrails:
         events = safety.get_audit_log(min_risk_level=ActionRiskLevel.SAFE, limit=3)
 
         assert len(events) == 3
+
+
+class TestToolActionClassification:
+    """Tests for PRD §13.1 tool action classification matrix."""
+
+    def test_classify_canvas_safe_actions(self):
+        """Test Canvas domain safe actions."""
+        safety = SafetyGuardrails()
+
+        # Safe actions: create_node, update_label, move
+        for action in ["canvas.create_node", "canvas.update_label", "canvas.move"]:
+            result = safety.classify_tool_action(action)
+            assert result.domain == ActionDomain.CANVAS
+            assert result.approval == ActionApproval.SAFE
+            assert not result.requires_approval
+            assert not result.is_blocked
+
+    def test_classify_canvas_needs_confirm(self):
+        """Test Canvas domain actions requiring confirmation."""
+        safety = SafetyGuardrails()
+
+        # Needs confirmation: delete_node, clear_canvas
+        for action in ["canvas.delete_node", "canvas.clear_canvas"]:
+            result = safety.classify_tool_action(action)
+            assert result.domain == ActionDomain.CANVAS
+            assert result.approval == ActionApproval.NEEDS_CONFIRM
+            assert result.requires_approval
+            assert not result.is_blocked
+
+    def test_classify_documents_safe_actions(self):
+        """Test Documents domain safe actions."""
+        safety = SafetyGuardrails()
+
+        for action in ["document.create", "document.update", "documents.create"]:
+            result = safety.classify_tool_action(action)
+            assert result.domain == ActionDomain.DOCUMENTS
+            assert result.approval == ActionApproval.SAFE
+            assert not result.requires_approval
+
+    def test_classify_documents_needs_confirm(self):
+        """Test Documents delete action requires confirmation."""
+        safety = SafetyGuardrails()
+
+        result = safety.classify_tool_action("document.delete")
+        assert result.domain == ActionDomain.DOCUMENTS
+        assert result.approval == ActionApproval.NEEDS_CONFIRM
+        assert result.requires_approval
+
+    def test_classify_jobs_safe_actions(self):
+        """Test Jobs domain safe actions."""
+        safety = SafetyGuardrails()
+
+        for action in ["job.create", "job.query", "jobs.create"]:
+            result = safety.classify_tool_action(action)
+            assert result.domain == ActionDomain.JOBS
+            assert result.approval == ActionApproval.SAFE
+            assert not result.requires_approval
+
+    def test_classify_jobs_needs_confirm(self):
+        """Test Jobs actions requiring confirmation."""
+        safety = SafetyGuardrails()
+
+        for action in ["job.cancel", "job.delete_history"]:
+            result = safety.classify_tool_action(action)
+            assert result.domain == ActionDomain.JOBS
+            assert result.approval == ActionApproval.NEEDS_CONFIRM
+            assert result.requires_approval
+
+    def test_classify_mcp_safe_actions(self):
+        """Test MCP domain safe actions (query_*)."""
+        safety = SafetyGuardrails()
+
+        for action in ["mcp.query_calendar", "mcp.query_notion", "mcp.query_github"]:
+            result = safety.classify_tool_action(action)
+            assert result.domain == ActionDomain.MCP
+            assert result.approval == ActionApproval.SAFE
+            assert not result.requires_approval
+
+    def test_classify_mcp_needs_confirm(self):
+        """Test MCP actions requiring confirmation (write_*, send_*)."""
+        safety = SafetyGuardrails()
+
+        for action in ["mcp.write_calendar", "mcp.send_email", "mcp.write_github"]:
+            result = safety.classify_tool_action(action)
+            assert result.domain == ActionDomain.MCP
+            assert result.approval == ActionApproval.NEEDS_CONFIRM
+            assert result.requires_approval
+
+    def test_classify_mcp_blocked(self):
+        """Test MCP blocked action (configure_global)."""
+        safety = SafetyGuardrails()
+
+        result = safety.classify_tool_action("mcp.configure_global")
+        assert result.domain == ActionDomain.MCP
+        assert result.approval == ActionApproval.BLOCKED
+        assert result.is_blocked
+
+    def test_classify_external_needs_confirm(self):
+        """Test External domain actions requiring confirmation."""
+        safety = SafetyGuardrails()
+
+        for action in ["calendar_create", "email_draft", "external.calendar_create"]:
+            result = safety.classify_tool_action(action)
+            assert result.domain == ActionDomain.EXTERNAL
+            assert result.approval == ActionApproval.NEEDS_CONFIRM
+            assert result.requires_approval
+
+    def test_classify_external_blocked(self):
+        """Test External blocked action (email_send_bulk)."""
+        safety = SafetyGuardrails()
+
+        result = safety.classify_tool_action("email_send_bulk")
+        assert result.domain == ActionDomain.EXTERNAL
+        assert result.approval == ActionApproval.BLOCKED
+        assert result.is_blocked
+
+    def test_novel_action_dangerous_verb(self):
+        """Test novel action with dangerous verb requires confirmation (PRD §13.2)."""
+        safety = SafetyGuardrails()
+
+        # Dangerous verbs: delete, remove, clear, send, upload
+        for action in ["tool.delete_something", "tool.remove_item", "tool.clear_cache"]:
+            result = safety.classify_tool_action(action)
+            assert result.approval == ActionApproval.NEEDS_CONFIRM
+            assert result.requires_approval
+            assert "verb" in result.reason.lower()
+
+    def test_novel_action_dangerous_target(self):
+        """Test novel action with dangerous target requires confirmation (PRD §13.2)."""
+        safety = SafetyGuardrails()
+
+        # Dangerous targets: system, config, external, global
+        for action in ["tool.modify_system", "tool.change_config", "tool.update_global"]:
+            result = safety.classify_tool_action(action)
+            assert result.approval == ActionApproval.NEEDS_CONFIRM
+            assert result.requires_approval
+            assert "target" in result.reason.lower()
+
+    def test_novel_action_default_safe(self):
+        """Test novel action defaults to safe (PRD §13.2)."""
+        safety = SafetyGuardrails()
+
+        result = safety.classify_tool_action("tool.unknown_action")
+        assert result.approval == ActionApproval.SAFE
+        assert not result.requires_approval
+        assert "defaulting to safe" in result.reason.lower()
+
+    def test_parse_tool_domain_canvas(self):
+        """Test parsing canvas domain from tool name."""
+        safety = SafetyGuardrails()
+
+        assert safety._parse_tool_domain("canvas.create_node") == ActionDomain.CANVAS
+        assert safety._parse_tool_domain("canvas.update_label") == ActionDomain.CANVAS
+
+    def test_parse_tool_domain_mcp(self):
+        """Test parsing MCP domain from tool name."""
+        safety = SafetyGuardrails()
+
+        assert safety._parse_tool_domain("mcp.query_calendar") == ActionDomain.MCP
+        assert safety._parse_tool_domain("mcp.write_github") == ActionDomain.MCP
+
+    def test_parse_tool_domain_external(self):
+        """Test parsing external domain from tool name."""
+        safety = SafetyGuardrails()
+
+        assert safety._parse_tool_domain("calendar.create") == ActionDomain.EXTERNAL
+        assert safety._parse_tool_domain("email.send") == ActionDomain.EXTERNAL
+
+    def test_extract_action_name(self):
+        """Test extracting action name from tool name."""
+        safety = SafetyGuardrails()
+
+        assert safety._extract_action_name("canvas.create_node") == "create_node"
+        assert safety._extract_action_name("mcp.query_calendar") == "query_calendar"
+        assert safety._extract_action_name("simple_tool") == "simple_tool"
 
 
 class TestGlobalSafety:
