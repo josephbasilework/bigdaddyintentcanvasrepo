@@ -1,5 +1,6 @@
 """Repository for Edge CRUD operations."""
 
+import json
 from logging import getLogger
 from typing import Any
 
@@ -123,6 +124,7 @@ class EdgeRepository(BaseRepository[Edge, Any, Any]):
         to_node_id: int,
         relation_type: RelationType,
         label: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Edge:
         """Create a new edge.
 
@@ -132,6 +134,7 @@ class EdgeRepository(BaseRepository[Edge, Any, Any]):
             to_node_id: Target node identifier
             relation_type: Type of relation
             label: Optional edge label
+            metadata: Optional edge metadata (will be JSON-serialized)
 
         Returns:
             Created edge
@@ -142,6 +145,7 @@ class EdgeRepository(BaseRepository[Edge, Any, Any]):
             to_node_id=to_node_id,
             relation_type=relation_type,
             label=label,
+            edge_metadata=json.dumps(metadata) if metadata else None,
         )
 
     async def update_relation_type(

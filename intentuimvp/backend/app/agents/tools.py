@@ -457,6 +457,7 @@ class ToolManager:
                     from_node_id=from_node.id,
                     to_node_id=to_node.id,
                     relation_type=params.relation_type,
+                    metadata=params.metadata,
                 )
 
             return {"id": edge.id}

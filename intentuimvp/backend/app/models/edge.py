@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -44,6 +45,7 @@ class Edge(Base):
     )
     relation_type: Mapped[RelationType] = mapped_column(String, nullable=False)
     label: Mapped[str | None] = mapped_column(String, nullable=True)
+    edge_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
@@ -57,6 +59,14 @@ class Edge(Base):
         "Node", foreign_keys=[to_node_id], back_populates="incoming_edges"
     )
 
+    def get_metadata(self) -> dict[str, Any]:
+        """Get metadata as dictionary."""
+        return json.loads(self.edge_metadata) if self.edge_metadata else {}
+
+    def set_metadata(self, metadata: dict[str, Any]) -> None:
+        """Set metadata from dictionary."""
+        self.edge_metadata = json.dumps(metadata)
+
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
         return {
@@ -66,5 +76,6 @@ class Edge(Base):
             "toNodeId": self.to_node_id,
             "relationType": self.relation_type,
             "label": self.label,
+            "metadata": self.get_metadata(),
             "created_at": self.created_at.isoformat(),
         }

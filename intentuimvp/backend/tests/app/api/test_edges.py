@@ -289,3 +289,97 @@ class TestEdgeEndpoints:
             },
         )
         assert response.status_code == 400
+
+    def test_create_and_get_edge_with_metadata(
+        self,
+        client: testclient.TestClient,
+        sync_session_local,
+    ) -> None:
+        """Test creating an edge with metadata and retrieving it."""
+        canvas_id, node_ids = create_canvas_with_nodes(sync_session_local)
+        metadata = {
+            "source": "agent",
+            "confidence": 0.95,
+            "reasoning": "Dependency detected",
+        }
+        payload = {
+            "canvas_id": canvas_id,
+            "from_node_id": node_ids[0],
+            "to_node_id": node_ids[1],
+            "relation_type": "depends_on",
+            "label": "Depends on",
+            "metadata": metadata,
+        }
+        response = client.post("/api/edges", json=payload)
+        assert response.status_code == 201
+        data = response.json()
+        assert data["canvas_id"] == canvas_id
+        assert data["from_node_id"] == node_ids[0]
+        assert data["to_node_id"] == node_ids[1]
+        assert data["relation_type"] == "depends_on"
+        assert data["label"] == "Depends on"
+        assert data["metadata"] == metadata
+        assert "created_at" in data
+
+        edge_id = data["id"]
+        get_response = client.get(f"/api/edges/{edge_id}")
+        assert get_response.status_code == 200
+        get_data = get_response.json()
+        assert get_data["id"] == edge_id
+        assert get_data["metadata"] == metadata
+
+    def test_update_edge_metadata(
+        self,
+        client: testclient.TestClient,
+        sync_session_local,
+    ) -> None:
+        """Test updating edge metadata."""
+        canvas_id, node_ids = create_canvas_with_nodes(sync_session_local)
+        initial_metadata = {"source": "user", "version": 1}
+        create_response = client.post(
+            "/api/edges",
+            json={
+                "canvas_id": canvas_id,
+                "from_node_id": node_ids[0],
+                "to_node_id": node_ids[1],
+                "relation_type": "supports",
+                "label": "Supports",
+                "metadata": initial_metadata,
+            },
+        )
+        assert create_response.status_code == 201
+        edge_id = create_response.json()["id"]
+
+        updated_metadata = {"source": "agent", "version": 2, "confidence": 0.9}
+        update_response = client.put(
+            f"/api/edges/{edge_id}",
+            json={"metadata": updated_metadata},
+        )
+        assert update_response.status_code == 200
+        updated = update_response.json()
+        assert updated["metadata"] == updated_metadata
+
+        get_response = client.get(f"/api/edges/{edge_id}")
+        assert get_response.status_code == 200
+        get_data = get_response.json()
+        assert get_data["metadata"] == updated_metadata
+
+    def test_edge_with_null_metadata(
+        self,
+        client: testclient.TestClient,
+        sync_session_local,
+    ) -> None:
+        """Test edge with null metadata is handled correctly."""
+        canvas_id, node_ids = create_canvas_with_nodes(sync_session_local)
+        payload = {
+            "canvas_id": canvas_id,
+            "from_node_id": node_ids[0],
+            "to_node_id": node_ids[1],
+            "relation_type": "depends_on",
+            "label": "Depends",
+            "metadata": None,
+        }
+        response = client.post("/api/edges", json=payload)
+        assert response.status_code == 201
+        data = response.json()
+        assert data["metadata"] is None or data["metadata"] == {}

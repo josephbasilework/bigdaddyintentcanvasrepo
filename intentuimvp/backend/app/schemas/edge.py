@@ -1,5 +1,7 @@
 """Pydantic schemas for edge API."""
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.edge import RelationType
@@ -16,6 +18,9 @@ class EdgeCreateRequest(BaseModel):
         default=RelationType.DEPENDS_ON,
         description="Edge relation type",
     )
+    metadata: dict[str, Any] | None = Field(
+        default=None, description="Optional edge metadata"
+    )
 
 
 class EdgeUpdateRequest(BaseModel):
@@ -26,6 +31,9 @@ class EdgeUpdateRequest(BaseModel):
         description="Updated relation type",
     )
     label: str | None = Field(default=None, description="Updated edge label")
+    metadata: dict[str, Any] | None = Field(
+        default=None, description="Updated edge metadata"
+    )
 
 
 class EdgeResponse(BaseModel):
@@ -39,6 +47,7 @@ class EdgeResponse(BaseModel):
     to_node_id: int
     relation_type: RelationType
     label: str | None = None
+    metadata: dict[str, Any] | None = None
     created_at: str
 
 

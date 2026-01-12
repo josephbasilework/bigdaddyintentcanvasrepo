@@ -1,5 +1,6 @@
 """Edge API endpoints for CRUD operations."""
 
+import json
 import logging
 from typing import Any
 
@@ -43,6 +44,7 @@ def _serialize_edge(edge: Edge) -> dict[str, Any]:
         "to_node_id": edge.to_node_id,
         "relation_type": edge.relation_type,
         "label": edge.label,
+        "metadata": edge.get_metadata(),
         "created_at": edge.created_at.isoformat(),
     }
 
@@ -101,6 +103,7 @@ async def create_edge(
             to_node_id=payload.to_node_id,
             relation_type=payload.relation_type,
             label=payload.label,
+            metadata=payload.metadata,
         )
         logger.info(
             f"Created edge {edge.id} on canvas {payload.canvas_id} for user {user_id}"
@@ -250,6 +253,11 @@ async def update_edge(
 
     if "label" in fields_set:
         updates["label"] = payload.label
+
+    if "metadata" in fields_set:
+        updates["edge_metadata"] = (
+            json.dumps(payload.metadata) if payload.metadata else None
+        )
 
     if not updates:
         raise HTTPException(
