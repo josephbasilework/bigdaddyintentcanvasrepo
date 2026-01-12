@@ -7,6 +7,7 @@ import { useCanvasStore, CanvasNode } from "../../state/canvasStore";
 import { NodeContextMenu } from "./NodeContextMenu";
 import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog";
 import { AudioCapture, AudioRecording } from "./AudioCapture";
+import { GraphAnnotation, GraphAnnotationDisplay } from "./GraphAnnotation";
 
 interface NodeProps {
   node: CanvasNode;
@@ -49,6 +50,8 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
   const [audioRecording, setAudioRecording] = useState<AudioRecording | null>(
     node.metadata?.audioRecording as AudioRecording | null ?? null
   );
+  // Graph annotation state for graph-type nodes
+  const [isEditingAnnotation, setIsEditingAnnotation] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
   const focusFromPointerRef = useRef(false);
   const scale = useTransformComponent(({ state }) => state.scale);
@@ -200,6 +203,20 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
       e.preventDefault();
       handleEdit();
     }
+  };
+
+  // Graph annotation handlers
+  const handleEditAnnotation = () => {
+    setIsEditingAnnotation(true);
+  };
+
+  const handleSaveAnnotation = useCallback((annotation: { bullets?: string[]; tags?: string[]; status?: "active" | "archived" | "draft" | "review" }) => {
+    updateNode(node.id, { graphAnnotation: annotation });
+    setIsEditingAnnotation(false);
+  }, [node.id, updateNode]);
+
+  const handleCancelAnnotation = () => {
+    setIsEditingAnnotation(false);
   };
 
   // Handle audio recording completion
@@ -412,6 +429,14 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
               ))}
             </div>
           )}
+
+          {/* Graph annotation display for graph-type nodes */}
+          {node.type === "graph" && (
+            <GraphAnnotationDisplay
+              annotation={node.graphAnnotation}
+              onEdit={handleEditAnnotation}
+            />
+          )}
         </div>
       </Draggable>
 
@@ -425,6 +450,7 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
           onDelete={handleDelete}
           onDuplicate={handleDuplicate}
           onConnect={onStartConnect ? handleConnect : undefined}
+          onAnnotate={node.type === "graph" ? handleEditAnnotation : undefined}
         />
       )}
 
@@ -552,6 +578,15 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
             </div>
           </div>
         </div>
+      )}
+
+      {/* Graph annotation dialog */}
+      {isEditingAnnotation && (
+        <GraphAnnotation
+          annotation={node.graphAnnotation}
+          onSave={handleSaveAnnotation}
+          onCancel={handleCancelAnnotation}
+        />
       )}
 
       <DeleteConfirmationDialog

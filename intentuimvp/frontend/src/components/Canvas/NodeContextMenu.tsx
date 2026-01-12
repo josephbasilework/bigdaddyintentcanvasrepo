@@ -10,6 +10,7 @@ interface ContextMenuProps {
   onDelete: () => void;
   onDuplicate?: () => void;
   onConnect?: () => void;
+  onAnnotate?: () => void;
 }
 
 /**
@@ -20,6 +21,7 @@ interface ContextMenuProps {
  * - Delete node
  * - Duplicate node
  * - Connect to another node
+ * - Annotate (for graph-type nodes)
  */
 export function NodeContextMenu({
   x,
@@ -29,6 +31,7 @@ export function NodeContextMenu({
   onDelete,
   onDuplicate,
   onConnect,
+  onAnnotate,
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const positionComputedRef = useRef(false);
@@ -123,6 +126,11 @@ export function NodeContextMenu({
         {onConnect && (
           <MenuItem label="Connect node" onClick={() => handleAction(onConnect)}>
             🔗 Connect...
+          </MenuItem>
+        )}
+        {onAnnotate && (
+          <MenuItem label="Annotate graph" onClick={() => handleAction(onAnnotate)}>
+            📝 Annotate...
           </MenuItem>
         )}
         <div

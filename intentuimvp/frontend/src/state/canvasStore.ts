@@ -1,5 +1,18 @@
 import { create } from 'zustand';
 
+/**
+ * Graph node annotation data.
+ * Used for graph-type nodes to provide structured metadata.
+ */
+export interface GraphNodeAnnotation {
+  /** Bullet-point annotations for the node */
+  bullets?: string[];
+  /** Tags for categorization */
+  tags?: string[];
+  /** Status of the graph node */
+  status?: 'active' | 'archived' | 'draft' | 'review';
+}
+
 // Types for canvas entities
 export interface CanvasNode {
   id: string;
@@ -10,6 +23,8 @@ export interface CanvasNode {
   title: string;
   content?: string;
   metadata?: Record<string, unknown>;
+  /** Graph-specific annotations (only for type='graph') */
+  graphAnnotation?: GraphNodeAnnotation;
 }
 
 export type CanvasEdgeRelationType =
