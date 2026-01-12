@@ -28,7 +28,7 @@ const getString = (value: unknown): string | null =>
 const getNumber = (value: unknown, fallback: number): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
 
-const normalizeNode = (value: unknown): CanvasNode | null => {
+export const normalizeNode = (value: unknown): CanvasNode | null => {
   if (!isRecord(value)) return null;
 
   const idValue = value.id ?? value.nodeId;
@@ -58,7 +58,7 @@ const normalizeNode = (value: unknown): CanvasNode | null => {
   return node;
 };
 
-const normalizeEdge = (value: unknown, index: number): CanvasEdge | null => {
+export const normalizeEdge = (value: unknown, index: number): CanvasEdge | null => {
   if (!isRecord(value)) return null;
 
   const sourceValue = value.sourceNodeId ?? value.fromNodeId ?? value.from_node_id;
@@ -92,7 +92,7 @@ const normalizeEdge = (value: unknown, index: number): CanvasEdge | null => {
   return edge;
 };
 
-const normalizeWorkspaceState = (
+export const normalizeWorkspaceState = (
   value: unknown
 ): { nodes: CanvasNode[]; edges: CanvasEdge[]; hadCorruption: boolean } => {
   if (!isRecord(value)) {
