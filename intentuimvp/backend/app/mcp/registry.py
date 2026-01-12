@@ -163,6 +163,40 @@ class MCPServerRegistry:
 
         return server
 
+    async def disable_server(self, server_id: str) -> bool:
+        """Disable an MCP server (graceful degradation for persistent failures).
+
+        Per FR-019 VI-006: Automatically disable persistently failing servers.
+
+        Args:
+            server_id: Unique server identifier
+
+        Returns:
+            True if server was disabled, False if not found
+        """
+        server = await self.get_server(server_id)
+        if not server:
+            return False
+
+        server.enabled = False
+        return True
+
+    async def enable_server(self, server_id: str) -> bool:
+        """Re-enable a previously disabled MCP server.
+
+        Args:
+            server_id: Unique server identifier
+
+        Returns:
+            True if server was enabled, False if not found
+        """
+        server = await self.get_server(server_id)
+        if not server:
+            return False
+
+        server.enabled = True
+        return True
+
     async def set_security_rule(
         self,
         server_id: str,

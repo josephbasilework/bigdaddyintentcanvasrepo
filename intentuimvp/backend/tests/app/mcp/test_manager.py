@@ -31,7 +31,13 @@ import app.mcp.models  # noqa: F401
 from app.database import Base
 
 # Import manager after sys.modules manipulation
-from app.mcp.manager import MCPConnection, MCPManager, ToolExecutionResult
+from app.mcp.manager import (
+    MCPConnection,
+    MCPManager,
+    ServerHealth,
+    ServerHealthState,
+    ToolExecutionResult,
+)
 from app.mcp.manifest import BLOCKED_CAPABILITIES
 from app.mcp.models import MCPExecutionLog, MCPServer
 from app.mcp.registry import MCPServerRegistry
@@ -804,9 +810,8 @@ class TestHealthCheck:
     ) -> None:
         """Test health check on unhealthy server (list_tools returns None).
 
-        Note: The current implementation catches exceptions in list_tools and
-        returns None. The health_check method then returns True because no
-        exception propagates to it. This test documents the current behavior.
+        Graceful degradation (FR-019 VI-006): health_check returns False
+        when list_tools fails.
         """
         with patch("app.mcp.manager.stdio_client") as mock_stdio_client, \
              patch("app.mcp.manager.ClientSession") as mock_session_cls:
@@ -820,10 +825,8 @@ class TestHealthCheck:
             await manager.start_server(test_server.server_id)
 
             is_healthy = await manager.health_check(test_server.server_id)
-            # Note: Current behavior returns True because list_tools catches the
-            # exception internally. A more robust implementation would have
-            # health_check check if list_tools returned None and treat that as unhealthy.
-            assert is_healthy is True  # Current behavior - may want to change this
+            # Graceful degradation: list_tools failure means unhealthy
+            assert is_healthy is False
 
 
 @pytest.mark.asyncio
@@ -845,3 +848,274 @@ class TestAccessorMethods:
         validator = await manager.get_validator()
         assert validator is manager._validator
         assert isinstance(validator, MCPSecurityValidator)
+
+
+@pytest.mark.asyncio
+class TestServerHealthState:
+    """Tests for ServerHealthState graceful degradation tracking."""
+
+    def test_initial_state_is_healthy(self) -> None:
+        """Test that new ServerHealthState starts healthy."""
+        state = ServerHealthState()
+        assert state.state == ServerHealth.HEALTHY
+        assert state.consecutive_failures == 0
+
+    def test_record_failure_updates_state(self) -> None:
+        """Test that recording failures updates health state."""
+        state = ServerHealthState()
+
+        # First 2 failures - still healthy
+        state.record_failure()
+        assert state.state == ServerHealth.HEALTHY
+        assert state.consecutive_failures == 1
+
+        state.record_failure()
+        assert state.state == ServerHealth.HEALTHY
+        assert state.consecutive_failures == 2
+
+        # 3rd failure - becomes degraded
+        state.record_failure()
+        assert state.state == ServerHealth.DEGRADED
+        assert state.consecutive_failures == 3
+
+        # 5th failure - becomes unhealthy
+        state.record_failure()
+        state.record_failure()
+        assert state.state == ServerHealth.UNHEALTHY
+        assert state.consecutive_failures == 5
+
+    def test_record_success_resets_state(self) -> None:
+        """Test that recording success resets failure count."""
+        state = ServerHealthState()
+
+        # Record some failures
+        state.record_failure()
+        state.record_failure()
+        state.record_failure()
+        assert state.state == ServerHealth.DEGRADED
+        assert state.consecutive_failures == 3
+
+        # Success resets everything
+        state.record_success()
+        assert state.state == ServerHealth.HEALTHY
+        assert state.consecutive_failures == 0
+
+    def test_should_attempt_retry(self) -> None:
+        """Test retry logic based on health state."""
+        state = ServerHealthState()
+
+        # Healthy servers should retry
+        assert state.should_attempt_retry() is True
+
+        # Degraded servers should not retry immediately
+        state.record_failure()
+        state.record_failure()
+        state.record_failure()
+        assert state.state == ServerHealth.DEGRADED
+        assert state.should_attempt_retry() is False
+
+        # But should retry after recovery time (simulate with mock)
+        state.last_failure_time = None
+        assert state.should_attempt_retry() is True
+
+        # Unhealthy servers should not retry automatically
+        state.record_failure()
+        state.record_failure()
+        assert state.state == ServerHealth.UNHEALTHY
+        assert state.should_attempt_retry() is False
+
+    def test_get_retry_delay(self) -> None:
+        """Test exponential backoff delay calculation."""
+        state = ServerHealthState()
+
+        # Should increase exponentially
+        delay_0 = state.get_retry_delay(0)
+        delay_1 = state.get_retry_delay(1)
+        delay_2 = state.get_retry_delay(2)
+        delay_3 = state.get_retry_delay(3)
+
+        assert delay_0 < delay_1
+        assert delay_1 < delay_2
+        assert delay_2 < delay_3
+
+        # Should cap at approximately 60 seconds (with jitter up to 10%)
+        delay_100 = state.get_retry_delay(100)
+        # Base delay is capped at 60, jitter adds up to 10% (6 seconds)
+        assert 60 <= delay_100 <= 66
+
+
+@pytest.mark.asyncio
+class TestGracefulDegradation:
+    """Tests for graceful degradation behavior (FR-019 VI-006)."""
+
+    async def test_get_server_health(
+        self, manager: MCPManager
+    ) -> None:
+        """Test getting server health state."""
+        health = manager.get_server_health("test-server")
+        assert isinstance(health, ServerHealthState)
+        assert health.state == ServerHealth.HEALTHY
+
+    async def test_get_all_server_health(
+        self, manager: MCPManager
+    ) -> None:
+        """Test getting all server health states."""
+        # Access multiple servers to create health states
+        manager._health_states["server-1"]
+        manager._health_states["server-2"]
+
+        all_health = manager.get_all_server_health()
+        assert "server-1" in all_health
+        assert "server-2" in all_health
+        assert isinstance(all_health["server-1"], ServerHealthState)
+
+    async def test_reset_server_health(
+        self, manager: MCPManager
+    ) -> None:
+        """Test resetting server health state."""
+        # Get health and induce failures
+        health = manager.get_server_health("test-server")
+        health.record_failure()
+        health.record_failure()
+        health.record_failure()
+        assert health.state == ServerHealth.DEGRADED
+
+        # Reset health
+        result = await manager.reset_server_health("test-server")
+        assert result is True
+
+        # Health should be reset
+        new_health = manager.get_server_health("test-server")
+        assert new_health.state == ServerHealth.HEALTHY
+        assert new_health.consecutive_failures == 0
+
+    async def test_reset_nonexistent_server_returns_false(
+        self, manager: MCPManager
+    ) -> None:
+        """Test resetting health for untracked server returns False."""
+        result = await manager.reset_server_health("nonexistent")
+        assert result is False
+
+    async def test_execute_tool_returns_degraded_mode(
+        self, manager: MCPManager, test_server: MCPServer
+    ) -> None:
+        """Test that execute_tool returns degraded mode when server is unhealthy."""
+        # Put server in degraded state
+        health = manager.get_server_health(test_server.server_id)
+        health.record_failure()
+        health.record_failure()
+        health.record_failure()
+        assert health.state == ServerHealth.DEGRADED
+
+        # Execute tool should return degraded mode result
+        result = await manager.execute_tool(
+            server_id=test_server.server_id,
+            tool_name="read_data",
+            arguments={},
+            initiated_by="test_user",
+        )
+
+        assert result.success is False
+        assert result.degraded is True
+        assert result.error is not None
+        assert "degraded" in result.error.lower()
+        assert result.degraded_reason is not None
+
+    async def test_execute_tool_tracks_success(
+        self, manager: MCPManager, test_server: MCPServer, db_session: AsyncSession
+    ) -> None:
+        """Test that successful tool execution resets health state."""
+        # Put server in degraded state first
+        health = manager.get_server_health(test_server.server_id)
+        health.record_failure()
+        health.record_failure()
+        assert health.state == ServerHealth.HEALTHY  # Still healthy (only 2 failures)
+
+        # Mock successful tool execution
+        with patch("app.mcp.manager.stdio_client") as mock_stdio_client, \
+             patch("app.mcp.manager.ClientSession") as mock_session_cls:
+
+            mock_stdio_client.return_value = _mock_stdio_client()
+
+            mock_result_item = Mock()
+            mock_result_item.model_dump = Mock(return_value={"type": "text", "text": "data"})
+            mock_result = Mock()
+            mock_result.content = [mock_result_item]
+
+            mock_session = _mock_client_session()
+            mock_session.call_tool = AsyncMock(return_value=mock_result)
+            mock_session_cls.return_value = mock_session
+
+            await manager.start_server(test_server.server_id)
+
+            # Execute tool successfully
+            await manager.execute_tool(
+                server_id=test_server.server_id,
+                tool_name="read_data",
+                arguments={},
+                initiated_by="test_user",
+            )
+
+            # Health should be reset to healthy
+            new_health = manager.get_server_health(test_server.server_id)
+            assert new_health.state == ServerHealth.HEALTHY
+            assert new_health.consecutive_failures == 0
+
+    async def test_start_server_resets_health_on_success(
+        self, manager: MCPManager, test_server: MCPServer
+    ) -> None:
+        """Test that successful server connection resets health state."""
+        # Put server in degraded state
+        health = manager.get_server_health(test_server.server_id)
+        health.record_failure()
+        health.record_failure()
+        health.record_failure()
+        assert health.state == ServerHealth.DEGRADED
+
+        # Reset health to allow retry (simulating manual recovery)
+        await manager.reset_server_health(test_server.server_id)
+
+        # Successful connection should keep health in healthy state
+        with patch("app.mcp.manager.stdio_client") as mock_stdio_client, \
+             patch("app.mcp.manager.ClientSession") as mock_session_cls:
+
+            mock_stdio_client.return_value = _mock_stdio_client()
+            mock_session = _mock_client_session()
+            mock_session_cls.return_value = mock_session
+
+            # Start server successfully
+            result = await manager.start_server(test_server.server_id)
+            assert result is True
+
+            # Health should remain healthy
+            new_health = manager.get_server_health(test_server.server_id)
+            assert new_health.state == ServerHealth.HEALTHY
+            assert new_health.consecutive_failures == 0
+
+    async def test_execute_tool_tracks_failure(
+        self, manager: MCPManager, test_server: MCPServer
+    ) -> None:
+        """Test that failed tool execution records failure in health state."""
+        # Mock failed tool execution
+        with patch("app.mcp.manager.stdio_client") as mock_stdio_client, \
+             patch("app.mcp.manager.ClientSession") as mock_session_cls:
+
+            mock_stdio_client.return_value = _mock_stdio_client()
+
+            mock_session = _mock_client_session()
+            mock_session.call_tool = AsyncMock(side_effect=Exception("Tool failed"))
+            mock_session_cls.return_value = mock_session
+
+            await manager.start_server(test_server.server_id)
+
+            # Execute tool - it will fail
+            await manager.execute_tool(
+                server_id=test_server.server_id,
+                tool_name="read_data",
+                arguments={},
+                initiated_by="test_user",
+            )
+
+            # Health should record failure
+            health = manager.get_server_health(test_server.server_id)
+            assert health.consecutive_failures >= 1

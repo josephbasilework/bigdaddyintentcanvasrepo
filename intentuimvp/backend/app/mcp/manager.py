@@ -2,12 +2,21 @@
 
 Manages connection lifecycle, tool discovery, and execution for MCP servers.
 Integrates with the registry and security validator.
+
+Implements graceful degradation (FR-019 VI-006):
+- Retry logic with exponential backoff for failed connections
+- Health tracking for servers (healthy/degraded/unhealthy)
+- Automatic disabling of persistently failing servers
+- Degraded mode notifications when servers are unavailable
 """
 
 import asyncio
 import sys
+from collections import defaultdict
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from datetime import datetime, timedelta
+from enum import Enum
 from typing import Any
 
 # Import mcp SDK, avoiding shadowing by local app.mcp module
@@ -26,6 +35,98 @@ from app.mcp.registry import MCPServerRegistry  # noqa: E402
 from app.mcp.security import MCPSecurityValidator  # noqa: E402
 
 
+class ServerHealth(Enum):
+    """Health state of an MCP server connection."""
+
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    UNHEALTHY = "unhealthy"
+
+
+@dataclass
+class ServerHealthState:
+    """Tracks the health state of an MCP server.
+
+    Attributes:
+        state: Current health state
+        consecutive_failures: Number of consecutive failures
+        last_failure_time: Timestamp of the last failure
+        last_success_time: Timestamp of the last successful operation
+    """
+
+    state: ServerHealth = ServerHealth.HEALTHY
+    consecutive_failures: int = 0
+    last_failure_time: datetime | None = None
+    last_success_time: datetime | None = None
+
+    # Graceful degradation thresholds (FR-019)
+    FAILURE_THRESHOLD_DEGRADED = 3  # After 3 consecutive failures, mark as degraded
+    FAILURE_THRESHOLD_UNHEALTHY = 5  # After 5 consecutive failures, mark as unhealthy
+    DEGRADED_RECOVERY_TIME = timedelta(minutes=5)  # Time before attempting degraded recovery
+    UNHEALTHY_DISABLE_TIME = timedelta(minutes=15)  # Time before disabling unhealthy server
+
+    def record_failure(self) -> bool:
+        """Record a failure and return True if server should be disabled.
+
+        Returns:
+            True if server should be automatically disabled
+        """
+        self.consecutive_failures += 1
+        self.last_failure_time = datetime.utcnow()
+
+        # Update health state based on consecutive failures
+        if self.consecutive_failures >= self.FAILURE_THRESHOLD_UNHEALTHY:
+            self.state = ServerHealth.UNHEALTHY
+            # Check if server should be disabled (failed for too long)
+            if self.last_failure_time:
+                time_since_first_failure = datetime.utcnow() - (
+                    self.last_failure_time - timedelta(minutes=self.consecutive_failures)
+                )
+                if time_since_first_failure > self.UNHEALTHY_DISABLE_TIME:
+                    return True
+        elif self.consecutive_failures >= self.FAILURE_THRESHOLD_DEGRADED:
+            self.state = ServerHealth.DEGRADED
+
+        return False
+
+    def record_success(self) -> None:
+        """Record a successful operation and reset failure count."""
+        self.consecutive_failures = 0
+        self.last_success_time = datetime.utcnow()
+        self.state = ServerHealth.HEALTHY
+
+    def should_attempt_retry(self) -> bool:
+        """Check if retry should be attempted based on health state."""
+        if self.state == ServerHealth.HEALTHY:
+            return True
+
+        if self.state == ServerHealth.DEGRADED:
+            # Retry degraded servers after recovery time
+            if self.last_failure_time:
+                return datetime.utcnow() - self.last_failure_time > self.DEGRADED_RECOVERY_TIME
+            return True
+
+        # Unhealthy servers are not retried automatically
+        return False
+
+    def get_retry_delay(self, attempt: int) -> float:
+        """Calculate exponential backoff delay for retry.
+
+        Args:
+            attempt: The retry attempt number (0-indexed)
+
+        Returns:
+            Delay in seconds
+        """
+        # Base exponential backoff: 2^attempt seconds, capped at 60 seconds
+        delay = min(2**attempt, 60)
+
+        # Add jitter to avoid thundering herd
+        import random
+        jitter = random.uniform(0, 0.1 * delay)
+        return delay + jitter
+
+
 @dataclass
 class ToolExecutionResult:
     """Result of an MCP tool execution.
@@ -35,12 +136,16 @@ class ToolExecutionResult:
         result: The result data from the tool
         error: Error message if execution failed
         required_confirmation: Whether user confirmation was required
+        degraded: Whether the operation completed in degraded mode
+        degraded_reason: Reason for degraded mode (e.g., "server unavailable")
     """
 
     success: bool
     result: Any | None = None
     error: str | None = None
     required_confirmation: bool = False
+    degraded: bool = False
+    degraded_reason: str | None = None
 
 
 @dataclass
@@ -58,8 +163,13 @@ class MCPManager:
     - Start/stop MCP server connections
     - Discover available tools from connected servers
     - Execute tools with security validation
-    - Handle errors and retry logic
+    - Handle errors and retry logic with exponential backoff (FR-019)
+    - Track server health and gracefully degrade failing servers (VI-006)
     """
+
+    # Retry configuration (FR-019 NFR-REL-001)
+    MAX_RETRY_ATTEMPTS = 3
+    INITIAL_RETRY_DELAY = 1.0  # seconds
 
     def __init__(self, session: AsyncSession) -> None:
         """Initialize the MCP manager.
@@ -72,11 +182,17 @@ class MCPManager:
         self._validator = MCPSecurityValidator(session)
         # Active connections: server_id -> MCPConnection
         self._connections: dict[str, MCPConnection] = {}
+        # Health tracking: server_id -> ServerHealthState
+        self._health_states: dict[str, ServerHealthState] = defaultdict(
+            ServerHealthState
+        )
         # Connection lock for thread safety
         self._connection_lock = asyncio.Lock()
 
     async def start_server(self, server_id: str) -> bool:
-        """Start an MCP server connection.
+        """Start an MCP server connection with retry logic and exponential backoff.
+
+        Per FR-019 NFR-REL-001: Retry with exponential backoff; graceful degradation.
 
         Args:
             server_id: Server identifier
@@ -96,18 +212,48 @@ class MCPManager:
             if not server.enabled:
                 return False
 
-            try:
-                # Create connection based on transport type
-                if server.transport_type == "stdio":
-                    return await self._start_stdio_server(server)
-                elif server.transport_type == "sse":
-                    # SSE transport not implemented yet
-                    return False
-                else:
-                    return False
-            except Exception as e:
-                print(f"Failed to start MCP server {server_id}: {e}")
+            # Check health state before attempting connection
+            health = self._health_states[server_id]
+            if not health.should_attempt_retry():
+                # Server is unhealthy and not ready for retry
                 return False
+
+            # Attempt connection with exponential backoff retry
+            last_error = None
+            for attempt in range(self.MAX_RETRY_ATTEMPTS):
+                # Calculate delay for exponential backoff
+                if attempt > 0:
+                    delay = health.get_retry_delay(attempt)
+                    await asyncio.sleep(delay)
+
+                try:
+                    # Create connection based on transport type
+                    if server.transport_type == "stdio":
+                        result = await self._start_stdio_server(server)
+                        if result:
+                            # Connection successful - record success
+                            health.record_success()
+                            return True
+                        return False
+                    elif server.transport_type == "sse":
+                        # SSE transport not implemented yet
+                        return False
+                    else:
+                        return False
+                except Exception as e:
+                    last_error = e
+                    # Continue to next attempt
+
+            # All retries failed - record failure and check if server should be disabled
+            print(f"Failed to start MCP server {server_id} after {self.MAX_RETRY_ATTEMPTS} attempts: {last_error}")
+
+            should_disable = health.record_failure()
+            if should_disable:
+                # Automatically disable persistently failing server (FR-019 VI-006)
+                await self._registry.disable_server(server_id)
+                print(f"Automatically disabled MCP server {server_id} due to persistent failures")
+
+            return False
 
     async def _start_stdio_server(self, server: Any) -> bool:
         """Start an stdio-based MCP server.
@@ -252,10 +398,30 @@ class MCPManager:
             )
 
         # Execute the tool
-        if server_id not in self._connections:
+        health = self._health_states[server_id]
+
+        # Check if server is in degraded/unhealthy state
+        if health.state != ServerHealth.HEALTHY:
+            # Return degraded mode result (FR-019 VI-006)
             return ToolExecutionResult(
-                success=False, error=f"Server {server_id} not connected"
+                success=False,
+                error=f"Server {server_id} is {health.state.value}",
+                degraded=True,
+                degraded_reason=f"MCP server is in {health.state.value} state after {health.consecutive_failures} consecutive failures",
+                required_confirmation=False,
             )
+
+        if server_id not in self._connections:
+            # Try to reconnect if server is not connected but healthy
+            reconnect_success = await self.start_server(server_id)
+            if not reconnect_success or server_id not in self._connections:
+                return ToolExecutionResult(
+                    success=False,
+                    error=f"Server {server_id} not connected",
+                    degraded=health.state != ServerHealth.HEALTHY,
+                    degraded_reason=None if health.state == ServerHealth.HEALTHY else f"Server in {health.state.value} state",
+                    required_confirmation=False,
+                )
 
         session = self._connections[server_id].session
         try:
@@ -278,6 +444,9 @@ class MCPManager:
             else:
                 result_data = result
 
+            # Record successful execution in health state
+            health.record_success()
+
             # Log successful execution with arguments and result
             await self._validator.log_execution(
                 server_id=server_id,
@@ -293,9 +462,14 @@ class MCPManager:
                 success=True,
                 result=result_data,
                 required_confirmation=decision.requires_confirmation,
+                degraded=False,
+                degraded_reason=None,
             )
 
         except Exception as e:
+            # Record failure in health state
+            should_disable = health.record_failure()
+
             # Log failed execution with arguments
             await self._validator.log_execution(
                 server_id=server_id,
@@ -308,10 +482,19 @@ class MCPManager:
                 result=None,
             )
 
+            # Check if server should be auto-disabled
+            if should_disable:
+                await self._registry.disable_server(server_id)
+                # Disconnect the server
+                if server_id in self._connections:
+                    await self.stop_server(server_id)
+
             return ToolExecutionResult(
                 success=False,
                 error=str(e),
                 required_confirmation=decision.requires_confirmation,
+                degraded=health.state != ServerHealth.HEALTHY,
+                degraded_reason=None if health.state == ServerHealth.HEALTHY else f"Server in {health.state.value} state after {health.consecutive_failures} failures",
             )
 
     async def get_all_available_tools(self) -> dict[str, list[dict]]:
@@ -365,7 +548,44 @@ class MCPManager:
 
         try:
             # Try to ping the server
-            await self.list_tools(server_id)
+            tools = await self.list_tools(server_id)
+            if tools is None:
+                return False
             return True
         except Exception:
             return False
+
+    def get_server_health(self, server_id: str) -> ServerHealthState:
+        """Get the health state of an MCP server.
+
+        Args:
+            server_id: Server identifier
+
+        Returns:
+            ServerHealthState for the server
+        """
+        return self._health_states[server_id]
+
+    def get_all_server_health(self) -> dict[str, ServerHealthState]:
+        """Get health states for all tracked servers.
+
+        Returns:
+            Dictionary mapping server_id to ServerHealthState
+        """
+        return dict(self._health_states)
+
+    async def reset_server_health(self, server_id: str) -> bool:
+        """Reset the health state of a server (for recovery/retry).
+
+        Args:
+            server_id: Server identifier
+
+        Returns:
+            True if server was found and health reset
+        """
+        if server_id not in self._health_states:
+            return False
+
+        # Reset to healthy state
+        self._health_states[server_id] = ServerHealthState()
+        return True
