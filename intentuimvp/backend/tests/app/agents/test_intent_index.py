@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from unittest import mock
 
 import pytest
 
-from app.agents.intent_index import IntentIndexLookup
+from app.agents.intent_index import (
+    IntentIndexLookup,
+    IntentIndexMatch,
+    _is_pgvector_available,
+)
 from app.models.intent import IntentOutcome, UserIntent
 
 
@@ -239,3 +244,153 @@ class TestUserIntentSchema:
         assert IntentOutcome.SUCCESS == "success"  # str enum comparison
         assert IntentOutcome.FAILURE == "failure"
         assert IntentOutcome.MODIFIED == "modified"
+
+
+class TestPgvectorSimilarityQuery:
+    """Tests for native pgvector similarity query algorithm (PRD §15.2)."""
+
+    def test_is_pgvector_available_returns_false_for_sqlite(self) -> None:
+        """Should return False when DATABASE_URL is SQLite."""
+        with mock.patch.dict("os.environ", {"DATABASE_URL": "sqlite:///./test.db"}):
+            assert _is_pgvector_available() is False
+
+    def test_is_pgvector_available_returns_false_when_no_database_url(self) -> None:
+        """Should return False when DATABASE_URL is not set."""
+        with mock.patch.dict("os.environ", {"DATABASE_URL": ""}):
+            assert _is_pgvector_available() is False
+
+    def test_is_pgvector_available_checks_postgres_and_module(self) -> None:
+        """Should return True only for PostgreSQL with pgvector module."""
+        # When PostgreSQL but pgvector not installed
+        with mock.patch.dict("os.environ", {"DATABASE_URL": "postgresql://localhost/test"}):
+            with mock.patch("importlib.util.find_spec", return_value=None):
+                assert _is_pgvector_available() is False
+
+    def test_is_pgvector_available_with_asyncpg_url(self) -> None:
+        """Should work with postgresql+asyncpg:// URL format."""
+        with mock.patch.dict("os.environ", {"DATABASE_URL": "postgresql+asyncpg://localhost/test"}):
+            with mock.patch("importlib.util.find_spec", return_value=None):
+                # pgvector module not found
+                assert _is_pgvector_available() is False
+
+
+class StubPgvectorIntentIndex(IntentIndexLookup):
+    """Intent index lookup with stubbed pgvector results."""
+
+    def __init__(self, pgvector_results: list[IntentIndexMatch] | None = None, **kwargs) -> None:
+        super().__init__(session_factory=lambda: DummySession(), **kwargs)
+        self._pgvector_results = pgvector_results
+        self._pgvector_called = False
+
+    async def _fetch_similar_pgvector(
+        self, session, user_id: str, query_embedding
+    ) -> list[IntentIndexMatch]:
+        self._pgvector_called = True
+        if self._pgvector_results is not None:
+            return self._pgvector_results
+        raise RuntimeError("pgvector query failed")
+
+    async def _fetch_candidates(self, session, user_id: str) -> list[UserIntent]:
+        return []
+
+
+@pytest.mark.asyncio
+async def test_lookup_uses_pgvector_when_available() -> None:
+    """Lookup should use native pgvector query when PostgreSQL is available."""
+    expected_matches = [
+        IntentIndexMatch(
+            resolution="research",
+            similarity=0.95,
+            recency_weight=0.99,
+            score=0.9405,
+        )
+    ]
+    lookup = StubPgvectorIntentIndex(
+        pgvector_results=expected_matches,
+        embedding_provider=lambda text: [1.0, 0.0],
+    )
+
+    with mock.patch("app.agents.intent_index._is_pgvector_available", return_value=True):
+        matches = await lookup.lookup("user", "test query")
+
+    assert lookup._pgvector_called is True
+    assert len(matches) == 1
+    assert matches[0].resolution == "research"
+    assert matches[0].similarity == pytest.approx(0.95)
+
+
+@pytest.mark.asyncio
+async def test_lookup_falls_back_when_pgvector_fails() -> None:
+    """Lookup should fall back to in-memory scoring when pgvector fails."""
+    lookup = StubPgvectorIntentIndex(
+        pgvector_results=None,  # Will raise exception
+        embedding_provider=lambda text: [1.0, 0.0],
+    )
+
+    with mock.patch("app.agents.intent_index._is_pgvector_available", return_value=True):
+        # Should not raise, but return empty list (no candidates in fallback)
+        matches = await lookup.lookup("user", "test query")
+
+    assert lookup._pgvector_called is True
+    assert matches == []
+
+
+@pytest.mark.asyncio
+async def test_lookup_skips_pgvector_without_embedding() -> None:
+    """Lookup should skip pgvector when no embedding is available."""
+    lookup = StubPgvectorIntentIndex(
+        pgvector_results=[],
+        embedding_provider=lambda text: None,  # No embedding
+    )
+
+    with mock.patch("app.agents.intent_index._is_pgvector_available", return_value=True):
+        await lookup.lookup("user", "test query")
+
+    # pgvector should not be called without embedding
+    assert lookup._pgvector_called is False
+
+
+@pytest.mark.asyncio
+async def test_lookup_skips_pgvector_for_sqlite() -> None:
+    """Lookup should skip pgvector for SQLite databases."""
+    lookup = StubPgvectorIntentIndex(
+        pgvector_results=[],
+        embedding_provider=lambda text: [1.0, 0.0],
+    )
+
+    with mock.patch("app.agents.intent_index._is_pgvector_available", return_value=False):
+        await lookup.lookup("user", "test query")
+
+    # pgvector should not be called for SQLite
+    assert lookup._pgvector_called is False
+
+
+class TestIntentIndexMatchDataclass:
+    """Tests for IntentIndexMatch dataclass."""
+
+    def test_intent_index_match_is_frozen(self) -> None:
+        """IntentIndexMatch should be immutable (frozen dataclass)."""
+        match = IntentIndexMatch(
+            resolution="test",
+            similarity=0.9,
+            recency_weight=0.95,
+            score=0.855,
+        )
+
+        with pytest.raises(AttributeError):
+            match.resolution = "changed"  # type: ignore[misc]
+
+    def test_intent_index_match_score_calculation(self) -> None:
+        """Score should be similarity * recency_weight."""
+        similarity = 0.9
+        recency_weight = 0.95
+        expected_score = similarity * recency_weight
+
+        match = IntentIndexMatch(
+            resolution="test",
+            similarity=similarity,
+            recency_weight=recency_weight,
+            score=expected_score,
+        )
+
+        assert match.score == pytest.approx(expected_score)

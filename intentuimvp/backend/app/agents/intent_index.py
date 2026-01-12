@@ -6,13 +6,14 @@ import difflib
 import json
 import logging
 import math
+import os
 import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
@@ -27,6 +28,30 @@ DEFAULT_MAX_MATCHES = 5
 DEFAULT_CANDIDATE_LIMIT = 50
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
+
+
+def _is_pgvector_available() -> bool:
+    """Check if pgvector is available for native similarity queries.
+
+    Returns True when:
+    - DATABASE_URL is PostgreSQL
+    - pgvector module is installed
+
+    This enables native vector similarity queries using the <=> operator.
+    """
+    database_url = os.getenv("DATABASE_URL", "")
+    is_postgres = database_url.startswith("postgresql://") or database_url.startswith(
+        "postgresql+asyncpg://"
+    )
+    if not is_postgres:
+        return False
+    try:
+        import importlib.util
+
+        return importlib.util.find_spec("pgvector") is not None
+    except Exception:
+        return False
+
 
 EmbeddingProvider = Callable[[str], Sequence[float] | None]
 
@@ -63,7 +88,11 @@ class IntentIndexLookup:
         self._embedding_provider = embedding_provider
 
     async def lookup(self, user_id: str, input_text: str) -> list[IntentIndexMatch]:
-        """Return top intent index matches for the input text."""
+        """Return top intent index matches for the input text.
+
+        Uses native pgvector similarity search when PostgreSQL with pgvector
+        is available (PRD §15.2), falling back to in-memory scoring for SQLite.
+        """
         normalized_input = _normalize_text(input_text)
         if not normalized_input:
             return []
@@ -71,15 +100,24 @@ class IntentIndexLookup:
         input_embedding: list[float] | None = None
         if self._embedding_provider is not None:
             try:
-                input_embedding = _parse_embedding(
-                    self._embedding_provider(input_text)
-                )
+                input_embedding = _parse_embedding(self._embedding_provider(input_text))
             except Exception:
-                logger.warning(
-                    "Intent index embedding generation failed", exc_info=True
-                )
+                logger.warning("Intent index embedding generation failed", exc_info=True)
                 input_embedding = None
 
+        # Use native pgvector similarity query when available (PRD §15.2)
+        if input_embedding is not None and _is_pgvector_available():
+            try:
+                async with self._session_factory() as session:
+                    return await self._fetch_similar_pgvector(session, user_id, input_embedding)
+            except Exception:
+                logger.warning(
+                    "pgvector similarity query failed, falling back to in-memory",
+                    exc_info=True,
+                )
+                # Fall through to in-memory scoring
+
+        # Fallback: fetch candidates and score in-memory
         try:
             async with self._session_factory() as session:
                 candidates = await self._fetch_candidates(session, user_id)
@@ -87,13 +125,9 @@ class IntentIndexLookup:
             logger.warning("Intent index lookup failed", exc_info=True)
             return []
 
-        return self._score_candidates(
-            normalized_input, candidates, input_embedding=input_embedding
-        )
+        return self._score_candidates(normalized_input, candidates, input_embedding=input_embedding)
 
-    async def _fetch_candidates(
-        self, session: AsyncSession, user_id: str
-    ) -> list[UserIntent]:
+    async def _fetch_candidates(self, session: AsyncSession, user_id: str) -> list[UserIntent]:
         stmt = (
             select(UserIntent)
             .where(UserIntent.user_id == user_id)
@@ -102,6 +136,88 @@ class IntentIndexLookup:
         )
         result = await session.execute(stmt)
         return list(result.scalars().all())
+
+    async def _fetch_similar_pgvector(
+        self,
+        session: AsyncSession,
+        user_id: str,
+        query_embedding: Sequence[float],
+    ) -> list[IntentIndexMatch]:
+        """Fetch similar intents using native pgvector cosine similarity.
+
+        Implements PRD §15.2 query algorithm:
+        - Cosine similarity: SELECT * WHERE 1 - (embedding <=> query) > threshold
+        - Rank by similarity * recency_weight (decay: 0.99^days_old)
+        - Return top max_matches results
+
+        Args:
+            session: Async database session
+            user_id: User identifier for scoping
+            query_embedding: Input text embedding vector
+
+        Returns:
+            List of IntentIndexMatch with similarity scores from pgvector
+        """
+        # Format embedding as PostgreSQL array literal for pgvector
+        embedding_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
+
+        # Native pgvector query per PRD §15.2:
+        # - <=> is cosine distance (0 = identical, 2 = opposite)
+        # - 1 - (embedding <=> query) gives cosine similarity
+        # - Apply threshold filter in SQL for efficiency
+        # - Compute recency weight: decay^days_old where days_old = EXTRACT days from now - created_at
+        # - Order by similarity * recency_weight descending
+        query = text("""
+            SELECT
+                id, intent_text, intent_type, handler, resolution, created_at,
+                (1 - (embedding <=> :query_embedding::vector)) AS similarity,
+                POWER(:decay, EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400.0) AS recency_weight
+            FROM user_intents
+            WHERE user_id = :user_id
+              AND embedding IS NOT NULL
+              AND (1 - (embedding <=> :query_embedding::vector)) > :threshold
+            ORDER BY
+                (1 - (embedding <=> :query_embedding::vector)) *
+                POWER(:decay, EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400.0) DESC
+            LIMIT :limit
+        """)
+
+        result = await session.execute(
+            query,
+            {
+                "user_id": user_id,
+                "query_embedding": embedding_str,
+                "threshold": self._similarity_threshold,
+                "decay": self._recency_decay,
+                "limit": self._max_matches,
+            },
+        )
+
+        matches: list[IntentIndexMatch] = []
+        for row in result:
+            # Create a minimal UserIntent-like object for resolution normalization
+            candidate = UserIntent(
+                id=row.id,
+                intent_text=row.intent_text,
+                intent_type=row.intent_type,
+                handler=row.handler,
+                resolution=row.resolution,
+                created_at=row.created_at,
+            )
+            similarity = float(row.similarity)
+            recency_weight = float(row.recency_weight)
+            score = similarity * recency_weight
+
+            matches.append(
+                IntentIndexMatch(
+                    resolution=_normalize_resolution(candidate),
+                    similarity=similarity,
+                    recency_weight=recency_weight,
+                    score=score,
+                )
+            )
+
+        return matches
 
     def _score_candidates(
         self,
@@ -116,15 +232,11 @@ class IntentIndexLookup:
             intent_text = cast(str, candidate.intent_text)
             if not intent_text:
                 continue
-            similarity = _candidate_similarity(
-                normalized_input, candidate, input_embedding
-            )
+            similarity = _candidate_similarity(normalized_input, candidate, input_embedding)
             if similarity < self._similarity_threshold:
                 continue
             created_at = cast(datetime, candidate.created_at)
-            recency_weight = _recency_weight(
-                created_at, now=now, decay=self._recency_decay
-            )
+            recency_weight = _recency_weight(created_at, now=now, decay=self._recency_decay)
             score = similarity * recency_weight
             matches.append(
                 IntentIndexMatch(
@@ -277,9 +389,7 @@ def _embedding_similarity(
     right_norm = _vector_norm(candidate_embedding)
     if left_norm == 0.0 or right_norm == 0.0:
         return None
-    dot = sum(
-        left * right for left, right in zip(input_embedding, candidate_embedding)
-    )
+    dot = sum(left * right for left, right in zip(input_embedding, candidate_embedding))
     similarity = dot / (left_norm * right_norm)
     if math.isnan(similarity):
         return None
@@ -296,9 +406,7 @@ def _similarity(left: str, right: str) -> float:
     return difflib.SequenceMatcher(None, left, right).ratio()
 
 
-def _recency_weight(
-    created_at: datetime | None, *, now: datetime, decay: float
-) -> float:
+def _recency_weight(created_at: datetime | None, *, now: datetime, decay: float) -> float:
     if created_at is None:
         return 1.0
     if created_at.tzinfo is None:
