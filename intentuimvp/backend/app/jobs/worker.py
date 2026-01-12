@@ -20,6 +20,7 @@ from app.jobs.progress import progress_tracker
 from app.jobs.retry import (
     checkpoint_manager,
 )
+from app.models.audio_block import AudioBlockStatus
 
 logger = logging.getLogger(__name__)
 
@@ -775,6 +776,168 @@ async def export_job(
         return JobResult(success=False, error=str(e))
 
 
+async def transcription_job(
+    ctx: dict[str, Any],
+    audio_block_id: int,
+) -> JobResult:
+    """Transcribe audio content from an audio block.
+
+    This job processes an audio block and generates a transcription.
+    For the MVP, this uses a mock transcription service via the Gateway.
+
+    Args:
+        ctx: ARQ execution context (contains job_id, user_id, workspace_id)
+        audio_block_id: ID of the audio block to transcribe
+
+    Returns:
+        JobResult with transcription data or error.
+    """
+    job_id = ctx.get("job_id", str(uuid.uuid4()))
+    user_id = ctx.get("user_id")
+    workspace_id = ctx.get("workspace_id")
+
+    # Create job in progress tracker
+    await progress_tracker.create_job(
+        job_id=job_id,
+        job_type=JobType.TRANSCRIPTION,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        parameters={"audio_block_id": audio_block_id},
+    )
+
+    logger.info(f"[{job_id}] Starting transcription job for audio block {audio_block_id}")
+
+    try:
+        # Check for cancellation before starting work
+        await check_job_cancelled(job_id)
+
+        from app.database import SessionLocal
+        from app.repositories.audio_block_repo import AudioBlockRepository
+
+        # Get the audio block from database
+        db = SessionLocal()
+        try:
+            repo = AudioBlockRepository(db)
+            audio_block = await repo.get_by_id(audio_block_id)
+
+            if audio_block is None:
+                raise ValueError(f"Audio block {audio_block_id} not found")
+
+            # Update progress - starting transcription
+            await progress_tracker.update_progress(
+                job_id=job_id,
+                progress_percent=20,
+                current_step="Preparing audio for transcription",
+                step_number=1,
+                steps_total=3,
+            )
+
+            # Check for cancellation
+            await check_job_cancelled(job_id)
+
+            # Update status to transcribing
+            await repo.set_status(audio_block_id, AudioBlockStatus.TRANSCRIBING)
+            logger.info(f"[{job_id}] Set audio block {audio_block_id} status to transcribing")
+
+            # Update progress - processing audio
+            await progress_tracker.update_progress(
+                job_id=job_id,
+                progress_percent=50,
+                current_step="Processing audio content",
+                step_number=2,
+                steps_total=3,
+            )
+
+            # For MVP: Generate mock transcription
+            # In production, this would call a real transcription service
+            # For now, we'll use a placeholder that indicates transcription occurred
+            mock_transcription = (
+                f"[Transcription of audio block {audio_block_id}]\n"
+                f"Audio URI: {audio_block.audio_uri}\n"
+                f"Duration: {audio_block.duration or 'unknown'} seconds\n\n"
+                f"Note: This is a mock transcription for the MVP. "
+                f"In production, this would contain the actual transcribed text "
+                f"from the audio recording using a service like OpenAI Whisper."
+            )
+
+            # Simulate processing time
+            await asyncio.sleep(1)
+
+            # Check for cancellation after processing
+            await check_job_cancelled(job_id)
+
+            # Update progress - completing
+            await progress_tracker.update_progress(
+                job_id=job_id,
+                progress_percent=90,
+                current_step="Finalizing transcription",
+                step_number=3,
+                steps_total=3,
+            )
+
+            # Update audio block with transcription
+            await repo.update_transcription(audio_block_id, mock_transcription)
+            logger.info(f"[{job_id}] Updated audio block {audio_block_id} with transcription")
+
+            result_data = {
+                "audio_block_id": audio_block_id,
+                "transcription": mock_transcription,
+                "status": "transcribed",
+                "timestamp": datetime.now(UTC).isoformat(),
+                "job_id": job_id,
+            }
+
+            logger.info(f"[{job_id}] Transcription job completed successfully")
+
+            # Mark job as complete
+            await progress_tracker.complete_job(job_id=job_id, result_data=result_data)
+
+            return JobResult(success=True, data=result_data)
+
+        finally:
+            db.close()
+
+    except JobCancelledError:
+        logger.info(f"[{job_id}] Transcription job was cancelled")
+
+        # Update audio block status back to ready if cancelled
+        try:
+            db = SessionLocal()
+            repo = AudioBlockRepository(db)
+            await repo.set_status(audio_block_id, AudioBlockStatus.READY)
+            db.close()
+        except Exception:
+            pass  # Best effort cleanup
+
+        return JobResult(
+            success=False,
+            error="Job was cancelled",
+            metadata={"job_id": job_id, "cancelled": True},
+        )
+    except Exception as e:
+        logger.error(f"[{job_id}] Transcription failed: {e}", exc_info=True)
+
+        # Update audio block with error status
+        try:
+            db = SessionLocal()
+            repo = AudioBlockRepository(db)
+            await repo.set_status(
+                audio_block_id, AudioBlockStatus.ERROR, error_message=str(e)
+            )
+            db.close()
+        except Exception:
+            pass  # Best effort cleanup
+
+        # Mark job as failed
+        await progress_tracker.fail_job(job_id=job_id, error_message=str(e))
+
+        return JobResult(
+            success=False,
+            error=f"Transcription failed: {str(e)}",
+            metadata={"job_id": job_id},
+        )
+
+
 # ARQ Worker Configuration
 
 
@@ -793,6 +956,7 @@ class WorkerSettings:
         perspective_gather_job,
         synthesis_job,
         export_job,
+        transcription_job,
     ]
 
     # Retry settings

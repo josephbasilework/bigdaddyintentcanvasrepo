@@ -201,6 +201,7 @@ class JobType(StrEnum):
     # General async jobs
     EXPORT = "export"
     IMPORT = "import"
+    TRANSCRIPTION = "transcription"
 
     # Placeholder for future job types
     CUSTOM = "custom"

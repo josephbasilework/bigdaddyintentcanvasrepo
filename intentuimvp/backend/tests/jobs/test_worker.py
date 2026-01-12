@@ -16,6 +16,7 @@ from app.jobs.worker import (
     export_job,
     perspective_gather_job,
     synthesis_job,
+    transcription_job,
 )
 
 
@@ -386,3 +387,105 @@ class TestExportJob:
         assert result.data["workspace_id"] == "workspace-123"
         assert result.data["format"] == "json"
         assert "file_path" in result.data
+
+
+@pytest.mark.asyncio
+class TestTranscriptionJob:
+    """Tests for transcription_job function."""
+
+    async def test_transcription_job_basic(self) -> None:
+        """Should transcribe audio block successfully."""
+        from app.models.audio_block import AudioBlock, AudioBlockStatus
+
+        ctx = {"job_id": "test-transcription-123"}
+
+        # Mock the audio block repository and database
+        mock_audio_block = MagicMock(spec=AudioBlock)
+        mock_audio_block.id = 123
+        mock_audio_block.audio_uri = "audio_blocks/test.webm"
+        mock_audio_block.duration = 30.5
+        mock_audio_block.status = AudioBlockStatus.READY
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_audio_block)
+        mock_repo.set_status = AsyncMock(return_value=mock_audio_block)
+        mock_repo.update_transcription = AsyncMock(return_value=mock_audio_block)
+
+        with patch("app.repositories.audio_block_repo.AudioBlockRepository", return_value=mock_repo):
+            result = await transcription_job(ctx, audio_block_id=123)
+
+        assert result.success is True
+        assert result.data is not None
+        assert result.data["audio_block_id"] == 123
+        assert result.data["status"] == "transcribed"
+        assert "transcription" in result.data
+        assert "job_id" in result.data
+
+    async def test_transcription_job_audio_block_not_found(self) -> None:
+        """Should return error when audio block not found."""
+        ctx = {"job_id": "test-transcription-404"}
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=None)
+
+        with patch("app.repositories.audio_block_repo.AudioBlockRepository", return_value=mock_repo):
+            result = await transcription_job(ctx, audio_block_id=999)
+
+        assert result.success is False
+        assert result.error is not None
+        assert "not found" in result.error.lower()
+
+    async def test_transcription_job_handles_cancellation(self) -> None:
+        """Should handle job cancellation gracefully."""
+        from app.jobs.worker import JobCancelledError
+
+        ctx = {"job_id": "test-transcription-cancel"}
+
+        mock_audio_block = MagicMock()
+        mock_audio_block.id = 123
+        mock_audio_block.audio_uri = "audio_blocks/test.webm"
+        mock_audio_block.duration = 30.0
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_audio_block)
+        mock_repo.set_status = AsyncMock(return_value=mock_audio_block)
+
+        with patch(
+            "app.jobs.worker.check_job_cancelled",
+            side_effect=JobCancelledError("Job was cancelled"),
+        ), patch("app.repositories.audio_block_repo.AudioBlockRepository", return_value=mock_repo):
+            result = await transcription_job(ctx, audio_block_id=123)
+
+        assert result.success is False
+        assert result.error == "Job was cancelled"
+        assert result.metadata.get("cancelled") is True
+
+    async def test_transcription_job_updates_status(self) -> None:
+        """Should update audio block status through transcription process."""
+        from app.models.audio_block import AudioBlock, AudioBlockStatus
+
+        ctx = {"job_id": "test-transcription-status"}
+        status_updates = []
+
+        mock_audio_block = MagicMock(spec=AudioBlock)
+        mock_audio_block.id = 123
+        mock_audio_block.audio_uri = "audio_blocks/test.webm"
+        mock_audio_block.duration = 30.5
+        mock_audio_block.status = AudioBlockStatus.READY
+
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=mock_audio_block)
+
+        async def mock_set_status(block_id: int, status: AudioBlockStatus, **kwargs):
+            status_updates.append(status)
+            return mock_audio_block
+
+        mock_repo.set_status = mock_set_status
+        mock_repo.update_transcription = AsyncMock(return_value=mock_audio_block)
+
+        with patch("app.repositories.audio_block_repo.AudioBlockRepository", return_value=mock_repo):
+            result = await transcription_job(ctx, audio_block_id=123)
+
+        assert result.success is True
+        # Should have set status to TRANSCRIBING at least once
+        assert AudioBlockStatus.TRANSCRIBING in status_updates

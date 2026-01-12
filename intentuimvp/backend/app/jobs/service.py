@@ -48,6 +48,7 @@ from app.jobs.client import (
     enqueue_job,
     enqueue_perspective_gather,
     enqueue_synthesis,
+    enqueue_transcription,
     retry_job,
 )
 from app.jobs.client import (
@@ -255,6 +256,37 @@ class JobService:
         """
         job_id = await enqueue_export(workspace_id, export_format, user_id)
         logger.info(f"JobService: Enqueued export job {job_id}")
+        return job_id
+
+    async def enqueue_transcription(
+        self,
+        audio_block_id: int,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> str:
+        """Enqueue a transcription job.
+
+        Transcribes audio content from an audio block.
+
+        Args:
+            audio_block_id: Audio block to transcribe
+            user_id: Optional user ID
+            workspace_id: Optional workspace ID
+
+        Returns:
+            Job ID
+
+        Example:
+            ```python
+            service = JobService()
+            job_id = await service.enqueue_transcription(
+                audio_block_id=123,
+                user_id="user-123"
+            )
+            ```
+        """
+        job_id = await enqueue_transcription(audio_block_id, user_id, workspace_id)
+        logger.info(f"JobService: Enqueued transcription job {job_id}")
         return job_id
 
     async def get_job(self, job_id: str):

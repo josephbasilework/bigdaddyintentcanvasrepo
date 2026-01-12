@@ -18,6 +18,7 @@ from app.jobs.worker import (
     export_job,
     perspective_gather_job,
     synthesis_job,
+    transcription_job,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ JOB_FUNCTIONS = {
     JobType.PERSPECTIVE_GATHER: perspective_gather_job.__name__,
     JobType.SYNTHESIS: synthesis_job.__name__,
     JobType.EXPORT: export_job.__name__,
+    JobType.TRANSCRIPTION: transcription_job.__name__,
 }
 
 
@@ -179,6 +181,29 @@ async def enqueue_export(
     return await enqueue_job(
         JobType.EXPORT,
         {"workspace_id": workspace_id, "export_format": export_format},
+        user_id=user_id,
+        workspace_id=workspace_id,
+    )
+
+
+async def enqueue_transcription(
+    audio_block_id: int,
+    user_id: str | None = None,
+    workspace_id: str | None = None,
+) -> str:
+    """Enqueue a transcription job.
+
+    Args:
+        audio_block_id: Audio block to transcribe
+        user_id: Optional user ID
+        workspace_id: Optional workspace ID
+
+    Returns:
+        Job ID
+    """
+    return await enqueue_job(
+        JobType.TRANSCRIPTION,
+        {"audio_block_id": audio_block_id},
         user_id=user_id,
         workspace_id=workspace_id,
     )
