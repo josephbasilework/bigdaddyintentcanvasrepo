@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.agents.intent_decipherer import IntentClassification, IntentDecipheringResult
+from app.agents.safety import get_safety
 from app.api.context import get_decipherer
 from app.api.context import router as context_router
 from app.context.router import ContextRouter
@@ -337,3 +338,31 @@ class TestAssumptionEndpoints:
             db.close()
         assert record.action == "reject"
         assert "Need a specific date range" in record.final_text
+
+    def test_resolve_assumption_logs_audit_event(
+        self,
+        assumptions_client: testclient.TestClient,
+    ) -> None:
+        safety = get_safety()
+        safety._audit_log.clear()
+
+        response = assumptions_client.post(
+            "/api/context/assumptions/resolve",
+            json={
+                "assumption_id": "assumption-audit",
+                "action": "accept",
+                "original_text": "Assume default workspace",
+                "category": "context",
+                "session_id": "session-audit",
+            },
+        )
+
+        assert response.status_code == 200
+        assert len(safety._audit_log) == 1
+        event = safety._audit_log[0]
+        assert event.action_type == "approval"
+        assert event.allowed is True
+        assert event.metadata["assumption_id"] == "assumption-audit"
+        assert event.metadata["session_id"] == "session-audit"
+        assert event.metadata["action"] == "accept"
+        assert event.metadata["category"] == "context"

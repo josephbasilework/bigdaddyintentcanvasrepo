@@ -733,6 +733,40 @@ class SafetyGuardrails:
             warnings=[f"Detected: {', '.join(detected)}"] if detected else [],
         )
 
+    def log_approval_event(
+        self,
+        session_id: str,
+        assumption_id: str,
+        action: str,
+        category: str,
+        original_text: str,
+        final_text: str,
+        feedback: str | None = None,
+        source: str = "assumption_store",
+    ) -> None:
+        """Log a HITL approval decision to the audit log."""
+        metadata = {
+            "session_id": session_id,
+            "assumption_id": assumption_id,
+            "action": action,
+            "category": category,
+            "source": source,
+            "edited": action == "edit",
+            "has_feedback": bool(feedback),
+            "original_text_length": len(original_text),
+            "final_text_length": len(final_text),
+        }
+        event = SecurityEvent(
+            timestamp=datetime.now(),
+            agent_name="hitl",
+            action_type="approval",
+            risk_level=ActionRiskLevel.MEDIUM_RISK,
+            allowed=action != "reject",
+            reason=f"HITL approval {action}",
+            metadata=metadata,
+        )
+        self._log_event(event)
+
     def _log_event(self, event: SecurityEvent) -> None:
         """Log a security event to the audit log.
 

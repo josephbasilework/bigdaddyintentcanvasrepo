@@ -10,6 +10,8 @@ import time
 import uuid
 from typing import Any
 
+from app.agents.safety import get_safety
+
 logger = logging.getLogger(__name__)
 
 
@@ -133,6 +135,20 @@ class AssumptionStore:
         logger.info(
             f"Resolved assumption {assumption_id} in session {session_id}: {action}"
         )
+        try:
+            get_safety().log_approval_event(
+                session_id=session_id,
+                assumption_id=assumption_id,
+                action=action,
+                category=category,
+                original_text=original_text,
+                final_text=final_text,
+                feedback=feedback,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to log approval audit event", exc_info=True
+            )
         self._update_completion(session_id)
 
         return resolution
