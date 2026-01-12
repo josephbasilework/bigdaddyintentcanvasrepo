@@ -144,6 +144,32 @@ class GoogleCalendarMCP:
                             "required": ["event_id"],
                         },
                     },
+                    {
+                        "name": "calendar_query",
+                        "description": "Query/search events from Google Calendar by text search",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "calendar_id": {
+                                    "type": "string",
+                                    "description": "Calendar ID (default: primary)",
+                                },
+                                "query": {
+                                    "type": "string",
+                                    "description": "Search query text to match against event titles and descriptions",
+                                },
+                                "time_min": {
+                                    "type": "string",
+                                    "description": "Start time in ISO format",
+                                },
+                                "time_max": {
+                                    "type": "string",
+                                    "description": "End time in ISO format",
+                                },
+                            },
+                            "required": ["query"],
+                        },
+                    },
                 ]
             },
             security_rules={
@@ -190,6 +216,46 @@ class GoogleCalendarMCP:
         return {
             "success": True,
             "events": [],
+            "message": "Google Calendar integration ready - awaiting MCP server connection",
+        }
+
+    async def query_events(
+        self,
+        query: str,
+        calendar_id: str = "primary",
+        time_min: str | None = None,
+        time_max: str | None = None,
+    ) -> dict[str, Any]:
+        """Query/search events from Google Calendar by text search.
+
+        Args:
+            query: Search query text to match against event titles and descriptions
+            calendar_id: Calendar ID (default: 'primary')
+            time_min: Start time in ISO format (optional)
+            time_max: End time in ISO format (optional)
+
+        Returns:
+            Dict with matching events list or error
+        """
+        # Use MCP client to call the tool
+        client = await self._manager.get_registry()
+        server = await client.get_server("google-calendar")
+
+        if not server or not server.enabled:
+            return {"success": False, "error": "Google Calendar server not enabled"}
+
+        # Set default time range if not provided
+        if not time_min:
+            time_min = datetime.utcnow().isoformat() + "Z"
+        if not time_max:
+            time_max = (datetime.utcnow() + timedelta(days=30)).isoformat() + "Z"
+
+        # This would call the actual MCP calendar_query tool
+        # For now, return a placeholder
+        return {
+            "success": True,
+            "events": [],
+            "query": query,
             "message": "Google Calendar integration ready - awaiting MCP server connection",
         }
 
@@ -314,6 +380,61 @@ class GoogleCalendarDirect:
 
             return {
                 "success": True,
+                "events": [
+                    {
+                        "id": event["id"],
+                        "summary": event.get("summary", "No title"),
+                        "start": event.get("start", {}).get("dateTime", event.get("start", {}).get("date")),
+                        "end": event.get("end", {}).get("dateTime", event.get("end", {}).get("date")),
+                        "description": event.get("description", ""),
+                    }
+                    for event in events
+                ],
+            }
+
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def query_events(
+        self,
+        query: str,
+        calendar_id: str = "primary",
+        days_ahead: int = 30,
+    ) -> dict[str, Any]:
+        """Query/search events from Google Calendar by text search.
+
+        Args:
+            query: Search query text to match against event titles and descriptions
+            calendar_id: Calendar ID (default: 'primary')
+            days_ahead: Number of days ahead to search (default: 30)
+
+        Returns:
+            Dict with matching events list or error
+        """
+        try:
+            await self._ensure_authenticated()
+
+            time_min = datetime.utcnow().isoformat() + "Z"
+            time_max = (datetime.utcnow() + timedelta(days=days_ahead)).isoformat() + "Z"
+
+            events_result = (
+                self._service.events()
+                .list(
+                    calendarId=calendar_id,
+                    timeMin=time_min,
+                    timeMax=time_max,
+                    q=query,
+                    singleEvents=True,
+                    orderBy="startTime",
+                )
+                .execute()
+            )
+
+            events = events_result.get("items", [])
+
+            return {
+                "success": True,
+                "query": query,
                 "events": [
                     {
                         "id": event["id"],

@@ -187,6 +187,7 @@ class TestGoogleCalendarMCPRegistration:
         # Verify specific expected tools are present
         assert "calendar_list" in registered_tools
         assert "calendar_read" in registered_tools
+        assert "calendar_query" in registered_tools
         assert "calendar_create" in registered_tools
         assert "calendar_update" in registered_tools
 
@@ -485,3 +486,157 @@ class TestFR020Compliance:
 
         # Should return success (even if placeholder)
         assert result["success"] is True
+
+
+@pytest.mark.asyncio
+class TestCalendarQuery:
+    """Tests for calendar_query tool functionality."""
+
+    async def test_calendar_query_tool_registered(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that calendar_query tool is registered with correct schema."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        registry = MCPServerRegistry(db_session)
+        server = await registry.get_server("google-calendar")
+
+        assert server is not None
+
+        tools_by_name = {
+            tool["name"]: tool for tool in server.capabilities.get("tools", [])
+        }
+
+        # Verify calendar_query tool exists
+        calendar_query = tools_by_name.get("calendar_query")
+        assert calendar_query is not None
+        assert "Query/search events" in calendar_query["description"]
+
+        # Verify input schema
+        schema = calendar_query["inputSchema"]
+        assert "properties" in schema
+        assert "query" in schema["properties"]
+        assert "calendar_id" in schema["properties"]
+        assert "time_min" in schema["properties"]
+        assert "time_max" in schema["properties"]
+
+        # Verify required parameters
+        assert "required" in schema
+        assert "query" in schema["required"]
+
+    async def test_calendar_query_security_level_is_allowed(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that calendar_query has ALLOWED security level (read operation)."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        registry = MCPServerRegistry(db_session)
+        server = await registry.get_server("google-calendar")
+
+        assert server is not None
+        assert server.security_rules.get("calendar_query") == SecurityLevel.ALLOWED.value
+
+    async def test_query_events_method_exists(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that query_events method exists on GoogleCalendarMCP."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        # Verify the method exists
+        assert hasattr(calendar_mcp, "query_events")
+
+    async def test_query_events_returns_error_when_not_configured(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test query_events returns error when server is not configured."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        result = await calendar_mcp.query_events(query="meeting")
+
+        # Server is not registered/enabled, so should return error
+        assert result["success"] is False
+        assert "error" in result
+
+    async def test_query_events_returns_placeholder_when_server_registered(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test query_events returns placeholder when server is registered but not connected."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        # Register the server first
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        result = await calendar_mcp.query_events(query="team meeting")
+
+        # Server is registered but not connected to MCP server
+        assert result["success"] is True
+        assert "events" in result
+        assert result["query"] == "team meeting"
+        assert "Google Calendar integration ready" in result["message"]
+
+    async def test_query_events_with_custom_time_range(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test query_events accepts custom time range parameters."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        result = await calendar_mcp.query_events(
+            query="standup",
+            time_min="2026-01-01T00:00:00Z",
+            time_max="2026-01-31T23:59:59Z",
+        )
+
+        assert result["success"] is True
+        assert result["query"] == "standup"
+
+    async def test_google_calendar_direct_query_events_method_exists(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test that query_events method exists on GoogleCalendarDirect."""
+        credentials_dict = {
+            "token": "test_access_token",
+            "refresh_token": "test_refresh_token",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": "test_client_id",
+            "client_secret": "test_client_secret",
+        }
+
+        with patch("app.mcp.calendar.google.oauth2.credentials.Credentials"):
+            calendar_direct = GoogleCalendarDirect(credentials_dict)
+            assert hasattr(calendar_direct, "query_events")
+
+    async def test_google_calendar_direct_query_events_without_auth_fails_gracefully(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test GoogleCalendarDirect query_events fails gracefully without valid credentials."""
+        credentials_dict = {
+            "token": "invalid_token",
+            "refresh_token": "invalid_refresh",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "client_id": "invalid_client",
+            "client_secret": "invalid_secret",
+        }
+
+        with patch("app.mcp.calendar.google.oauth2.credentials.Credentials"):
+            calendar_direct = GoogleCalendarDirect(credentials_dict)
+
+            # Mock failed authentication
+            with patch.object(calendar_direct, "_ensure_authenticated", side_effect=Exception("Auth failed")):
+                result = await calendar_direct.query_events(query="meeting")
+
+                assert result["success"] is False
+                assert "error" in result

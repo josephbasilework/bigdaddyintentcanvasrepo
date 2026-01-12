@@ -275,6 +275,7 @@ DEFAULT_SECURITY_RULES: dict[str, dict[str, SecurityLevel]] = {
     "google-calendar": {
         "calendar_list": SecurityLevel.ALLOWED,
         "calendar_read": SecurityLevel.ALLOWED,
+        "calendar_query": SecurityLevel.ALLOWED,
         "calendar_create": SecurityLevel.REQUIRES_CONFIRM,
         "calendar_update": SecurityLevel.REQUIRES_CONFIRM,
         "calendar_delete": SecurityLevel.BLOCKED,
