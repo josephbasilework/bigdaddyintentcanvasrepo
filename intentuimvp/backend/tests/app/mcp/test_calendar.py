@@ -330,10 +330,10 @@ class TestGoogleCalendarMCPOperations:
         assert "events" in result
         assert "Google Calendar integration ready" in result["message"]
 
-    async def test_create_event_returns_placeholder(
+    async def test_create_event_requires_confirmation_without_user_confirmed(
         self, db_session: AsyncSession
     ) -> None:
-        """Test create_event returns placeholder when server is not connected."""
+        """Test create_event requires confirmation when user_confirmed=False."""
         calendar_mcp = GoogleCalendarMCP(db_session)
 
         # Register the server first
@@ -341,14 +341,29 @@ class TestGoogleCalendarMCPOperations:
             token_json=json.dumps({"token": "test", "refresh_token": "test"})
         )
 
-        result = await calendar_mcp.create_event(
-            summary="Test Event",
-            start="2026-01-13T10:00:00Z",
-            end="2026-01-13T11:00:00Z",
-        )
+        # Mock the execute_tool to simulate REQUIRES_CONFIRM behavior
+        from app.mcp.manager import ToolExecutionResult
+        with patch.object(
+            calendar_mcp._manager,
+            "execute_tool",
+            return_value=ToolExecutionResult(
+                success=False,
+                error="User confirmation required",
+                required_confirmation=True,
+            )
+        ):
+            result = await calendar_mcp.create_event(
+                summary="Test Event",
+                start="2026-01-13T10:00:00Z",
+                end="2026-01-13T11:00:00Z",
+                user_confirmed=False,
+            )
 
-        assert result["success"] is True
-        assert "Google Calendar integration ready" in result["message"]
+            assert result["success"] is False
+            assert result.get("requires_confirmation") is True
+            assert "pending_action" in result
+            assert result["pending_action"]["summary"] == "Test Event"
+            assert "confirmation required" in result["message"].lower()
 
     async def test_sync_with_task_dag_returns_placeholder(
         self, db_session: AsyncSession
@@ -640,3 +655,360 @@ class TestCalendarQuery:
 
                 assert result["success"] is False
                 assert "error" in result
+
+
+@pytest.mark.asyncio
+class TestCalendarCreateTool:
+    """Tests for calendar_create tool implementation (T3-F6.2)."""
+
+    async def test_create_event_server_not_registered(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test create_event returns error when server is not registered."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        result = await calendar_mcp.create_event(
+            summary="Test Event",
+            start="2026-01-13T10:00:00Z",
+            end="2026-01-13T11:00:00Z",
+        )
+
+        assert result["success"] is False
+        assert "not registered" in result["error"]
+
+    async def test_create_event_server_disabled(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test create_event returns error when server is disabled."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        # Register and then disable the server
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        # Disable the server
+        registry = MCPServerRegistry(db_session)
+        await registry.disable_server("google-calendar")
+
+        result = await calendar_mcp.create_event(
+            summary="Test Event",
+            start="2026-01-13T10:00:00Z",
+            end="2026-01-13T11:00:00Z",
+        )
+
+        assert result["success"] is False
+        assert "disabled" in result["error"]
+
+    async def test_create_event_with_user_confirmed_calls_mcp(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test create_event with user_confirmed=True executes the MCP tool."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        from app.mcp.manager import ToolExecutionResult
+
+        # Mock successful execution
+        mock_result = ToolExecutionResult(
+            success=True,
+            result=[{
+                "type": "text",
+                "text": '{"id": "event123", "summary": "Test Event", "start": "2026-01-13T10:00:00Z", "end": "2026-01-13T11:00:00Z"}'
+            }],
+            required_confirmation=True,
+        )
+
+        with patch.object(calendar_mcp._manager, "execute_tool", return_value=mock_result) as mock_execute:
+            result = await calendar_mcp.create_event(
+                summary="Test Event",
+                start="2026-01-13T10:00:00Z",
+                end="2026-01-13T11:00:00Z",
+                description="A test event",
+                user_confirmed=True,
+                initiated_by="test_user",
+            )
+
+            # Verify execute_tool was called with correct arguments
+            mock_execute.assert_called_once()
+            call_args = mock_execute.call_args
+            assert call_args.kwargs["server_id"] == "google-calendar"
+            assert call_args.kwargs["tool_name"] == "calendar_create"
+            assert call_args.kwargs["user_confirmed"] is True
+            assert call_args.kwargs["initiated_by"] == "test_user"
+            assert call_args.kwargs["arguments"]["summary"] == "Test Event"
+            assert call_args.kwargs["arguments"]["description"] == "A test event"
+
+            # Verify successful result
+            assert result["success"] is True
+            assert result["event"]["id"] == "event123"
+            assert "successfully" in result["message"].lower()
+
+    async def test_create_event_handles_degraded_mode(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test create_event handles server degraded mode (FR-019)."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        from app.mcp.manager import ToolExecutionResult
+
+        # Mock degraded execution
+        mock_result = ToolExecutionResult(
+            success=False,
+            error="Server google-calendar is degraded",
+            degraded=True,
+            degraded_reason="MCP server is in degraded state after 3 consecutive failures",
+        )
+
+        with patch.object(calendar_mcp._manager, "execute_tool", return_value=mock_result):
+            result = await calendar_mcp.create_event(
+                summary="Test Event",
+                start="2026-01-13T10:00:00Z",
+                end="2026-01-13T11:00:00Z",
+                user_confirmed=True,
+            )
+
+            assert result["success"] is False
+            assert result.get("degraded") is True
+            assert "degraded_reason" in result
+
+    async def test_create_event_handles_execution_error(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test create_event handles MCP tool execution errors."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        from app.mcp.manager import ToolExecutionResult
+
+        # Mock failed execution
+        mock_result = ToolExecutionResult(
+            success=False,
+            error="Calendar API rate limit exceeded",
+        )
+
+        with patch.object(calendar_mcp._manager, "execute_tool", return_value=mock_result):
+            result = await calendar_mcp.create_event(
+                summary="Test Event",
+                start="2026-01-13T10:00:00Z",
+                end="2026-01-13T11:00:00Z",
+                user_confirmed=True,
+            )
+
+            assert result["success"] is False
+            assert "rate limit" in result["error"].lower()
+
+    async def test_create_event_builds_correct_arguments(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test create_event builds correct tool arguments."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        from app.mcp.manager import ToolExecutionResult
+
+        mock_result = ToolExecutionResult(success=True, result=[], required_confirmation=True)
+
+        with patch.object(calendar_mcp._manager, "execute_tool", return_value=mock_result) as mock_execute:
+            await calendar_mcp.create_event(
+                summary="Team Meeting",
+                start="2026-01-15T09:00:00Z",
+                end="2026-01-15T10:00:00Z",
+                description="Weekly standup",
+                calendar_id="work@example.com",
+                user_confirmed=True,
+            )
+
+            call_args = mock_execute.call_args.kwargs
+            args = call_args["arguments"]
+
+            assert args["summary"] == "Team Meeting"
+            assert args["start"] == "2026-01-15T09:00:00Z"
+            assert args["end"] == "2026-01-15T10:00:00Z"
+            assert args["description"] == "Weekly standup"
+            assert args["calendar_id"] == "work@example.com"
+
+    async def test_create_event_omits_description_when_none(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test create_event omits description from arguments when not provided."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        from app.mcp.manager import ToolExecutionResult
+
+        mock_result = ToolExecutionResult(success=True, result=[], required_confirmation=True)
+
+        with patch.object(calendar_mcp._manager, "execute_tool", return_value=mock_result) as mock_execute:
+            await calendar_mcp.create_event(
+                summary="Quick Sync",
+                start="2026-01-15T09:00:00Z",
+                end="2026-01-15T09:30:00Z",
+                user_confirmed=True,
+            )
+
+            args = mock_execute.call_args.kwargs["arguments"]
+            assert "description" not in args
+
+    async def test_create_event_pending_action_includes_all_fields(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test pending_action in response includes all fields for frontend replay."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        from app.mcp.manager import ToolExecutionResult
+
+        mock_result = ToolExecutionResult(
+            success=False,
+            error="User confirmation required",
+            required_confirmation=True,
+        )
+
+        with patch.object(calendar_mcp._manager, "execute_tool", return_value=mock_result):
+            result = await calendar_mcp.create_event(
+                summary="Important Meeting",
+                start="2026-01-20T14:00:00Z",
+                end="2026-01-20T15:00:00Z",
+                description="Very important",
+                calendar_id="work@example.com",
+                user_confirmed=False,
+            )
+
+            pending = result["pending_action"]
+            assert pending["tool"] == "calendar_create"
+            assert pending["summary"] == "Important Meeting"
+            assert pending["start"] == "2026-01-20T14:00:00Z"
+            assert pending["end"] == "2026-01-20T15:00:00Z"
+            assert pending["description"] == "Very important"
+            assert pending["calendar_id"] == "work@example.com"
+
+    async def test_create_event_parses_dict_result(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test create_event parses dict result correctly."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        from app.mcp.manager import ToolExecutionResult
+
+        # Some MCP servers may return a dict directly
+        mock_result = ToolExecutionResult(
+            success=True,
+            result={"id": "direct_dict_event", "summary": "Dict Result"},
+            required_confirmation=True,
+        )
+
+        with patch.object(calendar_mcp._manager, "execute_tool", return_value=mock_result):
+            result = await calendar_mcp.create_event(
+                summary="Test",
+                start="2026-01-13T10:00:00Z",
+                end="2026-01-13T11:00:00Z",
+                user_confirmed=True,
+            )
+
+            assert result["success"] is True
+            assert result["event"]["id"] == "direct_dict_event"
+
+    async def test_create_event_handles_malformed_json_response(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test create_event handles malformed JSON in text response."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        from app.mcp.manager import ToolExecutionResult
+
+        # MCP server returns invalid JSON
+        mock_result = ToolExecutionResult(
+            success=True,
+            result=[{"type": "text", "text": "Event created: abc123"}],
+            required_confirmation=True,
+        )
+
+        with patch.object(calendar_mcp._manager, "execute_tool", return_value=mock_result):
+            result = await calendar_mcp.create_event(
+                summary="Test",
+                start="2026-01-13T10:00:00Z",
+                end="2026-01-13T11:00:00Z",
+                user_confirmed=True,
+            )
+
+            assert result["success"] is True
+            # Should preserve raw response when JSON parsing fails
+            assert "raw_response" in result["event"]
+            assert "Event created" in result["event"]["raw_response"]
+
+    async def test_create_event_uses_default_calendar_id(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test create_event uses 'primary' as default calendar_id."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        from app.mcp.manager import ToolExecutionResult
+
+        mock_result = ToolExecutionResult(success=True, result=[], required_confirmation=True)
+
+        with patch.object(calendar_mcp._manager, "execute_tool", return_value=mock_result) as mock_execute:
+            await calendar_mcp.create_event(
+                summary="Test",
+                start="2026-01-13T10:00:00Z",
+                end="2026-01-13T11:00:00Z",
+                user_confirmed=True,
+            )
+
+            args = mock_execute.call_args.kwargs["arguments"]
+            assert args["calendar_id"] == "primary"
+
+    async def test_create_event_uses_default_initiated_by(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test create_event uses 'agent' as default initiated_by."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        from app.mcp.manager import ToolExecutionResult
+
+        mock_result = ToolExecutionResult(success=True, result=[], required_confirmation=True)
+
+        with patch.object(calendar_mcp._manager, "execute_tool", return_value=mock_result) as mock_execute:
+            await calendar_mcp.create_event(
+                summary="Test",
+                start="2026-01-13T10:00:00Z",
+                end="2026-01-13T11:00:00Z",
+                user_confirmed=True,
+            )
+
+            assert mock_execute.call_args.kwargs["initiated_by"] == "agent"

@@ -266,8 +266,14 @@ class GoogleCalendarMCP:
         end: str,
         description: str | None = None,
         calendar_id: str = "primary",
+        user_confirmed: bool = False,
+        initiated_by: str = "agent",
     ) -> dict[str, Any]:
-        """Create a new calendar event.
+        """Create a new calendar event via MCP.
+
+        This is a write operation that requires user confirmation (REQUIRES_CONFIRM).
+        Per FR-020: Given user requests calendar update, When processed, Then calendar
+        is modified via MCP (REQUIRES_CONFIRM).
 
         Args:
             summary: Event title
@@ -275,13 +281,99 @@ class GoogleCalendarMCP:
             end: End time in ISO format
             description: Optional event description
             calendar_id: Calendar ID (default: 'primary')
+            user_confirmed: Whether user has confirmed this write operation
+            initiated_by: Agent or user ID that initiated this call
 
         Returns:
-            Dict with created event or error
+            Dict with created event or error. If confirmation is required,
+            returns requires_confirmation=True with the pending action details.
         """
+        # Validate server is registered and enabled
+        server = await self._registry.get_server("google-calendar")
+        if not server:
+            return {
+                "success": False,
+                "error": "Google Calendar server not registered",
+            }
+        if not server.enabled:
+            return {
+                "success": False,
+                "error": "Google Calendar server is disabled",
+            }
+
+        # Build arguments for the calendar_create tool
+        arguments: dict[str, Any] = {
+            "calendar_id": calendar_id,
+            "summary": summary,
+            "start": start,
+            "end": end,
+        }
+        if description:
+            arguments["description"] = description
+
+        # Execute the tool through the MCP manager
+        result = await self._manager.execute_tool(
+            server_id="google-calendar",
+            tool_name="calendar_create",
+            arguments=arguments,
+            initiated_by=initiated_by,
+            user_confirmed=user_confirmed,
+        )
+
+        # Handle confirmation requirement (FR-020 HITL gate)
+        if result.required_confirmation and not result.success:
+            return {
+                "success": False,
+                "requires_confirmation": True,
+                "pending_action": {
+                    "tool": "calendar_create",
+                    "summary": summary,
+                    "start": start,
+                    "end": end,
+                    "description": description,
+                    "calendar_id": calendar_id,
+                },
+                "message": "User confirmation required to create calendar event",
+            }
+
+        # Handle degraded mode (FR-019 graceful degradation)
+        if result.degraded:
+            return {
+                "success": False,
+                "degraded": True,
+                "error": result.error,
+                "degraded_reason": result.degraded_reason,
+            }
+
+        # Handle execution failure
+        if not result.success:
+            return {
+                "success": False,
+                "error": result.error,
+            }
+
+        # Parse the successful result
+        event_data: dict[str, Any] = {}
+        if result.result:
+            # MCP tool results come as a list of content items
+            if isinstance(result.result, list):
+                for item in result.result:
+                    if isinstance(item, dict):
+                        # Extract text content which may contain the event data
+                        if item.get("type") == "text" and item.get("text"):
+                            try:
+                                event_data = json.loads(item["text"])
+                            except (json.JSONDecodeError, TypeError):
+                                event_data = {"raw_response": item["text"]}
+                        elif "text" in item:
+                            event_data = {"raw_response": item["text"]}
+            elif isinstance(result.result, dict):
+                event_data = result.result
+
         return {
             "success": True,
-            "message": "Google Calendar integration ready - awaiting MCP server connection",
+            "event": event_data,
+            "message": "Calendar event created successfully",
         }
 
     async def sync_with_task_dag(
