@@ -17,6 +17,7 @@ from app.api.jobs import router as jobs_router
 from app.api.mcp import router as mcp_router
 from app.api.nodes import router as nodes_router
 from app.api.preferences import router as preferences_router
+from app.api.runs import router as runs_router
 from app.api.workspace import router as workspace_router
 from app.config import get_settings
 from app.database import SessionLocal
@@ -145,6 +146,7 @@ def create_app() -> FastAPI:
     # API routers
     app.include_router(health_router, tags=["health"])
     app.include_router(ws_router, tags=["websocket"])
+    app.include_router(runs_router, tags=["runs"])
     app.include_router(context_router, tags=["context"])
     app.include_router(workspace_router, tags=["workspace"])
     app.include_router(nodes_router, tags=["nodes"])

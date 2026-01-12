@@ -173,6 +173,112 @@ class AgentNotificationMessage(AgentToUIMessage):
 
     type: Literal["notification"] = "notification"
     payload: AgentNotificationPayload
+
+
+# ============================================================================
+# Run Lifecycle Messages
+# ============================================================================
+
+
+class RunStartPayload(BaseModel):
+    """Payload for run.start events.
+
+    Sent when an agent run begins, containing the run context and metadata.
+    """
+
+    run_id: str = Field(..., description="Unique run identifier")
+    agent_id: str = Field(..., description="Agent identifier")
+    agent_name: str = Field(..., description="Human-readable agent name")
+    input_data: dict[str, Any] = Field(
+        ..., description="Input data for the run (messages, context, etc.)"
+    )
+    tools: list[str] = Field(
+        default_factory=list, description="List of available tools for this run"
+    )
+
+
+class RunStartMessage(AgentToUIMessage):
+    """Message sent when an agent run starts."""
+
+    type: Literal["run.start"] = "run.start"
+    payload: RunStartPayload
+
+
+class RunEndPayload(BaseModel):
+    """Payload for run.end events.
+
+    Sent when an agent run completes (success or failure).
+    """
+
+    run_id: str = Field(..., description="Unique run identifier")
+    agent_id: str = Field(..., description="Agent identifier")
+    status: Literal["success", "error", "cancelled"] = Field(
+        ..., description="Final run status"
+    )
+    result: dict[str, Any] | None = Field(
+        default=None, description="Run result data (on success)"
+    )
+    error: str | None = Field(default=None, description="Error message (on failure)")
+    duration_ms: float | None = Field(
+        default=None, description="Run duration in milliseconds"
+    )
+
+
+class RunEndMessage(AgentToUIMessage):
+    """Message sent when an agent run ends."""
+
+    type: Literal["run.end"] = "run.end"
+    payload: RunEndPayload
+
+
+class ToolCallPayload(BaseModel):
+    """Payload for tool.call events.
+
+    Sent when an agent calls a tool during execution.
+    """
+
+    run_id: str = Field(..., description="Unique run identifier")
+    tool_name: str = Field(..., description="Name of the tool being called")
+    tool_args: dict[str, Any] = Field(
+        ..., description="Arguments passed to the tool"
+    )
+    call_id: str = Field(
+        default_factory=lambda: f"call-{datetime.now().timestamp()}-{uuid4().hex[:8]}",
+        description="Unique tool call identifier",
+    )
+
+
+class ToolCallMessage(AgentToUIMessage):
+    """Message sent when an agent calls a tool."""
+
+    type: Literal["tool.call"] = "tool.call"
+    payload: ToolCallPayload
+
+
+class ToolResultPayload(BaseModel):
+    """Payload for tool.result events.
+
+    Sent when a tool call completes (success or failure).
+    """
+
+    run_id: str = Field(..., description="Unique run identifier")
+    call_id: str = Field(..., description="Tool call identifier")
+    tool_name: str = Field(..., description="Name of the tool that was called")
+    success: bool = Field(..., description="Whether the tool call succeeded")
+    result: Any = Field(default=None, description="Tool result (on success)")
+    error: str | None = Field(default=None, description="Error message (on failure)")
+    duration_ms: float | None = Field(
+        default=None, description="Tool execution duration in milliseconds"
+    )
+
+
+class ToolResultMessage(AgentToUIMessage):
+    """Message sent when a tool call completes."""
+
+    type: Literal["tool.result"] = "tool.result"
+    payload: ToolResultPayload
+
+
 # ============================================================================
 # State Sync Protocol
 # ============================================================================
@@ -293,6 +399,10 @@ AgentToUIMessageType = (
     | AgentErrorMessage
     | AgentRequestMessage
     | AgentNotificationMessage
+    | RunStartMessage
+    | RunEndMessage
+    | ToolCallMessage
+    | ToolResultMessage
     | StateUpdateMessage
     | StateSnapshotMessage
 )
