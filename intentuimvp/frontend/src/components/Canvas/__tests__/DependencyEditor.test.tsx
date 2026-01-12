@@ -101,6 +101,32 @@ describe("DependencyEditor", () => {
     );
   });
 
+  it("adds a new dependency with a custom label", () => {
+    const store = createMockStore();
+    mockUseCanvasStore.mockReturnValue(store);
+
+    const onClose = vi.fn();
+    render(<DependencyEditor nodeId="node-1" onClose={onClose} />);
+
+    const select = screen.getByRole("combobox", { name: /add dependency/i });
+    fireEvent.change(select, { target: { value: "node-2" } });
+
+    const labelInput = screen.getByPlaceholderText(/label \(optional\)/i);
+    fireEvent.change(labelInput, { target: { value: "Blocks" } });
+
+    const addButton = screen.getByRole("button", { name: /^add$/i });
+    fireEvent.click(addButton);
+
+    expect(store.addEdge).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceNodeId: "node-1",
+        targetNodeId: "node-2",
+        relationType: "depends_on",
+        label: "Blocks",
+      })
+    );
+  });
+
   it("displays outgoing dependencies", () => {
     const edges: CanvasEdge[] = [
       { id: "edge-1", sourceNodeId: "node-1", targetNodeId: "node-2", relationType: "depends_on" },
@@ -146,6 +172,29 @@ describe("DependencyEditor", () => {
     expect(store.removeEdge).toHaveBeenCalledWith("edge-1");
   });
 
+  it("updates edge label when edited", () => {
+    const edges: CanvasEdge[] = [
+      {
+        id: "edge-1",
+        sourceNodeId: "node-1",
+        targetNodeId: "node-2",
+        relationType: "depends_on",
+        label: "Depends on",
+      },
+    ];
+    const store = createMockStore({ edges });
+    mockUseCanvasStore.mockReturnValue(store);
+
+    const onClose = vi.fn();
+    render(<DependencyEditor nodeId="node-1" onClose={onClose} />);
+
+    const labelInput = screen.getByLabelText(/dependency label to node 2/i);
+    fireEvent.change(labelInput, { target: { value: "Custom label" } });
+    fireEvent.blur(labelInput);
+
+    expect(store.updateEdge).toHaveBeenCalledWith("edge-1", { label: "Custom label" });
+  });
+
   it("updates edge relation type when changed", () => {
     const edges: CanvasEdge[] = [
       { id: "edge-1", sourceNodeId: "node-1", targetNodeId: "node-2", relationType: "depends_on" },
@@ -166,6 +215,66 @@ describe("DependencyEditor", () => {
     expect(store.updateEdge).toHaveBeenCalledWith("edge-1", expect.objectContaining({
       relationType: "supports",
     }));
+  });
+
+  it("keeps custom labels when changing relation type", () => {
+    const edges: CanvasEdge[] = [
+      {
+        id: "edge-1",
+        sourceNodeId: "node-1",
+        targetNodeId: "node-2",
+        relationType: "depends_on",
+        label: "Custom label",
+      },
+    ];
+    const store = createMockStore({ edges });
+    mockUseCanvasStore.mockReturnValue(store);
+
+    const onClose = vi.fn();
+    render(<DependencyEditor nodeId="node-1" onClose={onClose} />);
+
+    const relationSelects = screen.getAllByRole("combobox");
+    const edgeRelationSelect = relationSelects[relationSelects.length - 1];
+
+    fireEvent.change(edgeRelationSelect, { target: { value: "supports" } });
+
+    expect(store.updateEdge).toHaveBeenCalledWith(
+      "edge-1",
+      expect.objectContaining({
+        relationType: "supports",
+        label: "Custom label",
+      })
+    );
+  });
+
+  it("updates to the new default label when relation type changes", () => {
+    const edges: CanvasEdge[] = [
+      {
+        id: "edge-1",
+        sourceNodeId: "node-1",
+        targetNodeId: "node-2",
+        relationType: "depends_on",
+        label: "Depends on",
+      },
+    ];
+    const store = createMockStore({ edges });
+    mockUseCanvasStore.mockReturnValue(store);
+
+    const onClose = vi.fn();
+    render(<DependencyEditor nodeId="node-1" onClose={onClose} />);
+
+    const relationSelects = screen.getAllByRole("combobox");
+    const edgeRelationSelect = relationSelects[relationSelects.length - 1];
+
+    fireEvent.change(edgeRelationSelect, { target: { value: "supports" } });
+
+    expect(store.updateEdge).toHaveBeenCalledWith(
+      "edge-1",
+      expect.objectContaining({
+        relationType: "supports",
+        label: "Supports",
+      })
+    );
   });
 
   it("closes when clicking the Done button", () => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useId, useMemo } from "react";
+import type { KeyboardEvent } from "react";
 import {
   useCanvasStore,
   CanvasEdge,
@@ -36,11 +37,13 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
   const [selectedTargetId, setSelectedTargetId] = useState<string>("");
   const [newRelationType, setNewRelationType] = useState<CanvasEdgeRelationType>("depends_on");
   const [newLabel, setNewLabel] = useState("");
+  const [edgeLabelDrafts, setEdgeLabelDrafts] = useState<Record<string, string>>({});
 
   const titleId = useId();
   const outgoingId = useId();
   const incomingId = useId();
   const addDependencyId = useId();
+  const addDependencyLabelId = useId();
 
   const currentNode = useMemo(
     () => nodes.find((n) => n.id === nodeId),
@@ -78,6 +81,61 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
     return nodes.filter((n) => !connectedIds.has(n.id));
   }, [nodes, nodeId, outgoingEdges]);
 
+  const getEdgeLabelValue = useCallback(
+    (edge: CanvasEdge) => edgeLabelDrafts[edge.id] ?? edge.label ?? "",
+    [edgeLabelDrafts]
+  );
+
+  const handleEdgeLabelChange = useCallback((edgeId: string, value: string) => {
+    setEdgeLabelDrafts((prev) => ({ ...prev, [edgeId]: value }));
+  }, []);
+
+  const clearEdgeLabelDraft = useCallback((edgeId: string) => {
+    setEdgeLabelDrafts((prev) => {
+      if (!(edgeId in prev)) return prev;
+      const next = { ...prev };
+      delete next[edgeId];
+      return next;
+    });
+  }, []);
+
+  const commitEdgeLabel = useCallback(
+    (edge: CanvasEdge) => {
+      const draft = edgeLabelDrafts[edge.id];
+      if (draft === undefined) return;
+
+      const trimmed = draft.trim();
+      const nextLabel = trimmed.length > 0 ? trimmed : undefined;
+
+      if (nextLabel === edge.label || (!nextLabel && !edge.label)) {
+        clearEdgeLabelDraft(edge.id);
+        return;
+      }
+
+      updateEdge(edge.id, { label: nextLabel });
+      clearEdgeLabelDraft(edge.id);
+    },
+    [clearEdgeLabelDraft, edgeLabelDrafts, updateEdge]
+  );
+
+  const handleEdgeLabelKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLInputElement>, edge: CanvasEdge) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitEdgeLabel(edge);
+        (event.target as HTMLInputElement).blur();
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        clearEdgeLabelDraft(edge.id);
+        (event.target as HTMLInputElement).blur();
+      }
+    },
+    [clearEdgeLabelDraft, commitEdgeLabel]
+  );
+
   const handleAddDependency = useCallback(() => {
     if (!selectedTargetId) return;
 
@@ -105,11 +163,28 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
     (edgeId: string, relationType: CanvasEdgeRelationType) => {
       const edge = edges.find((e) => e.id === edgeId);
       if (!edge) return;
-      // Update the edge with new relation type and auto-update label if not custom
-      const newLabelValue = getEdgeRelationLabel(relationType) || undefined;
-      updateEdge(edgeId, { relationType, label: newLabelValue });
+      const draftLabel = edgeLabelDrafts[edgeId];
+      const currentLabel = (draftLabel ?? edge.label ?? "").trim();
+      const currentDefault = getEdgeRelationLabel(edge.relationType) ?? "";
+      const isCustomLabel = currentLabel !== "" && currentLabel !== currentDefault;
+      const nextDefault = getEdgeRelationLabel(relationType) ?? "";
+      const nextLabel = isCustomLabel ? currentLabel : nextDefault;
+
+      updateEdge(edgeId, { relationType, label: nextLabel || undefined });
+
+      if (draftLabel !== undefined) {
+        setEdgeLabelDrafts((prev) => {
+          if (!(edgeId in prev)) return prev;
+          if (isCustomLabel) {
+            return { ...prev, [edgeId]: currentLabel };
+          }
+          const next = { ...prev };
+          delete next[edgeId];
+          return next;
+        });
+      }
     },
-    [edges, updateEdge]
+    [edgeLabelDrafts, edges, updateEdge]
   );
 
   const getRelationColor = (relationType?: CanvasEdgeRelationType) => {
@@ -225,6 +300,23 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
                 </option>
               ))}
             </select>
+            <input
+              id={addDependencyLabelId}
+              type="text"
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              placeholder="Label (optional)"
+              aria-label="Dependency label"
+              style={{
+                flex: "1 1 160px",
+                padding: "8px 12px",
+                backgroundColor: "#2d3748",
+                border: "1px solid #4a5568",
+                borderRadius: "4px",
+                color: "#fff",
+                fontSize: "13px",
+              }}
+            />
             <button
               type="button"
               onClick={handleAddDependency}
@@ -274,9 +366,10 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
                     backgroundColor: "#2d3748",
                     borderRadius: "4px",
                     borderLeft: `3px solid ${getRelationColor(edge.relationType)}`,
+                    flexWrap: "wrap",
                   }}
                 >
-                  <span style={{ color: "#e2e8f0", fontSize: "13px", flex: 1 }}>
+                  <span style={{ color: "#e2e8f0", fontSize: "13px", flex: "1 1 140px" }}>
                     {otherNode.title}
                   </span>
                   <select
@@ -284,6 +377,7 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
                     onChange={(e) =>
                       handleUpdateEdgeRelation(edge.id, e.target.value as CanvasEdgeRelationType)
                     }
+                    aria-label={`Relation to ${otherNode.title}`}
                     style={{
                       padding: "4px 8px",
                       backgroundColor: "#1a202c",
@@ -291,6 +385,7 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
                       borderRadius: "3px",
                       color: "#cbd5e0",
                       fontSize: "11px",
+                      flex: "0 0 140px",
                     }}
                   >
                     {EDGE_RELATION_OPTIONS.map((option) => (
@@ -299,6 +394,25 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
                       </option>
                     ))}
                   </select>
+                  <input
+                    type="text"
+                    value={getEdgeLabelValue(edge)}
+                    onChange={(e) => handleEdgeLabelChange(edge.id, e.target.value)}
+                    onBlur={() => commitEdgeLabel(edge)}
+                    onKeyDown={(event) => handleEdgeLabelKeyDown(event, edge)}
+                    placeholder={getEdgeRelationLabel(edge.relationType) ?? "Label"}
+                    aria-label={`Dependency label to ${otherNode.title}`}
+                    style={{
+                      padding: "4px 8px",
+                      backgroundColor: "#1a202c",
+                      border: "1px solid #4a5568",
+                      borderRadius: "3px",
+                      color: "#cbd5e0",
+                      fontSize: "11px",
+                      flex: "1 1 140px",
+                      minWidth: "140px",
+                    }}
+                  />
                   <button
                     type="button"
                     onClick={() => handleRemoveEdge(edge.id)}
@@ -350,24 +464,53 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
                     backgroundColor: "#2d3748",
                     borderRadius: "4px",
                     borderLeft: `3px solid ${getRelationColor(edge.relationType)}`,
+                    flexWrap: "wrap",
                   }}
                 >
-                  <span style={{ color: "#e2e8f0", fontSize: "13px", flex: 1 }}>
+                  <span style={{ color: "#e2e8f0", fontSize: "13px", flex: "1 1 140px" }}>
                     {otherNode.title}
                   </span>
-                  <span
+                  <select
+                    value={edge.relationType || "depends_on"}
+                    onChange={(e) =>
+                      handleUpdateEdgeRelation(edge.id, e.target.value as CanvasEdgeRelationType)
+                    }
+                    aria-label={`Relation from ${otherNode.title}`}
                     style={{
                       padding: "4px 8px",
-                      backgroundColor: `${getRelationColor(edge.relationType)}33`,
-                      color: getRelationColor(edge.relationType),
-                      fontSize: "10px",
+                      backgroundColor: "#1a202c",
+                      border: "1px solid #4a5568",
                       borderRadius: "3px",
-                      textTransform: "uppercase",
-                      fontWeight: 600,
+                      color: "#cbd5e0",
+                      fontSize: "11px",
+                      flex: "0 0 140px",
                     }}
                   >
-                    {getEdgeRelationLabel(edge.relationType) || "linked"}
-                  </span>
+                    {EDGE_RELATION_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    value={getEdgeLabelValue(edge)}
+                    onChange={(e) => handleEdgeLabelChange(edge.id, e.target.value)}
+                    onBlur={() => commitEdgeLabel(edge)}
+                    onKeyDown={(event) => handleEdgeLabelKeyDown(event, edge)}
+                    placeholder={getEdgeRelationLabel(edge.relationType) ?? "Label"}
+                    aria-label={`Dependency label from ${otherNode.title}`}
+                    style={{
+                      padding: "4px 8px",
+                      backgroundColor: "#1a202c",
+                      border: "1px solid #4a5568",
+                      borderRadius: "3px",
+                      color: "#cbd5e0",
+                      fontSize: "11px",
+                      flex: "1 1 140px",
+                      minWidth: "140px",
+                    }}
+                  />
                   <button
                     type="button"
                     onClick={() => handleRemoveEdge(edge.id)}
