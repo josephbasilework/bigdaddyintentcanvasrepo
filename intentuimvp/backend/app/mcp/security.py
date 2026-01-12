@@ -2,6 +2,11 @@
 
 Provides security validation for MCP servers including manifest validation,
 capability checking, and runtime monitoring.
+
+Integrates with the manifest schema (app.mcp.manifest) for FR-019 compliance:
+- Capability classification (ALLOWED/REQUIRES_CONFIRM/BLOCKED)
+- Blocked capability detection
+- Manifest validation
 """
 
 import asyncio
@@ -12,6 +17,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.mcp.manifest import is_blocked_capability
 from app.mcp.models import MCPExecutionLog, MCPServer, SecurityLevel
 
 
@@ -142,9 +148,9 @@ class MCPSecurityValidator:
 
         Performs:
         1. Server existence and enabled check
-        2. Security rule lookup
-        3. Rate limit check
-        4. Anomaly detection
+        2. Blocked capability check (using FR-019 classification)
+        3. Security rule lookup (with manifest classification fallback)
+        4. Rate limit check
 
         Args:
             server_id: Server identifier
@@ -154,6 +160,15 @@ class MCPSecurityValidator:
         Returns:
             SecurityDecision with the validation result
         """
+        # First check if capability is blocked by FR-019 rules
+        if is_blocked_capability(tool_name):
+            return SecurityDecision(
+                allowed=False,
+                requires_confirmation=False,
+                reason=f"Tool '{tool_name}' is blocked by FR-019 security policy",
+                security_level=SecurityLevel.BLOCKED,
+            )
+
         # Check server exists and is enabled
         result = await self._session.execute(
             select(MCPServer).where(
@@ -170,7 +185,7 @@ class MCPSecurityValidator:
                 security_level=SecurityLevel.BLOCKED,
             )
 
-        # Check security rules
+        # Check security rules first (server-specific rules)
         security_level = SecurityLevel.ALLOWED  # Default to allowed
         if server.security_rules and tool_name in server.security_rules:
             level_str = server.security_rules[tool_name]
@@ -178,6 +193,11 @@ class MCPSecurityValidator:
                 security_level = SecurityLevel(level_str)
             except ValueError:
                 security_level = SecurityLevel.REQUIRES_CONFIRM
+        else:
+            # Fallback: Try to classify using manifest schema
+            # This requires determining the category from tool name or server config
+            # For unknown capabilities, default to REQUIRES_CONFIRM
+            security_level = SecurityLevel.REQUIRES_CONFIRM
 
         # Apply security level
         if security_level == SecurityLevel.BLOCKED:
