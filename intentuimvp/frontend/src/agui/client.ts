@@ -50,6 +50,10 @@ const AGENT_MESSAGE_TYPES = new Set<string>([
   "error",
   "request",
   "notification",
+  "run.start",
+  "run.end",
+  "tool.call",
+  "tool.result",
   "state.update",
   "state.snapshot",
 ]);

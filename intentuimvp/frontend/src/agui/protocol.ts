@@ -47,6 +47,10 @@ export type AgentToUIMessageType =
   | AgentErrorMessage
   | AgentRequestMessage
   | AgentNotificationMessage
+  | RunStartMessage
+  | RunEndMessage
+  | ToolCallMessage
+  | ToolResultMessage
   | StateUpdateMessage
   | StateSnapshotMessage;
 
@@ -134,6 +138,75 @@ export interface AgentNotificationMessage extends AgentToUIMessage {
     message: string;
     duration?: number; // Auto-dismiss after ms (0 = no auto-dismiss)
     actions?: Array<{ label: string; action: string; primary?: boolean }>;
+  };
+}
+
+// ============================================================================
+// Run Lifecycle Messages
+// ============================================================================
+
+/**
+ * Run start event - sent when an agent run begins
+ */
+export interface RunStartMessage extends AgentToUIMessage {
+  type: 'run.start';
+  payload: {
+    run_id: string;
+    agent_id: string;
+    agent_name: string;
+    input_data: {
+      messages: Array<Record<string, unknown>>;
+      context?: Record<string, unknown> | null;
+    };
+    tools: string[];
+  };
+}
+
+/**
+ * Run end event - sent when an agent run completes
+ */
+export interface RunEndMessage extends AgentToUIMessage {
+  type: 'run.end';
+  payload: {
+    run_id: string;
+    agent_id: string;
+    status: 'success' | 'error' | 'cancelled';
+    result?: Record<string, unknown> | null;
+    error?: string | null;
+    duration_ms?: number | null;
+  };
+}
+
+// ============================================================================
+// Tool Call Messages
+// ============================================================================
+
+/**
+ * Tool call event - sent when an agent calls a tool
+ */
+export interface ToolCallMessage extends AgentToUIMessage {
+  type: 'tool.call';
+  payload: {
+    run_id: string;
+    tool_name: string;
+    tool_args: Record<string, unknown>;
+    call_id: string;
+  };
+}
+
+/**
+ * Tool result event - sent when a tool call completes
+ */
+export interface ToolResultMessage extends AgentToUIMessage {
+  type: 'tool.result';
+  payload: {
+    run_id: string;
+    call_id: string;
+    tool_name: string;
+    success: boolean;
+    result?: unknown;
+    error?: string | null;
+    duration_ms?: number | null;
   };
 }
 
