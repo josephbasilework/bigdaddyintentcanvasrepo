@@ -444,6 +444,146 @@ class TestModelRelationships:
         assert edge.to_node.label == "Node 2"
 
 
+class TestPlanAndDagNodeTypes:
+    """Tests for Plan and DAG node types."""
+
+    def test_create_plan_node(self, db_session: Session):
+        """Test creating a plan node."""
+        canvas = Canvas(user_id="user-123", name="Test Canvas")
+        db_session.add(canvas)
+        db_session.commit()
+
+        node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.PLAN,
+            label="Project Plan",
+            position='{"x": 100, "y": 200, "z": 0}',
+            node_metadata='{"plan_id": "plan-001", "status": "draft"}',
+        )
+        db_session.add(node)
+        db_session.commit()
+        db_session.refresh(node)
+
+        assert node.id is not None
+        assert node.canvas_id == canvas.id
+        assert node.type == NodeType.PLAN
+        assert node.label == "Project Plan"
+        assert node.get_metadata() == {"plan_id": "plan-001", "status": "draft"}
+        assert node.created_at is not None
+
+    def test_create_dag_node(self, db_session: Session):
+        """Test creating a DAG node."""
+        canvas = Canvas(user_id="user-123", name="Test Canvas")
+        db_session.add(canvas)
+        db_session.commit()
+
+        node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.DAG,
+            label="Task DAG",
+            position='{"x": 300, "y": 400, "z": 0}',
+            node_metadata='{"dag_id": "dag-001", "task_count": 5}',
+        )
+        db_session.add(node)
+        db_session.commit()
+        db_session.refresh(node)
+
+        assert node.id is not None
+        assert node.canvas_id == canvas.id
+        assert node.type == NodeType.DAG
+        assert node.label == "Task DAG"
+        assert node.get_metadata() == {"dag_id": "dag-001", "task_count": 5}
+        assert node.created_at is not None
+
+    def test_plan_node_to_dict(self, db_session: Session):
+        """Test plan node serialization to dictionary."""
+        canvas = Canvas(user_id="user-123", name="Test Canvas")
+        db_session.add(canvas)
+        db_session.commit()
+
+        node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.PLAN,
+            label="Sprint Plan",
+            position='{"x": 50, "y": 100, "z": 0}',
+            node_metadata='{"sprint": 1, "goals": ["feature-a", "feature-b"]}',
+        )
+        db_session.add(node)
+        db_session.commit()
+        db_session.refresh(node)
+
+        result = node.to_dict()
+        assert result["id"] == node.id
+        assert result["canvasId"] == canvas.id
+        assert result["type"] == NodeType.PLAN
+        assert result["label"] == "Sprint Plan"
+        assert result["position"] == {"x": 50, "y": 100, "z": 0}
+        assert result["metadata"] == {"sprint": 1, "goals": ["feature-a", "feature-b"]}
+
+    def test_dag_node_to_dict(self, db_session: Session):
+        """Test DAG node serialization to dictionary."""
+        canvas = Canvas(user_id="user-123", name="Test Canvas")
+        db_session.add(canvas)
+        db_session.commit()
+
+        node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.DAG,
+            label="Workflow DAG",
+            position='{"x": 150, "y": 250, "z": 0}',
+            node_metadata='{"workflow_id": "wf-001", "nodes": 10, "edges": 15}',
+        )
+        db_session.add(node)
+        db_session.commit()
+        db_session.refresh(node)
+
+        result = node.to_dict()
+        assert result["id"] == node.id
+        assert result["canvasId"] == canvas.id
+        assert result["type"] == NodeType.DAG
+        assert result["label"] == "Workflow DAG"
+        assert result["position"] == {"x": 150, "y": 250, "z": 0}
+        assert result["metadata"] == {"workflow_id": "wf-001", "nodes": 10, "edges": 15}
+
+    def test_plan_and_dag_nodes_with_edges(self, db_session: Session):
+        """Test creating edges between plan and DAG nodes."""
+        canvas = Canvas(user_id="user-123", name="Test Canvas")
+        db_session.add(canvas)
+        db_session.commit()
+
+        plan_node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.PLAN,
+            label="Master Plan",
+            position='{"x": 0, "y": 0, "z": 0}',
+        )
+        dag_node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.DAG,
+            label="Execution DAG",
+            position='{"x": 200, "y": 0, "z": 0}',
+        )
+        db_session.add_all([plan_node, dag_node])
+        db_session.commit()
+
+        edge = Edge(
+            canvas_id=canvas.id,
+            from_node_id=plan_node.id,
+            to_node_id=dag_node.id,
+            relation_type=RelationType.DERIVED_FROM,
+            label="Generates",
+        )
+        db_session.add(edge)
+        db_session.commit()
+        db_session.refresh(plan_node)
+        db_session.refresh(dag_node)
+
+        assert len(plan_node.outgoing_edges) == 1
+        assert len(dag_node.incoming_edges) == 1
+        assert plan_node.outgoing_edges[0].to_node_id == dag_node.id
+        assert dag_node.incoming_edges[0].from_node_id == plan_node.id
+
+
 class TestCascadeDelete:
     """Tests for cascade delete behavior."""
 

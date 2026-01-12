@@ -24,6 +24,8 @@ class NodeType(str, Enum):
     DOCUMENT = "document"
     AUDIO = "audio"
     GRAPH = "graph"
+    PLAN = "plan"
+    DAG = "dag"
 
 
 class Node(Base):
