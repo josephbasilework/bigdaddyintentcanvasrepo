@@ -1,15 +1,45 @@
 """SQLAlchemy models for intent indexing and attachments."""
 
+import os
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import JSON, Boolean, Column, DateTime, Float, Integer, String, Text
 from sqlalchemy.ext.declarative import declarative_base
 
+# Check if pgvector is available (for PostgreSQL vector embeddings)
+try:
+    import importlib.util
+
+    _HAS_PGVECTOR = importlib.util.find_spec("pgvector") is not None
+except Exception:
+    _HAS_PGVECTOR = False
+
 if TYPE_CHECKING:
     from sqlalchemy.orm import DeclarativeMeta
 
 Base: "DeclarativeMeta" = declarative_base()  # type: ignore[assignment]
+
+# Embedding dimension for all-MiniLM-L6-v2 model
+EMBEDDING_DIM = 384
+
+
+def _get_embedding_column_type():  # type: ignore[no-untyped-def]
+    """Get the appropriate column type for embeddings based on database.
+
+    Returns Vector(384) for PostgreSQL with pgvector, String for SQLite.
+    """
+    if _HAS_PGVECTOR and _is_postgresql():
+        from pgvector.sqlalchemy import Vector
+
+        return Vector(EMBEDDING_DIM)
+    return String
+
+
+def _is_postgresql() -> bool:
+    """Check if the current database is PostgreSQL."""
+    database_url = os.getenv("DATABASE_URL", "")
+    return database_url.startswith("postgresql://") or database_url.startswith("postgresql+asyncpg://")
 
 
 class UserIntent(Base):
@@ -17,6 +47,9 @@ class UserIntent(Base):
 
     Stores user intents with their vector embeddings for semantic search
     and intent matching.
+
+    Uses pgvector Vector(384) type for PostgreSQL, falls back to String for SQLite.
+    Embeddings are generated using sentence-transformers/all-MiniLM-L6-v2 model.
     """
 
     __tablename__ = "user_intents"
@@ -26,9 +59,9 @@ class UserIntent(Base):
     intent_text = Column(String, nullable=False)
     intent_type = Column(String, nullable=True)
     confidence = Column(Float, nullable=True)
-    # Note: embedding column uses pgvector type, defined as String here for compatibility
-    # In production, would use: Column(Vector(1536))
-    embedding = Column(String, nullable=True)
+    # Vector(384) for PostgreSQL with pgvector, String for SQLite
+    # Dimension 384 matches the all-MiniLM-L6-v2 sentence transformer model
+    embedding = Column(_get_embedding_column_type(), nullable=True)
     context = Column(JSON, default={}, nullable=False)
     handler = Column(String, nullable=True)
     executed = Column(Boolean, default=False, nullable=False)
