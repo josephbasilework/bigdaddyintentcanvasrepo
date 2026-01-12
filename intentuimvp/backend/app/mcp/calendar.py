@@ -8,9 +8,9 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
-import google.auth.transport.requests  # type: ignore[reportMissingImports]
-import google.oauth2.credentials  # type: ignore[reportMissingImports]
-from googleapiclient.discovery import build  # type: ignore[reportMissingImports]
+import google.auth.transport.requests  # type: ignore[import-untyped]
+import google.oauth2.credentials  # type: ignore[import-untyped]
+from googleapiclient.discovery import build  # type: ignore[import-untyped]
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.mcp.manager import MCPManager
@@ -81,7 +81,7 @@ class GoogleCalendarMCP:
             capabilities={
                 "tools": [
                     {
-                        "name": "list_events",
+                        "name": "calendar_list",
                         "description": "List events from Google Calendar",
                         "inputSchema": {
                             "type": "object",
@@ -102,7 +102,19 @@ class GoogleCalendarMCP:
                         },
                     },
                     {
-                        "name": "create_event",
+                        "name": "calendar_read",
+                        "description": "Read a specific event from Google Calendar",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "calendar_id": {"type": "string"},
+                                "event_id": {"type": "string"},
+                            },
+                            "required": ["event_id"],
+                        },
+                    },
+                    {
+                        "name": "calendar_create",
                         "description": "Create a new calendar event",
                         "inputSchema": {
                             "type": "object",
@@ -114,6 +126,22 @@ class GoogleCalendarMCP:
                                 "end": {"type": "string"},
                             },
                             "required": ["summary", "start", "end"],
+                        },
+                    },
+                    {
+                        "name": "calendar_update",
+                        "description": "Update an existing calendar event",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "calendar_id": {"type": "string"},
+                                "event_id": {"type": "string"},
+                                "summary": {"type": "string"},
+                                "description": {"type": "string"},
+                                "start": {"type": "string"},
+                                "end": {"type": "string"},
+                            },
+                            "required": ["event_id"],
                         },
                     },
                 ]
