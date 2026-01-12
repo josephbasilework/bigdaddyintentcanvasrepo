@@ -13,12 +13,19 @@ import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.mcp.manifest import is_blocked_capability
-from app.mcp.models import MCPExecutionLog, MCPServer, SecurityLevel
+from app.mcp.models import (
+    MCPExecutionLog,
+    MCPServer,
+    SecurityLevel,
+    compute_input_hash,
+    compute_output_size,
+)
 
 
 @dataclass
@@ -45,7 +52,14 @@ class MCPSecurityValidator:
     - Manifest validation (capabilities declaration, version field)
     - Capability classification (ALLOWED/REQUIRES_CONFIRM/BLOCKED)
     - Runtime monitoring (rate limiting, anomaly detection)
+
+    Per FR-019 runtime monitoring:
+    - Rate limit: 100 tool calls per minute per MCP
+    - Anomaly detection: alert if >10x normal call volume
     """
+
+    # FR-019: Per-MCP rate limit (100 calls/minute)
+    PER_MCP_RATE_LIMIT = 100
 
     def __init__(self, session: AsyncSession) -> None:
         """Initialize the validator with a database session.
@@ -54,10 +68,12 @@ class MCPSecurityValidator:
             session: SQLAlchemy async session for database operations
         """
         self._session = session
-        # In-memory rate limiting tracker: {(server_id, tool_name): [timestamps]}
+        # Per-tool rate limiting: {(server_id, tool_name): [timestamps]}
         self._rate_limit_tracker: dict[tuple[str, str], list[datetime]] = defaultdict(
             list
         )
+        # Per-MCP rate limiting (FR-019): {server_id: [timestamps]}
+        self._per_mcp_rate_limit_tracker: dict[str, list[datetime]] = defaultdict(list)
         # Cleanup stale entries every minute
         self._cleanup_task: asyncio.Task[None] | None = None
 
@@ -208,7 +224,19 @@ class MCPSecurityValidator:
                 security_level=SecurityLevel.BLOCKED,
             )
 
-        # Check rate limits
+        # Check FR-019 per-MCP rate limit (100 calls/minute per server)
+        per_mcp_ok, per_mcp_message = await self._check_per_mcp_rate_limit(
+            server.server_id
+        )
+        if not per_mcp_ok:
+            return SecurityDecision(
+                allowed=False,
+                requires_confirmation=False,
+                reason=per_mcp_message or "Per-MCP rate limit exceeded",
+                security_level=SecurityLevel.BLOCKED,
+            )
+
+        # Check per-tool rate limits (from server config)
         rate_limit_ok, rate_limit_message = await self._check_rate_limit(
             server, tool_name
         )
@@ -235,7 +263,7 @@ class MCPSecurityValidator:
     async def _check_rate_limit(
         self, server: MCPServer, tool_name: str
     ) -> tuple[bool, str | None]:
-        """Check if tool execution is within rate limits.
+        """Check if tool execution is within per-tool rate limits.
 
         Args:
             server: The MCP server
@@ -258,11 +286,42 @@ class MCPSecurityValidator:
         if count >= server.rate_limit:
             return (
                 False,
-                f"Rate limit exceeded: {count}/{server.rate_limit} calls per minute",
+                f"Per-tool rate limit exceeded: {count}/{server.rate_limit} calls per minute",
             )
 
-        # Add current call
+        # Add current call to per-tool tracker
         self._rate_limit_tracker[key].append(now)
+        return True, None
+
+    async def _check_per_mcp_rate_limit(self, server_id: str) -> tuple[bool, str | None]:
+        """Check if tool execution is within per-MCP rate limits (FR-019).
+
+        FR-019 requires: 100 tool calls per minute per MCP.
+
+        Args:
+            server_id: The MCP server identifier
+
+        Returns:
+            Tuple of (within_limit, error_message)
+        """
+        now = datetime.utcnow()
+        one_minute_ago = now - timedelta(minutes=1)
+
+        # Clean up old entries
+        self._per_mcp_rate_limit_tracker[server_id] = [
+            ts for ts in self._per_mcp_rate_limit_tracker[server_id] if ts > one_minute_ago
+        ]
+
+        # Check per-MCP rate limit (FR-019: 100 calls/minute)
+        count = len(self._per_mcp_rate_limit_tracker[server_id])
+        if count >= self.PER_MCP_RATE_LIMIT:
+            return (
+                False,
+                f"Per-MCP rate limit exceeded (FR-019): {count}/{self.PER_MCP_RATE_LIMIT} calls per minute",
+            )
+
+        # Add current call to per-MCP tracker
+        self._per_mcp_rate_limit_tracker[server_id].append(now)
         return True, None
 
     async def log_execution(
@@ -273,8 +332,13 @@ class MCPSecurityValidator:
         confirmed: bool,
         success: bool,
         error_message: str | None = None,
+        arguments: dict | None = None,
+        result: Any = None,
     ) -> MCPExecutionLog:
         """Log an MCP tool execution for audit and monitoring.
+
+        Per FR-019 runtime monitoring requirements:
+        - Tool calls logged with timestamp, input hash, output size
 
         Args:
             server_id: Server identifier
@@ -283,10 +347,26 @@ class MCPSecurityValidator:
             confirmed: Whether user confirmation was obtained
             success: Whether execution succeeded
             error_message: Error message if execution failed
+            arguments: Tool arguments (for computing input_hash)
+            result: Tool result (for computing output_size)
 
         Returns:
             The created MCPExecutionLog entry
         """
+        # Compute input hash from arguments if provided
+        input_hash: str | None = None
+        if arguments is not None:
+            input_hash = compute_input_hash(arguments)
+
+        # Compute output size from result if provided
+        output_size: int | None = None
+        if result is not None and success:
+            try:
+                output_size = compute_output_size(result)
+            except Exception:
+                # If computing output size fails, continue without it
+                output_size = None
+
         log = MCPExecutionLog(
             server_id=server_id,
             tool_name=tool_name,
@@ -294,6 +374,8 @@ class MCPSecurityValidator:
             confirmed=confirmed,
             success=success,
             error_message=error_message,
+            input_hash=input_hash,
+            output_size=output_size,
         )
         self._session.add(log)
         await self._session.flush()
@@ -304,10 +386,13 @@ class MCPSecurityValidator:
     ) -> list[dict]:
         """Detect anomalous behavior patterns.
 
+        Per FR-019 runtime monitoring requirements:
+        - Anomaly detection: alert if >10x normal call volume
+
         Looks for:
         - High failure rates
+        - Unusual call volume spikes (>10x normal)
         - Blocked execution attempts
-        - Unusual activity patterns
 
         Args:
             server_id: Optional server ID to filter by
@@ -319,20 +404,76 @@ class MCPSecurityValidator:
         since = datetime.utcnow() - timedelta(minutes=minutes)
         anomalies: list[dict] = []
 
-        # Build query
+        # Build query for current window
         query = select(MCPExecutionLog).where(MCPExecutionLog.executed_at >= since)
         if server_id:
             query = query.where(MCPExecutionLog.server_id == server_id)
 
         result = await self._session.execute(query)
-        logs = list(result.scalars().all())
+        current_logs = list(result.scalars().all())
 
-        if not logs:
+        if not current_logs:
             return anomalies
 
-        # Group by server and tool
+        # Build query for baseline window (previous 24 hours for "normal" volume)
+        baseline_since = since - timedelta(hours=24)
+        baseline_query = select(MCPExecutionLog).where(
+            MCPExecutionLog.executed_at >= baseline_since,
+            MCPExecutionLog.executed_at < since,
+        )
+        if server_id:
+            baseline_query = baseline_query.where(MCPExecutionLog.server_id == server_id)
+
+        baseline_result = await self._session.execute(baseline_query)
+        baseline_logs = list(baseline_result.scalars().all())
+
+        # Group current logs by server
+        current_by_server: dict[str, list[MCPExecutionLog]] = defaultdict(list)
+        for log in current_logs:
+            current_by_server[log.server_id].append(log)
+
+        # Group baseline logs by server
+        baseline_by_server: dict[str, list[MCPExecutionLog]] = defaultdict(list)
+        for log in baseline_logs:
+            baseline_by_server[log.server_id].append(log)
+
+        # Check for >10x normal call volume (FR-019 anomaly detection)
+        for srv_id, current_server_logs in current_by_server.items():
+            current_count = len(current_server_logs)
+            baseline_count = len(baseline_by_server.get(srv_id, []))
+
+            # Calculate normal calls per minute for this server
+            # Baseline is over 24 hours, so divide by (24 * 60) to get per-minute rate
+            baseline_minutes = 24 * 60
+            normal_calls_per_minute = baseline_count / baseline_minutes if baseline_minutes > 0 else 0
+
+            # Current calls in the analysis window
+            current_calls_per_minute = current_count / minutes if minutes > 0 else 0
+
+            # Avoid division by zero for servers with no baseline
+            if normal_calls_per_minute > 0:
+                volume_ratio = current_calls_per_minute / normal_calls_per_minute
+            else:
+                # If no baseline, consider >10 calls/minute as anomaly
+                volume_ratio = current_calls_per_minute if current_calls_per_minute > 10 else 0
+
+            if volume_ratio > 10:
+                anomalies.append(
+                    {
+                        "type": "unusual_call_volume",
+                        "server_id": srv_id,
+                        "current_calls_per_minute": f"{current_calls_per_minute:.1f}",
+                        "normal_calls_per_minute": f"{normal_calls_per_minute:.1f}",
+                        "volume_ratio": f"{volume_ratio:.1f}x",
+                        "current_window_calls": current_count,
+                        "baseline_calls": baseline_count,
+                        "severity": "high" if volume_ratio > 50 else "medium",
+                    }
+                )
+
+        # Group by server and tool for failure rate analysis
         by_tool: dict[tuple[str, str], list[MCPExecutionLog]] = defaultdict(list)
-        for log in logs:
+        for log in current_logs:
             by_tool[(log.server_id, log.tool_name)].append(log)
 
         # Check for high failure rates
@@ -366,6 +507,8 @@ class MCPSecurityValidator:
                     await asyncio.sleep(60)
                     now = datetime.utcnow()
                     one_minute_ago = now - timedelta(minutes=1)
+
+                    # Clean up per-tool rate limit tracker
                     for key in list(self._rate_limit_tracker.keys()):
                         self._rate_limit_tracker[key] = [
                             ts
@@ -374,6 +517,16 @@ class MCPSecurityValidator:
                         ]
                         if not self._rate_limit_tracker[key]:
                             del self._rate_limit_tracker[key]
+
+                    # Clean up per-MCP rate limit tracker (FR-019)
+                    for server_id in list(self._per_mcp_rate_limit_tracker.keys()):
+                        self._per_mcp_rate_limit_tracker[server_id] = [
+                            ts
+                            for ts in self._per_mcp_rate_limit_tracker[server_id]
+                            if ts > one_minute_ago
+                        ]
+                        if not self._per_mcp_rate_limit_tracker[server_id]:
+                            del self._per_mcp_rate_limit_tracker[server_id]
 
             self._cleanup_task = asyncio.create_task(cleanup_loop())
 

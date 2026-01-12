@@ -236,6 +236,8 @@ class MCPManager:
                 confirmed=False,
                 success=False,
                 error_message=decision.reason,
+                arguments=arguments,
+                result=None,
             )
             return ToolExecutionResult(
                 success=False, error=decision.reason, required_confirmation=False
@@ -260,7 +262,7 @@ class MCPManager:
             result = await session.call_tool(tool_name, arguments=arguments)
 
             # Parse result content
-            result_data = None
+            result_data: Any = None
             if hasattr(result, "content"):
                 result_data = []
                 for item in result.content:
@@ -276,13 +278,15 @@ class MCPManager:
             else:
                 result_data = result
 
-            # Log successful execution
+            # Log successful execution with arguments and result
             await self._validator.log_execution(
                 server_id=server_id,
                 tool_name=tool_name,
                 initiated_by=initiated_by,
                 confirmed=user_confirmed,
                 success=True,
+                arguments=arguments,
+                result=result_data,
             )
 
             return ToolExecutionResult(
@@ -292,7 +296,7 @@ class MCPManager:
             )
 
         except Exception as e:
-            # Log failed execution
+            # Log failed execution with arguments
             await self._validator.log_execution(
                 server_id=server_id,
                 tool_name=tool_name,
@@ -300,6 +304,8 @@ class MCPManager:
                 confirmed=user_confirmed,
                 success=False,
                 error_message=str(e),
+                arguments=arguments,
+                result=None,
             )
 
             return ToolExecutionResult(

@@ -28,7 +28,13 @@ from app.mcp.manifest import (
 from app.mcp.manifest import (
     SecurityLevel as ManifestSecurityLevel,
 )
-from app.mcp.models import MCPExecutionLog, MCPServer, SecurityLevel
+from app.mcp.models import (
+    MCPExecutionLog,
+    MCPServer,
+    SecurityLevel,
+    compute_input_hash,
+    compute_output_size,
+)
 from app.mcp.security import MCPSecurityValidator, SecurityDecision
 
 # In-memory async test database
@@ -579,7 +585,7 @@ class TestRateLimiting:
             "rate-limit-server-2", "safe_tool", "test_user"
         )
         assert decision.allowed is False
-        assert "Rate limit exceeded" in decision.reason
+        assert "rate limit exceeded" in decision.reason.lower()
 
 
 @pytest.mark.asyncio
@@ -790,3 +796,284 @@ class TestFR019Compliance:
         assert classify_capability(
             SecurityCategory.UNKNOWN, "unknown_op"
         ) == ManifestSecurityLevel.REQUIRES_CONFIRM
+
+
+@pytest.mark.asyncio
+class TestRuntimeMonitoring:
+    """Tests for FR-019 runtime monitoring features."""
+
+    async def test_log_execution_with_input_hash(
+        self, db_session: AsyncSession, validator: MCPSecurityValidator
+    ) -> None:
+        """Test logging execution captures input hash."""
+        arguments = {"param1": "value1", "param2": "value2"}
+        expected_hash = compute_input_hash(arguments)
+
+        log = await validator.log_execution(
+            server_id="test-server",
+            tool_name="test_tool",
+            initiated_by="test_user",
+            confirmed=True,
+            success=True,
+            arguments=arguments,
+            result={"output": "data"},
+        )
+
+        assert log.input_hash == expected_hash
+
+    async def test_log_execution_with_output_size(
+        self, db_session: AsyncSession, validator: MCPSecurityValidator
+    ) -> None:
+        """Test logging execution captures output size."""
+        result = {"key": "value", "nested": {"data": [1, 2, 3]}}
+        expected_size = compute_output_size(result)
+
+        log = await validator.log_execution(
+            server_id="test-server",
+            tool_name="test_tool",
+            initiated_by="test_user",
+            confirmed=True,
+            success=True,
+            arguments={},
+            result=result,
+        )
+
+        assert log.output_size == expected_size
+
+    async def test_log_execution_without_arguments_no_hash(
+        self, db_session: AsyncSession, validator: MCPSecurityValidator
+    ) -> None:
+        """Test logging without arguments doesn't set input hash."""
+        log = await validator.log_execution(
+            server_id="test-server",
+            tool_name="test_tool",
+            initiated_by="test_user",
+            confirmed=True,
+            success=True,
+        )
+
+        assert log.input_hash is None
+
+    async def test_log_execution_failed_no_output_size(
+        self, db_session: AsyncSession, validator: MCPSecurityValidator
+    ) -> None:
+        """Test logging failed execution doesn't set output size."""
+        log = await validator.log_execution(
+            server_id="test-server",
+            tool_name="test_tool",
+            initiated_by="test_user",
+            confirmed=True,
+            success=False,
+            error_message="Error",
+            arguments={"param": "value"},
+        )
+
+        assert log.output_size is None
+
+    async def test_per_mcp_rate_limit_enforced(
+        self, db_session: AsyncSession, validator: MCPSecurityValidator
+    ) -> None:
+        """Test per-MCP rate limit (FR-019: 100 calls/minute)."""
+        server = MCPServer(
+            server_id="per-mcp-test-server",
+            name="Per-MCP Rate Limit Server",
+            transport_type="stdio",
+            transport_config={"command": ["echo"]},
+            enabled=True,
+            security_rules={"tool1": "allowed", "tool2": "allowed"},
+            rate_limit=1000,  # High per-tool limit to test per-MCP limit
+        )
+        db_session.add(server)
+        await db_session.flush()
+
+        # Make 100 calls (at per-MCP limit)
+        for i in range(100):
+            tool = "tool1" if i % 2 == 0 else "tool2"
+            decision = await validator.check_permission(
+                "per-mcp-test-server", tool, "test_user"
+            )
+            assert decision.allowed is True, f"Call {i+1} should be allowed"
+
+        # 101st call should be blocked by per-MCP rate limit
+        decision = await validator.check_permission(
+            "per-mcp-test-server", "tool1", "test_user"
+        )
+        assert decision.allowed is False
+        assert "Per-MCP rate limit exceeded" in decision.reason
+        assert "FR-019" in decision.reason
+
+    async def test_per_mcp_rate_limit_separate_per_server(
+        self, db_session: AsyncSession, validator: MCPSecurityValidator
+    ) -> None:
+        """Test per-MCP rate limit is separate for each server."""
+        server1 = MCPServer(
+            server_id="server1",
+            name="Server 1",
+            transport_type="stdio",
+            transport_config={"command": ["echo"]},
+            enabled=True,
+            security_rules={"tool": "allowed"},
+            rate_limit=1000,
+        )
+        server2 = MCPServer(
+            server_id="server2",
+            name="Server 2",
+            transport_type="stdio",
+            transport_config={"command": ["echo"]},
+            enabled=True,
+            security_rules={"tool": "allowed"},
+            rate_limit=1000,
+        )
+        db_session.add(server1)
+        db_session.add(server2)
+        await db_session.flush()
+
+        # Exhaust server1's per-MCP limit
+        for _ in range(100):
+            decision = await validator.check_permission("server1", "tool", "test_user")
+            assert decision.allowed is True
+
+        # Server1 should be blocked
+        decision = await validator.check_permission("server1", "tool", "test_user")
+        assert decision.allowed is False
+
+        # Server2 should still be allowed (separate counter)
+        decision = await validator.check_permission("server2", "tool", "test_user")
+        assert decision.allowed is True
+
+    async def test_unusual_call_volume_detection(
+        self, db_session: AsyncSession, validator: MCPSecurityValidator
+    ) -> None:
+        """Test detection of >10x normal call volume (FR-019)."""
+        # Create baseline logs over 24 hours (simulated with few logs)
+        # For testing, we'll create logs in the "past" and recent spike
+        from datetime import timedelta
+
+        now = datetime.utcnow()
+        two_hours_ago = now - timedelta(hours=2)
+
+        # Create 10 baseline logs (spread out, low volume)
+        for i in range(10):
+            log = MCPExecutionLog(
+                server_id="volume-test-server",
+                tool_name="test_tool",
+                initiated_by="test_user",
+                confirmed=False,
+                success=True,
+                executed_at=two_hours_ago,
+            )
+            db_session.add(log)
+
+        # Create 100 recent logs (spike: >10x normal rate)
+        for i in range(100):
+            log = MCPExecutionLog(
+                server_id="volume-test-server",
+                tool_name="test_tool",
+                initiated_by="test_user",
+                confirmed=False,
+                success=True,
+                executed_at=now,
+            )
+            db_session.add(log)
+
+        await db_session.flush()
+
+        # Detect anomalies - should find unusual call volume
+        anomalies = await validator.detect_anomalies(
+            server_id="volume-test-server", minutes=5
+        )
+
+        assert len(anomalies) > 0
+        volume_anomalies = [a for a in anomalies if a["type"] == "unusual_call_volume"]
+        assert len(volume_anomalies) > 0
+        assert float(volume_anomalies[0]["volume_ratio"].rstrip("x")) > 10
+
+    async def test_anomaly_detection_no_baseline(
+        self, db_session: AsyncSession, validator: MCPSecurityValidator
+    ) -> None:
+        """Test anomaly detection when no baseline exists."""
+        now = datetime.utcnow()
+
+        # Create logs with no baseline (new server)
+        # 20 calls/minute should trigger anomaly (>10 threshold)
+        for i in range(20):
+            log = MCPExecutionLog(
+                server_id="new-server",
+                tool_name="test_tool",
+                initiated_by="test_user",
+                confirmed=False,
+                success=True,
+                executed_at=now,
+            )
+            db_session.add(log)
+
+        await db_session.flush()
+
+        anomalies = await validator.detect_anomalies(server_id="new-server", minutes=1)
+
+        # Should detect unusual volume for new server with high rate
+        volume_anomalies = [a for a in anomalies if a["type"] == "unusual_call_volume"]
+        assert len(volume_anomalies) > 0
+
+
+class TestComputeInputHash:
+    """Tests for compute_input_hash function."""
+
+    def test_hash_is_consistent(self) -> None:
+        """Test same arguments produce same hash."""
+        args = {"param1": "value1", "param2": "value2"}
+        hash1 = compute_input_hash(args)
+        hash2 = compute_input_hash(args)
+        assert hash1 == hash2
+
+    def test_hash_is_sorted(self) -> None:
+        """Test hash is independent of key order."""
+        hash1 = compute_input_hash({"a": 1, "b": 2, "c": 3})
+        hash2 = compute_input_hash({"c": 3, "a": 1, "b": 2})
+        assert hash1 == hash2
+
+    def test_different_args_different_hash(self) -> None:
+        """Test different arguments produce different hashes."""
+        hash1 = compute_input_hash({"param": "value1"})
+        hash2 = compute_input_hash({"param": "value2"})
+        assert hash1 != hash2
+
+    def test_hash_is_sha256(self) -> None:
+        """Test hash is SHA256 format (64 hex chars)."""
+        h = compute_input_hash({"test": "value"})
+        assert len(h) == 64
+        assert all(c in "0123456789abcdef" for c in h)
+
+
+class TestComputeOutputSize:
+    """Tests for compute_output_size function."""
+
+    def test_size_of_simple_dict(self) -> None:
+        """Test size calculation for simple dict."""
+        result = {"key": "value"}
+        size = compute_output_size(result)
+        assert size > 0
+
+    def test_size_of_nested_structures(self) -> None:
+        """Test size calculation for nested structures."""
+        result = {"nested": {"list": [1, 2, 3], "string": "test"}}
+        size = compute_output_size(result)
+        assert size > 0
+
+    def test_size_of_list(self) -> None:
+        """Test size calculation for list."""
+        result = [1, 2, 3, "four", {"five": 5}]
+        size = compute_output_size(result)
+        assert size > 0
+
+    def test_size_of_string(self) -> None:
+        """Test size calculation for string."""
+        result = "test string"
+        size = compute_output_size(result)
+        assert size > 0
+
+    def test_size_of_unicode(self) -> None:
+        """Test size calculation handles unicode correctly."""
+        result = {"emoji": "🎉", "chinese": "中文"}
+        size = compute_output_size(result)
+        assert size > 0

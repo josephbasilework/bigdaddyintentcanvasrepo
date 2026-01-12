@@ -4,10 +4,13 @@ Defines persistent storage for registered MCP servers, their capabilities,
 and security classifications.
 """
 
+import hashlib
+import json
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
-from sqlalchemy import JSON, Boolean, DateTime, String, func
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -101,6 +104,11 @@ class MCPExecutionLog(Base):
     """Log of MCP tool executions for monitoring and audit.
 
     Tracks all MCP tool executions for security monitoring and rate limiting.
+
+    Per FR-019 runtime monitoring requirements:
+    - Tool calls logged with timestamp, input hash, output size
+    - Rate limiting: 100 tool calls per minute per MCP
+    - Anomaly detection: alert if >10x normal call volume
     """
 
     __tablename__ = "mcp_execution_logs"
@@ -119,6 +127,10 @@ class MCPExecutionLog(Base):
     executed_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False, index=True
     )
+    # Runtime monitoring: SHA256 hash of tool arguments for deduplication/analysis
+    input_hash: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    # Runtime monitoring: Approximate size of tool output in bytes
+    output_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -131,4 +143,33 @@ class MCPExecutionLog(Base):
             "success": self.success,
             "error_message": self.error_message,
             "executed_at": self.executed_at.isoformat(),
+            "input_hash": self.input_hash,
+            "output_size": self.output_size,
         }
+
+
+def compute_input_hash(arguments: dict) -> str:
+    """Compute SHA256 hash of tool arguments for runtime monitoring.
+
+    Args:
+        arguments: Tool arguments dictionary
+
+    Returns:
+        Hex-encoded SHA256 hash of the JSON-serialized arguments
+    """
+    # Sort keys for consistent hashing
+    json_str = json.dumps(arguments, sort_keys=True)
+    return hashlib.sha256(json_str.encode()).hexdigest()
+
+
+def compute_output_size(result: Any) -> int:
+    """Compute approximate size of tool output in bytes.
+
+    Args:
+        result: Tool result (can be dict, list, str, etc.)
+
+    Returns:
+        Approximate size in bytes
+    """
+    json_str = json.dumps(result, default=str, ensure_ascii=False)
+    return len(json_str.encode())
