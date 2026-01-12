@@ -240,4 +240,204 @@ describe('AGUIClient state sync', () => {
 
     expect(client.getLocalState()).toEqual(snapshotState);
   });
+
+  it('ignores duplicate state updates without side effects', async () => {
+    const client = new AGUIClient({
+      gatewayUrl: 'http://localhost:8000',
+    });
+
+    client.connect();
+    await flushMicrotasks();
+
+    const checksum = await computeChecksum({ patch: [{ op: 'add', path: '/test', value: 'data' }] });
+
+    // Send sequence 1
+    const update1 = {
+      version: AGUI_PROTOCOL_VERSION,
+      messageId: 'msg-1',
+      timestamp: new Date().toISOString(),
+      source: 'agent',
+      target: 'ui',
+      type: 'state.update',
+      payload: {
+        sequence: 1,
+        patch: [{ op: 'add', path: '/test', value: 'data' }],
+        checksum,
+      },
+    };
+
+    const ws = MockWebSocket.instances[0];
+    ws.triggerMessage(JSON.stringify(update1));
+    await flushMicrotasks();
+
+    const stateAfterFirst = client.getState();
+    expect(stateAfterFirst.stateSync.lastSequence).toBe(1);
+
+    // Send duplicate sequence 1 (should be ignored)
+    ws.triggerMessage(JSON.stringify(update1));
+    await flushMicrotasks();
+
+    const stateAfterDuplicate = client.getState();
+    expect(stateAfterDuplicate.stateSync.lastSequence).toBe(1);
+    expect(stateAfterDuplicate.stateSync.needsSync).toBe(false);
+  });
+
+  it('detects sequence gaps and requests full state sync', async () => {
+    const client = new AGUIClient({
+      gatewayUrl: 'http://localhost:8000',
+    });
+
+    client.connect();
+    await flushMicrotasks();
+
+    const checksum = await computeChecksum({ patch: [{ op: 'add', path: '/test', value: 'data' }] });
+
+    // Send sequence 1
+    const update1 = {
+      version: AGUI_PROTOCOL_VERSION,
+      messageId: 'msg-1',
+      timestamp: new Date().toISOString(),
+      source: 'agent',
+      target: 'ui',
+      type: 'state.update',
+      payload: {
+        sequence: 1,
+        patch: [{ op: 'add', path: '/test', value: 'data' }],
+        checksum,
+      },
+    };
+
+    const ws = MockWebSocket.instances[0];
+    ws.triggerMessage(JSON.stringify(update1));
+    await flushMicrotasks();
+
+    expect(client.getState().stateSync.lastSequence).toBe(1);
+
+    // Send sequence 3 (gap: missing sequence 2)
+    const update3 = {
+      version: AGUI_PROTOCOL_VERSION,
+      messageId: 'msg-3',
+      timestamp: new Date().toISOString(),
+      source: 'agent',
+      target: 'ui',
+      type: 'state.update',
+      payload: {
+        sequence: 3,
+        patch: [{ op: 'add', path: '/test2', value: 'data2' }],
+        checksum,
+      },
+    };
+
+    ws.triggerMessage(JSON.stringify(update3));
+    await flushMicrotasks();
+
+    const stateAfterGap = client.getState();
+    expect(stateAfterGap.stateSync.needsSync).toBe(true);
+    expect(stateAfterGap.stateSync.isSynced).toBe(false);
+    expect(stateAfterGap.stateSync.lastSequence).toBe(1); // Should not advance
+
+    // Verify that state sync request was sent
+    expect(hasStateSyncRequest(ws.sentMessages)).toBe(true);
+  });
+
+  it('applies sequential state updates in order', async () => {
+    const client = new AGUIClient({
+      gatewayUrl: 'http://localhost:8000',
+    });
+
+    client.connect();
+    await flushMicrotasks();
+
+    const checksum1 = await computeChecksum({ patch: [{ op: 'add', path: '/key1', value: 'value1' }] });
+    const checksum2 = await computeChecksum({ patch: [{ op: 'add', path: '/key2', value: 'value2' }] });
+    const checksum3 = await computeChecksum({ patch: [{ op: 'replace', path: '/key1', value: 'updated' }] });
+
+    const updates = [
+      {
+        version: AGUI_PROTOCOL_VERSION,
+        messageId: 'msg-1',
+        timestamp: new Date().toISOString(),
+        source: 'agent',
+        target: 'ui',
+        type: 'state.update' as const,
+        payload: {
+          sequence: 1,
+          patch: [{ op: 'add', path: '/key1', value: 'value1' }],
+          checksum: checksum1,
+        },
+      },
+      {
+        version: AGUI_PROTOCOL_VERSION,
+        messageId: 'msg-2',
+        timestamp: new Date().toISOString(),
+        source: 'agent',
+        target: 'ui',
+        type: 'state.update' as const,
+        payload: {
+          sequence: 2,
+          patch: [{ op: 'add', path: '/key2', value: 'value2' }],
+          checksum: checksum2,
+        },
+      },
+      {
+        version: AGUI_PROTOCOL_VERSION,
+        messageId: 'msg-3',
+        timestamp: new Date().toISOString(),
+        source: 'agent',
+        target: 'ui',
+        type: 'state.update' as const,
+        payload: {
+          sequence: 3,
+          patch: [{ op: 'replace', path: '/key1', value: 'updated' }],
+          checksum: checksum3,
+        },
+      },
+    ];
+
+    const ws = MockWebSocket.instances[0];
+
+    for (const update of updates) {
+      ws.triggerMessage(JSON.stringify(update));
+      await flushMicrotasks();
+    }
+
+    const finalState = client.getState();
+    expect(finalState.stateSync.lastSequence).toBe(3);
+    expect(finalState.stateSync.isSynced).toBe(true);
+    expect(finalState.stateSync.needsSync).toBe(false);
+  });
+
+  it('requests explicit state sync on reconnect (no automatic replay)', async () => {
+    vi.useFakeTimers();
+    MockWebSocket.autoOpen = false;
+
+    const client = new AGUIClient({
+      gatewayUrl: 'http://localhost:8000',
+      reconnectInterval: 100,
+    });
+
+    client.connect();
+    await flushMicrotasks();
+
+    const firstSocket = MockWebSocket.instances[0];
+    firstSocket.readyState = MockWebSocket.OPEN;
+    firstSocket.triggerOpen();
+
+    // Verify explicit state sync request on initial connect
+    expect(hasStateSyncRequest(firstSocket.sentMessages)).toBe(true);
+
+    // Close connection
+    firstSocket.triggerClose(1006, 'Abnormal closure');
+
+    // Advance timer to trigger reconnect
+    vi.advanceTimersByTime(100);
+    await flushMicrotasks();
+
+    const secondSocket = MockWebSocket.instances[1];
+    secondSocket.readyState = MockWebSocket.OPEN;
+    secondSocket.triggerOpen();
+
+    // Verify explicit state sync request on reconnect (not automatic replay)
+    expect(hasStateSyncRequest(secondSocket.sentMessages)).toBe(true);
+  });
 });
