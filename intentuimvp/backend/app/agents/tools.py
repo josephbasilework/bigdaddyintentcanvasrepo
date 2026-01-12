@@ -199,6 +199,31 @@ class HITLRequestApprovalParams(BaseModel):
     )
 
 
+class CanvasSpawnJobParams(BaseModel):
+    """Parameters for spawning a background job."""
+
+    job_type: str = Field(
+        ...,
+        description="Type of job to spawn (deep_research, perspective_gather, synthesis, export)",
+    )
+    input_refs: list[int] | None = Field(
+        default=None,
+        description="Optional list of node IDs that are inputs to the job",
+    )
+    params: dict[str, Any] | None = Field(
+        default=None,
+        description="Additional job parameters (varies by job_type)",
+    )
+    user_id: str | None = Field(
+        default=None,
+        description="Optional user ID for the job context",
+    )
+    workspace_id: str | None = Field(
+        default=None,
+        description="Optional workspace ID for the job context",
+    )
+
+
 class ToolValidationError(Exception):
     """Exception raised when tool validation fails."""
 
@@ -643,6 +668,51 @@ class ToolManager:
                 "resolved_assumptions": resolved_assumptions,
             }
 
+        async def canvas_spawn_job(
+            job_type: str,
+            input_refs: list[int] | None = None,
+            params: dict[str, Any] | None = None,
+            user_id: str | None = None,
+            workspace_id: str | None = None,
+        ) -> dict[str, Any]:
+            """Spawn a background job for async processing."""
+            from app.jobs.base import JobType
+            from app.jobs.service import get_job_service
+
+            # Validate job_type
+            try:
+                enum_job_type = JobType(job_type)
+            except ValueError:
+                valid_types = [t.value for t in JobType]
+                raise ValueError(
+                    f"Invalid job_type: {job_type}. Valid types: {valid_types}"
+                )
+
+            # Prepare job_data with input_refs and params
+            job_data: dict[str, Any] = {}
+            if input_refs:
+                job_data["input_refs"] = input_refs
+            if params:
+                job_data.update(params)
+
+            # Use default user_id if not provided
+            effective_user_id = user_id or DEFAULT_USER_ID
+
+            # Enqueue the job via JobService
+            service = get_job_service()
+            job_id = await service.enqueue_job(
+                job_type=enum_job_type,
+                job_data=job_data,
+                user_id=effective_user_id,
+                workspace_id=workspace_id,
+            )
+
+            return {
+                "job_id": job_id,
+                "status": "queued",
+                "job_type": job_type,
+            }
+
         # Register the tools
         self.register_function(
             name="web_search",
@@ -704,6 +774,14 @@ class ToolManager:
             description="Create a typed edge between two nodes",
             func=canvas_link_nodes,
             parameters=CanvasLinkNodesParams,
+            is_async=True,
+        )
+
+        self.register_function(
+            name="canvas.spawn_job",
+            description="Spawn a background job for async processing",
+            func=canvas_spawn_job,
+            parameters=CanvasSpawnJobParams,
             is_async=True,
         )
 

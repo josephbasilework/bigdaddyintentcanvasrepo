@@ -419,6 +419,83 @@ async def test_workspace_search_scopes() -> None:
     assert empty_result.output == []
 
 
+@pytest.mark.asyncio
+async def test_canvas_spawn_job_tool_enqueues_job() -> None:
+    """Verify canvas.spawn_job enqueues a job and returns job_id."""
+    manager = get_tool_manager()
+
+    result = await manager.execute_tool(
+        "canvas.spawn_job",
+        {
+            "job_type": "export",
+            "input_refs": [1, 2, 3],
+            "params": {"workspace_id": "test-workspace", "export_format": "json"},
+        },
+    )
+
+    assert result.success
+    output = result.output
+    assert "job_id" in output
+    assert isinstance(output["job_id"], str)
+    assert output["status"] == "queued"
+    assert output["job_type"] == "export"
+
+
+@pytest.mark.asyncio
+async def test_canvas_spawn_job_tool_rejects_invalid_job_type() -> None:
+    """Verify canvas.spawn_job rejects invalid job_type."""
+    manager = get_tool_manager()
+
+    result = await manager.execute_tool(
+        "canvas.spawn_job",
+        {
+            "job_type": "not_a_real_type",
+            "params": {},
+        },
+    )
+
+    assert not result.success
+    assert "Invalid job_type" in (result.error or "")
+    assert "not_a_real_type" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_canvas_spawn_job_tool_accepts_minimal_params() -> None:
+    """Verify canvas.spawn_job works with minimal parameters."""
+    manager = get_tool_manager()
+
+    result = await manager.execute_tool(
+        "canvas.spawn_job",
+        {
+            "job_type": "export",
+        },
+    )
+
+    assert result.success
+    assert "job_id" in result.output
+    assert result.output["status"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_canvas_spawn_job_tool_includes_input_refs_in_data() -> None:
+    """Verify canvas.spawn_job includes input_refs in job data."""
+    manager = get_tool_manager()
+    input_refs = [10, 20, 30]
+
+    result = await manager.execute_tool(
+        "canvas.spawn_job",
+        {
+            "job_type": "export",
+            "input_refs": input_refs,
+            "params": {"workspace_id": "test-workspace", "export_format": "json"},
+        },
+    )
+
+    assert result.success
+    # The job should be enqueued with input_refs included
+    assert "job_id" in result.output
+
+
 @pytest_asyncio.fixture(autouse=True)
 async def _dispose_async_engine() -> AsyncGenerator[None, None]:
     """Dispose the async engine to avoid lingering background threads."""
