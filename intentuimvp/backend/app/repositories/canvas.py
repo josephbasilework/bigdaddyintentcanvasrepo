@@ -8,6 +8,10 @@ from sqlalchemy.orm import Session
 from app.models.canvas import Canvas
 from app.models.edge import Edge, RelationType
 from app.models.node import Node, NodeType
+from app.repositories.diff import (
+    compute_edge_diff,
+    compute_node_diff,
+)
 
 logger = getLogger(__name__)
 
@@ -230,6 +234,173 @@ class CanvasRepository:
             f"Saved canvas {canvas.id} for user {user_id} "
             f"with {len(nodes_data)} nodes and {len(edges_data)} edges"
         )
+        return canvas
+
+    def save_canvas_incremental(
+        self,
+        user_id: str,
+        canvas_data: dict,
+        canvas_name: str = "default",
+    ) -> Canvas:
+        """Save or update canvas using incremental/diff-based updates.
+
+        Only creates, updates, or deletes nodes and edges that have changed,
+        rather than replacing all data. This is more efficient for large canvases
+        with small changes.
+
+        Args:
+            user_id: User identifier
+            canvas_data: Canvas state with nodes and edges
+            canvas_name: Canvas name
+
+        Returns:
+            Saved or updated canvas
+        """
+        # Get existing canvas for user
+        canvas = self.get_by_user(user_id)
+
+        if canvas is None:
+            # Create new canvas - use the existing method for initial creation
+            return self.save_canvas(user_id, canvas_data, canvas_name)
+
+        # Update canvas name if changed
+        canvas.name = canvas_name
+
+        # Get existing nodes and edges
+        existing_nodes = list(canvas.nodes)
+        existing_edges = list(canvas.edges)
+
+        # Compute diffs
+        nodes_data = canvas_data.get("nodes", [])
+        edges_data = canvas_data.get("edges", [])
+
+        node_changes = compute_node_diff(existing_nodes, nodes_data)
+
+        # Track created nodes for edge resolution
+        node_id_map: dict[str, int] = {}
+
+        # Apply node changes
+        for change in node_changes:
+            if change.action == "create":
+                # Create new node
+                node_data = change.node_data or {}
+                position = _position_from_node(node_data)
+                node_metadata = _metadata_from_node(node_data)
+                node_type = _coerce_node_type(node_data.get("type"))
+
+                node = Node(
+                    canvas_id=canvas.id,
+                    type=node_type,
+                    label=node_data.get("label", "") or "Untitled",
+                    position=json.dumps(position),
+                    node_metadata=json.dumps(node_metadata) if node_metadata else None,
+                )
+                self.db.add(node)
+                self.db.flush()  # Get the ID
+
+                # Map client ID to database ID
+                if change.client_id:
+                    node_id_map[change.client_id] = node.id
+
+                # Also map the database ID to itself for edge resolution
+                node_id_map[str(node.id)] = node.id
+
+                logger.debug(f"Created new node {node.id} for client ID {change.client_id}")
+
+            elif change.action == "update":
+                # Update existing node
+                db_node = change.db_node
+                if not db_node:
+                    continue
+
+                node_data = change.node_data or {}
+
+                # Update label
+                if "label" in node_data:
+                    db_node.label = node_data["label"] or "Untitled"
+
+                # Update type
+                if "type" in node_data:
+                    db_node.type = _coerce_node_type(node_data["type"])
+
+                # Update position
+                position = _position_from_node(node_data)
+                db_node.position = json.dumps(position)
+
+                # Update metadata
+                node_metadata = _metadata_from_node(node_data)
+                if node_metadata:
+                    db_node.node_metadata = json.dumps(node_metadata)
+                elif "metadata" in node_data and node_data["metadata"] is None:
+                    db_node.node_metadata = None
+
+                # Track for edge resolution
+                node_id_map[str(db_node.id)] = db_node.id
+
+                logger.debug(f"Updated node {db_node.id}")
+
+            elif change.action == "delete":
+                # Delete node (cascade will handle edges)
+                db_node = change.db_node
+                if db_node:
+                    self.db.delete(db_node)
+                    logger.debug(f"Deleted node {db_node.id}")
+
+        # Build node_id_map for all existing nodes (for edge resolution)
+        for node in existing_nodes:
+            if node not in [c.db_node for c in node_changes if c.action == "delete"]:
+                node_id_map[str(node.id)] = node.id
+
+        # Compute and apply edge changes
+        edge_changes = compute_edge_diff(existing_edges, edges_data, node_id_map)
+
+        for edge_change in edge_changes:
+            if edge_change.action == "create":
+                edge_data = edge_change.edge_data or {}
+                from_node_id = edge_change.resolved_from_id
+                to_node_id = edge_change.resolved_to_id
+
+                if from_node_id is None or to_node_id is None:
+                    continue
+
+                label_value = edge_data.get("label")
+                label = label_value if isinstance(label_value, str) else None
+
+                edge = Edge(
+                    canvas_id=canvas.id,
+                    from_node_id=from_node_id,
+                    to_node_id=to_node_id,
+                    relation_type=_coerce_relation_type(
+                        edge_data.get("relationType")
+                        or edge_data.get("relation_type")
+                        or edge_data.get("type")
+                    ),
+                    label=label,
+                )
+                self.db.add(edge)
+                logger.debug(f"Created edge {from_node_id} -> {to_node_id}")
+
+            elif edge_change.action == "delete":
+                db_edge = edge_change.db_edge
+                if db_edge:
+                    self.db.delete(db_edge)
+                    logger.debug(f"Deleted edge {db_edge.from_node_id} -> {db_edge.to_node_id}")
+
+        self.db.commit()
+        self.db.refresh(canvas)
+
+        creates = sum(1 for c in node_changes if c.action == "create")
+        updates = sum(1 for c in node_changes if c.action == "update")
+        deletes = sum(1 for c in node_changes if c.action == "delete")
+        edge_creates = sum(1 for c in edge_changes if c.action == "create")
+        edge_deletes = sum(1 for c in edge_changes if c.action == "delete")
+
+        logger.info(
+            f"Incremental save for canvas {canvas.id} (user {user_id}): "
+            f"{creates} nodes created, {updates} updated, {deletes} deleted; "
+            f"{edge_creates} edges created, {edge_deletes} deleted"
+        )
+
         return canvas
 
     def serialize_canvas(self, canvas: Canvas, *, include_edges: bool = False) -> dict:
