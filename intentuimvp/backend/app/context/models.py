@@ -7,7 +7,21 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast, runtime_checkable
+
+
+@runtime_checkable
+class SupportsModelDump(Protocol):
+    """Protocol for objects with a model_dump method."""
+
+    def model_dump(self) -> Mapping[str, Any]: ...
+
+
+@runtime_checkable
+class SupportsDict(Protocol):
+    """Protocol for objects with a dict method."""
+
+    def dict(self) -> Mapping[str, Any]: ...
 
 
 class AssumptionCategory(str, Enum):
@@ -147,9 +161,9 @@ class ContextPayload:
         if isinstance(selection, SelectionScope):
             return selection
         raw: Mapping[str, Any]
-        if hasattr(selection, "model_dump"):
+        if isinstance(selection, SupportsModelDump):
             raw = selection.model_dump()
-        elif hasattr(selection, "dict"):
+        elif isinstance(selection, SupportsDict):
             raw = selection.dict()
         elif isinstance(selection, Mapping):
             raw = selection

@@ -10,6 +10,7 @@ import re
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -112,15 +113,17 @@ class IntentIndexLookup:
         now = datetime.now(UTC)
         matches: list[IntentIndexMatch] = []
         for candidate in candidates:
-            if not candidate.intent_text:
+            intent_text = cast(str, candidate.intent_text)
+            if not intent_text:
                 continue
             similarity = _candidate_similarity(
                 normalized_input, candidate, input_embedding
             )
             if similarity < self._similarity_threshold:
                 continue
+            created_at = cast(datetime, candidate.created_at)
             recency_weight = _recency_weight(
-                candidate.created_at, now=now, decay=self._recency_decay
+                created_at, now=now, decay=self._recency_decay
             )
             score = similarity * recency_weight
             matches.append(
@@ -153,7 +156,9 @@ def _normalize_text(text: str) -> str:
 
 
 def _normalize_resolution(candidate: UserIntent) -> str | None:
-    resolution = candidate.intent_type or candidate.handler
+    intent_type = cast(str | None, candidate.intent_type)
+    handler = cast(str | None, candidate.handler)
+    resolution = intent_type or handler
     if not resolution:
         return None
     normalized = resolution.strip().lower()
@@ -172,7 +177,8 @@ def _candidate_similarity(
         similarity = _embedding_similarity(input_embedding, candidate_embedding)
         if similarity is not None:
             return similarity
-    normalized_candidate = _normalize_text(candidate.intent_text)
+    intent_text = cast(str, candidate.intent_text)
+    normalized_candidate = _normalize_text(intent_text)
     return _similarity(normalized_input, normalized_candidate)
 
 
