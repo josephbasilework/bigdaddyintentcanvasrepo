@@ -6,6 +6,8 @@ import { useCanvasStore, CanvasEdge, CanvasNode, CanvasEdgeRelationType } from "
 import { Node } from "./Node";
 import { EdgesLayer } from "./Edge";
 import { EDGE_RELATION_OPTIONS, getEdgeRelationLabel } from "./edgeRelations";
+import { useAutoSave } from "../../hooks/useAutoSave";
+import { SaveStatusIndicator } from "./SaveStatusIndicator";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -139,6 +141,10 @@ export function CanvasWorkspace() {
     addEdge,
     setSelectedNodes,
   } = useCanvasStore();
+  const { saveStatus, saveError } = useAutoSave({
+    debounceMs: 500,
+    maxRetries: 3,
+  });
   const [loadStatus, setLoadStatus] = useState<"loading" | "loaded" | "error">("loading");
   const [connectSourceNodeId, setConnectSourceNodeId] = useState<string | null>(null);
   const [connectRelationType, setConnectRelationType] = useState<CanvasEdgeRelationType>(
@@ -371,31 +377,6 @@ export function CanvasWorkspace() {
       isActive = false;
     };
   }, [setNodes, setEdges]);
-
-  // Save canvas state when nodes or edges change (debounced)
-  useEffect(() => {
-    if (nodes.length === 0 && edges.length === 0) return;
-
-    const timeoutId = setTimeout(async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/workspace`, {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ nodes, edges }),
-        });
-
-        if (!response.ok) {
-          console.error("Failed to save canvas state");
-        }
-      } catch (error) {
-        console.error("Failed to save canvas state:", error);
-      }
-    }, 500); // 500ms debounce
-
-    return () => clearTimeout(timeoutId);
-  }, [nodes, edges]);
 
   const handleCanvasMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return;
@@ -679,6 +660,7 @@ export function CanvasWorkspace() {
       )}
       {connectBanner}
       {selectionOverlay}
+      <SaveStatusIndicator saveStatus={saveStatus} saveError={saveError} />
     </div>
   );
 }
