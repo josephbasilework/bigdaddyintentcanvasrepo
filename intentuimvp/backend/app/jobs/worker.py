@@ -64,6 +64,79 @@ async def check_job_cancelled(job_id: str) -> None:
         raise JobCancelledError(f"Job {job_id} was cancelled")
 
 
+async def _stream_periodic_progress(
+    job_id: str,
+    current_step: str,
+    step_number: int,
+    steps_total: int,
+    progress_percent: float,
+    interval_seconds: float = 10.0,
+) -> asyncio.Task:
+    """Create a background task that streams progress updates periodically.
+
+    This is used during long-running operations (LLM calls, web search) to ensure
+    the UI receives progress updates at least every 10 seconds as required by FR-011.
+
+    Args:
+        job_id: The job ID to stream progress for
+        current_step: Description of the current step
+        step_number: Current step number
+        steps_total: Total number of steps
+        progress_percent: Current progress percentage (0-100)
+        interval_seconds: Interval between progress updates (default 10.0 for FR-011)
+
+    Returns:
+        An asyncio Task that should be cancelled when the operation completes
+
+    Example:
+        ```python
+        # Start periodic progress streaming
+        progress_task = await _stream_periodic_progress(
+            job_id="job-123",
+            current_step="Conducting web research",
+            step_number=2,
+            steps_total=5,
+            progress_percent=40.0,
+        )
+        try:
+            # Do long operation here
+            result = await long_operation()
+        finally:
+            # Always cancel the progress task
+            progress_task.cancel()
+            try:
+                await progress_task
+            except asyncio.CancelledError:
+                pass
+        ```
+    """
+    async def _periodic_update() -> None:
+        """Internal coroutine that sends periodic progress updates."""
+        try:
+            while True:
+                await asyncio.sleep(interval_seconds)
+                await check_job_cancelled(job_id)
+                # Send a "still working" progress update with same percent
+                await progress_tracker.update_progress(
+                    job_id=job_id,
+                    progress_percent=progress_percent,
+                    current_step=f"{current_step}...",
+                    step_number=step_number,
+                    steps_total=steps_total,
+                )
+                logger.debug(f"[{job_id}] Periodic progress update sent")
+        except asyncio.CancelledError:
+            # Task was cancelled - this is expected
+            logger.debug(f"[{job_id}] Periodic progress task cancelled")
+            raise
+        except JobCancelledError:
+            # Job was cancelled - propagate this
+            raise
+
+    # Create and return the background task
+    return asyncio.create_task(_periodic_update())
+
+
 async def _generate_with_gateway(
     gateway: GatewayClient,
     system_prompt: str,
@@ -232,13 +305,29 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
             )
 
             # Generate perspective-specific analysis using Gateway
-            content = await _generate_with_gateway(
-                gateway=gateway,
-                system_prompt=persp_agent.system_prompt,
-                user_prompt=f"Analyze the following research query from your perspective: {query}\n\nProvide a comprehensive analysis including key findings, concerns, and recommendations.",
-                model="openai/gpt-4o",
-                temperature=persp_agent.temperature,
+            # Start periodic progress streaming for this long operation (FR-011: 10s interval)
+            progress_task = await _stream_periodic_progress(
+                job_id=job_id,
+                current_step=f"Gathering {persp_agent.name} perspective",
+                step_number=idx,
+                steps_total=total_steps,
+                progress_percent=(idx / total_steps) * 100,
             )
+            try:
+                content = await _generate_with_gateway(
+                    gateway=gateway,
+                    system_prompt=persp_agent.system_prompt,
+                    user_prompt=f"Analyze the following research query from your perspective: {query}\n\nProvide a comprehensive analysis including key findings, concerns, and recommendations.",
+                    model="openai/gpt-4o",
+                    temperature=persp_agent.temperature,
+                )
+            finally:
+                # Always cancel the periodic progress task
+                progress_task.cancel()
+                try:
+                    await progress_task
+                except asyncio.CancelledError:
+                    pass
 
             # Check for cancellation after LLM call (long operation)
             await check_job_cancelled(job_id)
@@ -280,9 +369,26 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
 
         logger.info(f"[{job_id}] Conducting web research")
         research_agent = get_research_agent()
-        research_report: ResearchReport = await research_agent.research(
-            query, max_steps=depth
+
+        # Start periodic progress streaming for web research (FR-011: 10s interval)
+        progress_task = await _stream_periodic_progress(
+            job_id=job_id,
+            current_step="Conducting web research",
+            step_number=web_research_step,
+            steps_total=total_steps,
+            progress_percent=(web_research_step / total_steps) * 100,
         )
+        try:
+            research_report: ResearchReport = await research_agent.research(
+                query, max_steps=depth
+            )
+        finally:
+            # Always cancel the periodic progress task
+            progress_task.cancel()
+            try:
+                await progress_task
+            except asyncio.CancelledError:
+                pass
 
         # Check for cancellation after web research (long operation)
         await check_job_cancelled(job_id)
@@ -313,10 +419,27 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
 
         # Get Judge Agent and evaluate perspectives
         judge_agent = get_judge_agent(gateway=gateway)
-        judge_synthesis: JudgeSynthesis = await judge_agent.judge(
-            query=query,
-            perspective_results=perspective_results,
+
+        # Start periodic progress streaming for judge synthesis (FR-011: 10s interval)
+        progress_task = await _stream_periodic_progress(
+            job_id=job_id,
+            current_step="Judging and synthesizing perspectives",
+            step_number=judge_step,
+            steps_total=total_steps,
+            progress_percent=(judge_step / total_steps) * 100,
         )
+        try:
+            judge_synthesis: JudgeSynthesis = await judge_agent.judge(
+                query=query,
+                perspective_results=perspective_results,
+            )
+        finally:
+            # Always cancel the periodic progress task
+            progress_task.cancel()
+            try:
+                await progress_task
+            except asyncio.CancelledError:
+                pass
 
         # Compile final result with judge synthesis
         result_data = {

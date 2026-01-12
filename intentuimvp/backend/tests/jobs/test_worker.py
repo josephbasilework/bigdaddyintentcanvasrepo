@@ -3,6 +3,7 @@
 Tests the actual job implementations that process background tasks.
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -67,6 +68,115 @@ class TestDefaultPerspectives:
             assert agent.name == name
             assert 0.0 <= agent.temperature <= 1.0
             assert len(agent.system_prompt) > 0
+
+
+@pytest.mark.asyncio
+class TestStreamPeriodicProgress:
+    """Tests for _stream_periodic_progress helper function."""
+
+    @patch("app.jobs.worker.progress_tracker")
+    @patch("app.jobs.worker.check_job_cancelled")
+    async def test_stream_periodic_progress_sends_updates(self, mock_check_cancel, mock_progress_tracker):
+        """Should send progress updates at the specified interval."""
+        mock_check_cancel.return_value = None
+        mock_progress_tracker.update_progress = AsyncMock()
+
+        # Use a short interval for testing
+        task = await asyncio.create_task(
+            self._run_periodic_progress(
+                job_id="test-job-123",
+                current_step="Testing",
+                step_number=1,
+                steps_total=5,
+                progress_percent=20.0,
+                interval_seconds=0.1,  # 100ms for fast test
+            )
+        )
+
+        # Wait for multiple updates
+        await asyncio.sleep(0.35)
+
+        # Cancel the task
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # Should have called update_progress multiple times
+        # At least 3 times in 350ms with 100ms interval
+        assert mock_progress_tracker.update_progress.call_count >= 3
+
+    @patch("app.jobs.worker.progress_tracker")
+    @patch("app.jobs.worker.check_job_cancelled")
+    async def test_stream_periodic_progress_handles_cancellation(self, mock_check_cancel, mock_progress_tracker):
+        """Should handle task cancellation gracefully."""
+        mock_check_cancel.return_value = None
+        mock_progress_tracker.update_progress = AsyncMock()
+
+        task = await self._run_periodic_progress(
+            job_id="test-job-456",
+            current_step="Testing",
+            step_number=1,
+            steps_total=5,
+            progress_percent=20.0,
+            interval_seconds=0.1,
+        )
+
+        # Cancel immediately
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # Should not raise any errors
+        assert True
+
+    @patch("app.jobs.worker.progress_tracker")
+    @patch("app.jobs.worker.check_job_cancelled")
+    async def test_stream_periodic_progress_propagates_job_cancelled(self, mock_check_cancel, mock_progress_tracker):
+        """Should propagate JobCancelledError from check_job_cancelled."""
+        from app.jobs.worker import JobCancelledError
+
+        mock_progress_tracker.update_progress = AsyncMock()
+
+        # Make check_job_cancelled raise JobCancelledError
+        call_count = 0
+        async def side_effect(job_id):
+            nonlocal call_count
+            call_count += 1
+            if call_count >= 2:
+                raise JobCancelledError("Job was cancelled")
+
+        mock_check_cancel.side_effect = side_effect
+
+        task = await self._run_periodic_progress(
+            job_id="test-job-cancelled",
+            current_step="Testing",
+            step_number=1,
+            steps_total=5,
+            progress_percent=20.0,
+            interval_seconds=0.05,
+        )
+
+        # Should raise JobCancelledError
+        with pytest.raises(JobCancelledError, match="Job was cancelled"):
+            await task
+
+    async def _run_periodic_progress(
+        self, job_id: str, current_step: str, step_number: int, steps_total: int, progress_percent: float, interval_seconds: float
+    ):
+        """Helper to import and run _stream_periodic_progress (which is private)."""
+        from app.jobs.worker import _stream_periodic_progress
+        return await _stream_periodic_progress(
+            job_id=job_id,
+            current_step=current_step,
+            step_number=step_number,
+            steps_total=steps_total,
+            progress_percent=progress_percent,
+            interval_seconds=interval_seconds,
+        )
 
 
 @pytest.mark.asyncio
