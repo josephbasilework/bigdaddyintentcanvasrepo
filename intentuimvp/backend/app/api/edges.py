@@ -9,7 +9,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_db
-from app.models.edge import Edge
+from app.graph_validation import DependencyCycleError, ensure_dependency_edges_acyclic
+from app.models.edge import Edge, RelationType
 from app.repositories.edge_repo import EdgeRepository
 from app.repositories.node_repo import NodeRepository
 from app.schemas.edge import (
@@ -109,6 +110,11 @@ async def create_edge(
             f"Created edge {edge.id} on canvas {payload.canvas_id} for user {user_id}"
         )
         return _serialize_edge(edge)
+    except DependencyCycleError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
     except IntegrityError as e:
         logger.warning(
             f"Failed to create edge on canvas {payload.canvas_id}: {e}",
@@ -249,6 +255,19 @@ async def update_edge(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Relation type cannot be null",
             )
+        if (
+            payload.relation_type == RelationType.DEPENDS_ON
+            and edge.relation_type != RelationType.DEPENDS_ON
+        ):
+            dependency_pairs = await repo.list_dependency_pairs(edge.canvas_id)
+            dependency_pairs.append((edge.from_node_id, edge.to_node_id))
+            try:
+                ensure_dependency_edges_acyclic(dependency_pairs)
+            except DependencyCycleError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(e),
+                ) from e
         updates["relation_type"] = payload.relation_type
 
     if "label" in fields_set:

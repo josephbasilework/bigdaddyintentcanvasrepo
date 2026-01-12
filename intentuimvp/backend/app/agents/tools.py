@@ -23,6 +23,7 @@ from app.agui.schemas import AgentRequestPayload
 from app.api.assumption_store import get_assumption_store
 from app.context.models import parse_assumption
 from app.database import AsyncSessionLocal
+from app.graph_validation import DependencyCycleError
 from app.models.canvas import Canvas
 from app.models.edge import RelationType
 from app.models.intent import AssumptionResolutionDB
@@ -477,13 +478,16 @@ class ToolManager:
                     )
 
                 edge_repo = EdgeRepository(session)
-                edge = await edge_repo.create_edge(
-                    canvas_id=from_node.canvas_id,
-                    from_node_id=from_node.id,
-                    to_node_id=to_node.id,
-                    relation_type=params.relation_type,
-                    metadata=params.metadata,
-                )
+                try:
+                    edge = await edge_repo.create_edge(
+                        canvas_id=from_node.canvas_id,
+                        from_node_id=from_node.id,
+                        to_node_id=to_node.id,
+                        relation_type=params.relation_type,
+                        metadata=params.metadata,
+                    )
+                except DependencyCycleError as e:
+                    raise ValueError(str(e)) from e
 
             return {"id": edge.id}
 

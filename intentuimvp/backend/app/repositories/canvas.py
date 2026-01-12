@@ -5,13 +5,11 @@ from logging import getLogger
 
 from sqlalchemy.orm import Session
 
+from app.graph_validation import ensure_dependency_edges_acyclic
 from app.models.canvas import Canvas
 from app.models.edge import Edge, RelationType
 from app.models.node import Node, NodeType
-from app.repositories.diff import (
-    compute_edge_diff,
-    compute_node_diff,
-)
+from app.repositories.diff import compute_edge_diff, compute_node_diff
 
 logger = getLogger(__name__)
 
@@ -56,6 +54,59 @@ def _metadata_from_node(node_data: dict) -> dict | None:
         or node_data.get("nodeMetadata")
     )
     return metadata if isinstance(metadata, dict) else None
+
+
+def _resolve_node_id(raw_value: object, node_id_map: dict[str, int]) -> int | None:
+    if raw_value is None:
+        return None
+    mapped = node_id_map.get(str(raw_value))
+    if mapped is not None:
+        return mapped
+    try:
+        if isinstance(raw_value, bool):
+            return None
+        if isinstance(raw_value, int | str):
+            return int(raw_value)
+        if isinstance(raw_value, float) and raw_value.is_integer():
+            return int(raw_value)
+    except ValueError:
+        return None
+    return None
+
+
+def _collect_dependency_edges(
+    edges_data: list[dict],
+    node_id_map: dict[str, int],
+) -> list[tuple[int, int]]:
+    dependency_edges: list[tuple[int, int]] = []
+    for edge_data in edges_data:
+        from_node_id = (
+            edge_data.get("fromNodeId")
+            or edge_data.get("sourceNodeId")
+            or edge_data.get("from_node_id")
+        )
+        to_node_id = (
+            edge_data.get("toNodeId")
+            or edge_data.get("targetNodeId")
+            or edge_data.get("to_node_id")
+        )
+
+        from_node_id = _resolve_node_id(from_node_id, node_id_map)
+        to_node_id = _resolve_node_id(to_node_id, node_id_map)
+        if from_node_id is None or to_node_id is None:
+            continue
+
+        relation_type = _coerce_relation_type(
+            edge_data.get("relationType")
+            or edge_data.get("relation_type")
+            or edge_data.get("type")
+        )
+        if relation_type != RelationType.DEPENDS_ON:
+            continue
+
+        dependency_edges.append((from_node_id, to_node_id))
+
+    return dependency_edges
 
 
 class CanvasRepository:
@@ -178,6 +229,8 @@ class CanvasRepository:
 
         # Add new edges
         edges_data = canvas_data.get("edges", [])
+        dependency_edges = _collect_dependency_edges(edges_data, node_id_map)
+        ensure_dependency_edges_acyclic(dependency_edges)
         for edge_data in edges_data:
             from_node_id = (
                 edge_data.get("fromNodeId")
@@ -190,25 +243,8 @@ class CanvasRepository:
                 or edge_data.get("to_node_id")
             )
 
-            def resolve_node_id(raw_value: object) -> int | None:
-                if raw_value is None:
-                    return None
-                mapped = node_id_map.get(str(raw_value))
-                if mapped is not None:
-                    return mapped
-                try:
-                    if isinstance(raw_value, bool):
-                        return None
-                    if isinstance(raw_value, int | str):
-                        return int(raw_value)
-                    if isinstance(raw_value, float) and raw_value.is_integer():
-                        return int(raw_value)
-                except ValueError:
-                    return None
-                return None
-
-            from_node_id = resolve_node_id(from_node_id)
-            to_node_id = resolve_node_id(to_node_id)
+            from_node_id = _resolve_node_id(from_node_id, node_id_map)
+            to_node_id = _resolve_node_id(to_node_id, node_id_map)
             if from_node_id is None or to_node_id is None:
                 continue
 
@@ -350,6 +386,9 @@ class CanvasRepository:
         for node in existing_nodes:
             if node not in [c.db_node for c in node_changes if c.action == "delete"]:
                 node_id_map[str(node.id)] = node.id
+
+        dependency_edges = _collect_dependency_edges(edges_data, node_id_map)
+        ensure_dependency_edges_acyclic(dependency_edges)
 
         # Compute and apply edge changes
         edge_changes = compute_edge_diff(existing_edges, edges_data, node_id_map)

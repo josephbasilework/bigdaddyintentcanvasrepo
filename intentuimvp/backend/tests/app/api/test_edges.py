@@ -160,6 +160,48 @@ class TestEdgeEndpoints:
         assert get_data["id"] == edge_id
         assert get_data["canvas_id"] == canvas_id
 
+    def test_create_edge_rejects_dependency_cycle(
+        self,
+        client: testclient.TestClient,
+        sync_session_local,
+    ) -> None:
+        """Test creating a dependency edge that forms a cycle fails."""
+        canvas_id, node_ids = create_canvas_with_nodes(sync_session_local, node_count=3)
+
+        response_a = client.post(
+            "/api/edges",
+            json={
+                "canvas_id": canvas_id,
+                "from_node_id": node_ids[0],
+                "to_node_id": node_ids[1],
+                "relation_type": "depends_on",
+            },
+        )
+        assert response_a.status_code == 201
+
+        response_b = client.post(
+            "/api/edges",
+            json={
+                "canvas_id": canvas_id,
+                "from_node_id": node_ids[1],
+                "to_node_id": node_ids[2],
+                "relation_type": "depends_on",
+            },
+        )
+        assert response_b.status_code == 201
+
+        response_cycle = client.post(
+            "/api/edges",
+            json={
+                "canvas_id": canvas_id,
+                "from_node_id": node_ids[2],
+                "to_node_id": node_ids[0],
+                "relation_type": "depends_on",
+            },
+        )
+        assert response_cycle.status_code == 400
+        assert response_cycle.json()["detail"] == "Dependency cycle detected"
+
     def test_update_edge_relation_type(
         self,
         client: testclient.TestClient,
@@ -191,6 +233,55 @@ class TestEdgeEndpoints:
         updated = update_response.json()
         assert updated["relation_type"] == "conflicts"
         assert updated["label"] == "Conflicts"
+
+    def test_update_edge_rejects_dependency_cycle(
+        self,
+        client: testclient.TestClient,
+        sync_session_local,
+    ) -> None:
+        """Test updating to depends_on that creates a cycle fails."""
+        canvas_id, node_ids = create_canvas_with_nodes(sync_session_local, node_count=3)
+
+        response_a = client.post(
+            "/api/edges",
+            json={
+                "canvas_id": canvas_id,
+                "from_node_id": node_ids[0],
+                "to_node_id": node_ids[1],
+                "relation_type": "depends_on",
+            },
+        )
+        assert response_a.status_code == 201
+
+        response_b = client.post(
+            "/api/edges",
+            json={
+                "canvas_id": canvas_id,
+                "from_node_id": node_ids[1],
+                "to_node_id": node_ids[2],
+                "relation_type": "depends_on",
+            },
+        )
+        assert response_b.status_code == 201
+
+        response_c = client.post(
+            "/api/edges",
+            json={
+                "canvas_id": canvas_id,
+                "from_node_id": node_ids[2],
+                "to_node_id": node_ids[0],
+                "relation_type": "supports",
+            },
+        )
+        assert response_c.status_code == 201
+        edge_id = response_c.json()["id"]
+
+        update_response = client.put(
+            f"/api/edges/{edge_id}",
+            json={"relation_type": "depends_on"},
+        )
+        assert update_response.status_code == 400
+        assert update_response.json()["detail"] == "Dependency cycle detected"
 
     def test_list_and_delete_edges(
         self,

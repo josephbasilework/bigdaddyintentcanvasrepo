@@ -238,6 +238,29 @@ class TestWorkspaceEndpoint:
         assert edge["relationType"] == "supports"
         assert edge["label"] == "Supports"
 
+    def test_save_workspace_rejects_dependency_cycle(
+        self,
+        client: testclient.TestClient,
+    ) -> None:
+        """Test PUT /api/workspace rejects dependency cycles."""
+        payload = {
+            "nodes": [
+                {"id": "node-a", "label": "Node A", "x": 10, "y": 20, "z": 0},
+                {"id": "node-b", "label": "Node B", "x": 30, "y": 40, "z": 0},
+                {"id": "node-c", "label": "Node C", "x": 50, "y": 60, "z": 0},
+            ],
+            "edges": [
+                {"sourceNodeId": "node-a", "targetNodeId": "node-b", "relationType": "depends_on"},
+                {"sourceNodeId": "node-b", "targetNodeId": "node-c", "relationType": "depends_on"},
+                {"sourceNodeId": "node-c", "targetNodeId": "node-a", "relationType": "depends_on"},
+            ],
+            "name": "cycle_test",
+        }
+
+        response = client.put("/api/workspace", json=payload)
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Dependency cycle detected"
+
     def test_round_trip_save_load(self, client: testclient.TestClient) -> None:
         """Test round-trip: save then load returns same data."""
         # Save workspace

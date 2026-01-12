@@ -8,6 +8,7 @@ from sqlalchemy import UnaryExpression, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.graph_validation import ensure_dependency_edges_acyclic
 from app.models.edge import Edge, RelationType
 from app.repositories.base import BaseRepository
 
@@ -117,6 +118,15 @@ class EdgeRepository(BaseRepository[Edge, Any, Any]):
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
+    async def list_dependency_pairs(self, canvas_id: int) -> list[tuple[int, int]]:
+        """List dependency edge pairs for a canvas."""
+        stmt = select(Edge.from_node_id, Edge.to_node_id).where(
+            Edge.canvas_id == canvas_id,
+            Edge.relation_type == RelationType.DEPENDS_ON,
+        )
+        result = await self.db.execute(stmt)
+        return [(row[0], row[1]) for row in result.all()]
+
     async def create_edge(
         self,
         canvas_id: int,
@@ -139,6 +149,10 @@ class EdgeRepository(BaseRepository[Edge, Any, Any]):
         Returns:
             Created edge
         """
+        if relation_type == RelationType.DEPENDS_ON:
+            dependency_pairs = await self.list_dependency_pairs(canvas_id)
+            dependency_pairs.append((from_node_id, to_node_id))
+            ensure_dependency_edges_acyclic(dependency_pairs)
         return await self.create(
             canvas_id=canvas_id,
             from_node_id=from_node_id,

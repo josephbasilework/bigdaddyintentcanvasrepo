@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.graph_validation import DependencyCycleError
 from app.repositories.canvas import CanvasRepository
 from app.schemas.workspace import CanvasResponse, EmptyWorkspaceResponse, WorkspaceSaveRequest
 
@@ -113,6 +114,15 @@ async def save_workspace(
         logger.info(f"Saved canvas {canvas.id} for user {user_id}")
         return canvas_payload
 
+    except DependencyCycleError as e:
+        logger.warning(
+            f"Rejected workspace save for user {user_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
     except Exception as e:
         logger.error(f"Failed to save workspace for user {user_id}: {e}", exc_info=True)
         raise HTTPException(
