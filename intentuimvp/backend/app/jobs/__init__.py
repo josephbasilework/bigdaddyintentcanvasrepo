@@ -2,13 +2,14 @@
 
 This module provides:
 - Job definitions and types
+- Job state machine with validated transitions
 - ARQ worker for processing async jobs
 - Client for enqueueing jobs
 - Job status tracking
 
 Example:
     ```python
-    from app.jobs import enqueue_deep_research, JobType
+    from app.jobs import enqueue_deep_research, JobType, JobStateMachine
 
     # Enqueue a deep research job
     job_id = await enqueue_deep_research(
@@ -16,13 +17,20 @@ Example:
         depth=3,
         user_id="user-123"
     )
+
+    # Check if a transition is valid
+    if JobStateMachine.can_transition("queued", "in_progress"):
+        # Transition is valid
+        ...
     ```
 """
 
 from app.jobs.base import (
     JobContext,
     JobResult,
+    JobStateMachine,
     JobStatus,
+    JobTransitionError,
     JobType,
     get_redis_pool,
     get_redis_settings,
@@ -46,6 +54,9 @@ __all__ = [
     "JobResult",
     "JobStatus",
     "JobType",
+    # State machine
+    "JobStateMachine",
+    "JobTransitionError",
     # Client functions
     "enqueue_job",
     "enqueue_deep_research",

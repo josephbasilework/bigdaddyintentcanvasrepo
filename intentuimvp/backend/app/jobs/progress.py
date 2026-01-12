@@ -2,7 +2,7 @@
 
 This module provides:
 - Progress event types for real-time job updates
-- Job progress tracker for database updates
+- Job progress tracker for database updates with state machine validation
 - Integration with WebSocket manager for streaming
 """
 
@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.database import SessionLocal
+from app.jobs.base import JobStateMachine
 from app.models.job import Job
 from app.ws.websocket import manager as ws_manager
 
@@ -58,7 +59,10 @@ def _update_progress_sync(
     step_number: int | None,
     steps_total: int | None,
 ) -> None:
-    """Synchronous helper to update job progress in the database."""
+    """Synchronous helper to update job progress in the database.
+
+    Validates state transitions using JobStateMachine before updating status.
+    """
     db = SessionLocal()
     try:
         job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
@@ -68,6 +72,8 @@ def _update_progress_sync(
             job.step_number = step_number
             job.steps_total = steps_total
             if job.status == "queued":
+                # Validate transition from queued to in_progress
+                JobStateMachine.validate_transition(job.status, "in_progress")
                 job.status = "in_progress"
                 job.started_at = datetime.now()
             db.commit()
@@ -76,11 +82,16 @@ def _update_progress_sync(
 
 
 def _complete_job_sync(job_id: str, result_data: str | None) -> None:
-    """Synchronous helper to mark a job as complete in the database."""
+    """Synchronous helper to mark a job as complete in the database.
+
+    Validates state transition using JobStateMachine before updating status.
+    """
     db = SessionLocal()
     try:
         job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
         if job:
+            # Validate transition to complete
+            JobStateMachine.validate_transition(job.status, "complete")
             job.status = "complete"
             job.progress_percent = 100.0
             job.completed_at = datetime.now()
@@ -91,11 +102,25 @@ def _complete_job_sync(job_id: str, result_data: str | None) -> None:
 
 
 def _fail_job_sync(job_id: str, error_message: str) -> None:
-    """Synchronous helper to mark a job as failed in the database."""
+    """Synchronous helper to mark a job as failed in the database.
+
+    Validates state transition using JobStateMachine before updating status.
+
+    Special case: If job is in 'queued' status, transition to 'in_progress' first
+    since the worker has picked up the job and is executing it.
+    """
     db = SessionLocal()
     try:
         job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
         if job:
+            # If job is queued, it means worker picked it up but failed before
+            # first progress update. Transition to in_progress first.
+            if job.status == "queued":
+                job.status = "in_progress"
+                job.started_at = datetime.now()
+
+            # Now validate and transition to failed
+            JobStateMachine.validate_transition(job.status, "failed")
             job.status = "failed"
             job.completed_at = datetime.now()
             job.error_message = error_message
@@ -105,11 +130,16 @@ def _fail_job_sync(job_id: str, error_message: str) -> None:
 
 
 def _cancel_job_sync(job_id: str) -> None:
-    """Synchronous helper to mark a job as cancelled in the database."""
+    """Synchronous helper to mark a job as cancelled in the database.
+
+    Validates state transition using JobStateMachine before updating status.
+    """
     db = SessionLocal()
     try:
         job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
         if job:
+            # Validate transition to cancelled
+            JobStateMachine.validate_transition(job.status, "cancelled")
             job.status = "cancelled"
             job.completed_at = datetime.now()
             db.commit()
