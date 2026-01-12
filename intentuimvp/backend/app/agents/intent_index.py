@@ -156,15 +156,61 @@ def _normalize_text(text: str) -> str:
 
 
 def _normalize_resolution(candidate: UserIntent) -> str | None:
-    intent_type = cast(str | None, candidate.intent_type)
-    handler = cast(str | None, candidate.handler)
-    resolution = intent_type or handler
+    """Extract and normalize resolution from a UserIntent."""
+    resolution = _extract_resolution_value(getattr(candidate, "resolution", None))
+    if not resolution:
+        intent_type = cast(str | None, candidate.intent_type)
+        handler = cast(str | None, candidate.handler)
+        resolution = intent_type or handler
     if not resolution:
         return None
     normalized = resolution.strip().lower()
     if normalized.endswith("_handler"):
         normalized = normalized[: -len("_handler")]
     return normalized or None
+
+
+def _extract_resolution_value(resolution: object) -> str | None:
+    payload = _parse_resolution_payload(resolution)
+    if payload is None:
+        return None
+    if isinstance(payload, str):
+        return payload
+    if isinstance(payload, dict):
+        for key in ("action", "handler", "intent_type", "intent", "resolution", "label", "name"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+        actions = payload.get("actions")
+        if isinstance(actions, list):
+            for action in actions:
+                value = _extract_resolution_value(action)
+                if value:
+                    return value
+        return None
+    if isinstance(payload, list):
+        for item in payload:
+            value = _extract_resolution_value(item)
+            if value:
+                return value
+    return None
+
+
+def _parse_resolution_payload(resolution: object) -> object | None:
+    if resolution is None:
+        return None
+    if isinstance(resolution, str):
+        raw = resolution.strip()
+        if not raw:
+            return None
+        if raw[0] in "[{" and raw[-1] in "]}":
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                return resolution
+            return parsed
+        return resolution
+    return resolution
 
 
 def _candidate_similarity(
