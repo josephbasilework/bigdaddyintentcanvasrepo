@@ -14,7 +14,7 @@ from typing import Any
 # Temporarily remove app.mcp from sys.modules if present
 _app_mcp = sys.modules.pop("app.mcp", None)
 try:
-    from mcp import ClientSession, StdioServerParameters  # type: ignore[reportAttributeAccessIssue]
+    from mcp import ClientSession, StdioServerParameters  # type: ignore[attr-defined]
     from mcp.client.stdio import stdio_client  # type: ignore[reportMissingImports]
 finally:
     # Restore app.mcp to sys.modules

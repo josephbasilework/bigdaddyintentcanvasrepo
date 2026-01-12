@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 if TYPE_CHECKING:
+    from app.models.audio_block import AudioBlock
     from app.models.edge import Edge
     from app.models.node import Node
 
@@ -36,6 +37,9 @@ class Canvas(Base):
     )
     edges: Mapped[list[Edge]] = relationship(
         "Edge", back_populates="canvas", cascade="all, delete-orphan"
+    )
+    audio_blocks: Mapped[list[AudioBlock]] = relationship(
+        "AudioBlock", back_populates="canvas", cascade="all, delete-orphan"
     )
 
     def to_dict(self) -> dict:

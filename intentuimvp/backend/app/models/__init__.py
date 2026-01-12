@@ -1,6 +1,7 @@
-"""SQLAlchemy models for canvas, node, preferences, backups, jobs, artifacts, and MCP."""
+"""SQLAlchemy models for canvas, node, preferences, backups, jobs, artifacts, audio, and MCP."""
 
 from app.models.artifact import JobArtifact
+from app.models.audio_block import AudioBlock, AudioBlockStatus
 from app.models.backup import Backup
 from app.models.canvas import Canvas
 from app.models.edge import Edge, RelationType
@@ -12,6 +13,8 @@ from app.models.preferences import Preferences
 # Use: from app.mcp.models import MCPServer, MCPExecutionLog, SecurityLevel
 
 __all__ = [
+    "AudioBlock",
+    "AudioBlockStatus",
     "Backup",
     "Canvas",
     "Edge",
