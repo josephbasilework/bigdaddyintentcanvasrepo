@@ -8,6 +8,7 @@ import { NodeContextMenu } from "./NodeContextMenu";
 import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog";
 import { AudioCapture, AudioRecording } from "./AudioCapture";
 import { GraphAnnotation, GraphAnnotationDisplay } from "./GraphAnnotation";
+import { DependencyEditor, DependencyDisplay } from "./DependencyEditor";
 
 interface NodeProps {
   node: CanvasNode;
@@ -52,6 +53,8 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
   );
   // Graph annotation state for graph-type nodes
   const [isEditingAnnotation, setIsEditingAnnotation] = useState(false);
+  // Dependency editor state
+  const [isEditingDependencies, setIsEditingDependencies] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
   const focusFromPointerRef = useRef(false);
   const scale = useTransformComponent(({ state }) => state.scale);
@@ -217,6 +220,15 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
 
   const handleCancelAnnotation = () => {
     setIsEditingAnnotation(false);
+  };
+
+  // Dependency editor handlers
+  const handleEditDependencies = () => {
+    setIsEditingDependencies(true);
+  };
+
+  const handleCloseDependencies = () => {
+    setIsEditingDependencies(false);
   };
 
   // Handle audio recording completion
@@ -437,6 +449,12 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
               onEdit={handleEditAnnotation}
             />
           )}
+
+          {/* Dependencies display for all nodes */}
+          <DependencyDisplay
+            nodeId={node.id}
+            onEdit={handleEditDependencies}
+          />
         </div>
       </Draggable>
 
@@ -451,6 +469,7 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
           onDuplicate={handleDuplicate}
           onConnect={onStartConnect ? handleConnect : undefined}
           onAnnotate={node.type === "graph" ? handleEditAnnotation : undefined}
+          onEditDependencies={handleEditDependencies}
         />
       )}
 
@@ -586,6 +605,14 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
           annotation={node.graphAnnotation}
           onSave={handleSaveAnnotation}
           onCancel={handleCancelAnnotation}
+        />
+      )}
+
+      {/* Dependency editor dialog */}
+      {isEditingDependencies && (
+        <DependencyEditor
+          nodeId={node.id}
+          onClose={handleCloseDependencies}
         />
       )}
 

@@ -11,6 +11,7 @@ interface ContextMenuProps {
   onDuplicate?: () => void;
   onConnect?: () => void;
   onAnnotate?: () => void;
+  onEditDependencies?: () => void;
 }
 
 /**
@@ -32,6 +33,7 @@ export function NodeContextMenu({
   onDuplicate,
   onConnect,
   onAnnotate,
+  onEditDependencies,
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const positionComputedRef = useRef(false);
@@ -131,6 +133,11 @@ export function NodeContextMenu({
         {onAnnotate && (
           <MenuItem label="Annotate graph" onClick={() => handleAction(onAnnotate)}>
             📝 Annotate...
+          </MenuItem>
+        )}
+        {onEditDependencies && (
+          <MenuItem label="Edit dependencies" onClick={() => handleAction(onEditDependencies)}>
+            🔗 Dependencies...
           </MenuItem>
         )}
         <div

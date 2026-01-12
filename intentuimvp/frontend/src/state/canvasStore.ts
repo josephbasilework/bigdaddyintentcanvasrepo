@@ -90,6 +90,7 @@ interface CanvasState {
   setNodes: (nodes: CanvasNode[]) => void;
   addEdge: (edge: Omit<CanvasEdge, 'id'>) => string;
   removeEdge: (edgeId: string) => void;
+  updateEdge: (edgeId: string, updates: Partial<CanvasEdge>) => void;
   setEdges: (edges: CanvasEdge[]) => void;
 
   // History actions
@@ -292,6 +293,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     removeEdge: (edgeId) => {
       withHistory((state) => ({
         edges: state.edges.filter((edge) => edge.id !== edgeId),
+      }));
+    },
+
+    // Update edge properties
+    updateEdge: (edgeId, updates) => {
+      withHistory((state) => ({
+        edges: state.edges.map((edge) =>
+          edge.id === edgeId ? { ...edge, ...updates } : edge
+        ),
       }));
     },
 
