@@ -338,10 +338,10 @@ class TestGoogleCalendarMCPOperations:
         assert result["success"] is False
         assert "error" in result
 
-    async def test_list_events_returns_placeholder_when_server_registered(
+    async def test_list_events_executes_tool_when_server_registered(
         self, db_session: AsyncSession
     ) -> None:
-        """Test list_events returns placeholder when server is registered but not connected."""
+        """Test list_events executes the MCP tool when server is registered."""
         calendar_mcp = GoogleCalendarMCP(db_session)
 
         # Register the server first
@@ -349,12 +349,36 @@ class TestGoogleCalendarMCPOperations:
             token_json=json.dumps({"token": "test", "refresh_token": "test"})
         )
 
-        result = await calendar_mcp.list_events()
+        from app.mcp.manager import ToolExecutionResult
 
-        # Server is registered but not connected to MCP server
-        assert result["success"] is True
-        assert "events" in result
-        assert "Google Calendar integration ready" in result["message"]
+        events_payload = {"events": [{"id": "event-1", "summary": "Standup"}]}
+        with patch.object(
+            calendar_mcp._manager,
+            "execute_tool",
+            new_callable=AsyncMock,
+        ) as execute_tool:
+            execute_tool.return_value = ToolExecutionResult(
+                success=True,
+                result=[
+                    {
+                        "type": "text",
+                        "text": json.dumps(events_payload),
+                    }
+                ],
+            )
+
+            result = await calendar_mcp.list_events()
+
+            execute_tool.assert_awaited_once()
+            called_args = execute_tool.call_args.kwargs
+            assert called_args["server_id"] == "google-calendar"
+            assert called_args["tool_name"] == "calendar_list"
+            assert called_args["arguments"]["calendar_id"] == "primary"
+            assert isinstance(called_args["arguments"]["time_min"], str)
+            assert isinstance(called_args["arguments"]["time_max"], str)
+
+            assert result["success"] is True
+            assert result["events"] == events_payload["events"]
 
     async def test_create_event_requires_confirmation_without_user_confirmed(
         self, db_session: AsyncSession
@@ -740,10 +764,10 @@ class TestCalendarQuery:
         assert result["success"] is False
         assert "error" in result
 
-    async def test_query_events_returns_placeholder_when_server_registered(
+    async def test_query_events_executes_tool_when_server_registered(
         self, db_session: AsyncSession
     ) -> None:
-        """Test query_events returns placeholder when server is registered but not connected."""
+        """Test query_events executes the MCP tool when server is registered."""
         calendar_mcp = GoogleCalendarMCP(db_session)
 
         # Register the server first
@@ -751,13 +775,35 @@ class TestCalendarQuery:
             token_json=json.dumps({"token": "test", "refresh_token": "test"})
         )
 
-        result = await calendar_mcp.query_events(query="team meeting")
+        from app.mcp.manager import ToolExecutionResult
 
-        # Server is registered but not connected to MCP server
-        assert result["success"] is True
-        assert "events" in result
-        assert result["query"] == "team meeting"
-        assert "Google Calendar integration ready" in result["message"]
+        events_payload = {"events": [{"id": "event-1", "summary": "Team meeting"}]}
+        with patch.object(
+            calendar_mcp._manager,
+            "execute_tool",
+            new_callable=AsyncMock,
+        ) as execute_tool:
+            execute_tool.return_value = ToolExecutionResult(
+                success=True,
+                result=[
+                    {
+                        "type": "text",
+                        "text": json.dumps(events_payload),
+                    }
+                ],
+            )
+
+            result = await calendar_mcp.query_events(query="team meeting")
+
+            execute_tool.assert_awaited_once()
+            called_args = execute_tool.call_args.kwargs
+            assert called_args["server_id"] == "google-calendar"
+            assert called_args["tool_name"] == "calendar_query"
+            assert called_args["arguments"]["query"] == "team meeting"
+
+            assert result["success"] is True
+            assert result["events"] == events_payload["events"]
+            assert result["query"] == "team meeting"
 
     async def test_query_events_with_custom_time_range(
         self, db_session: AsyncSession
@@ -769,14 +815,31 @@ class TestCalendarQuery:
             token_json=json.dumps({"token": "test", "refresh_token": "test"})
         )
 
-        result = await calendar_mcp.query_events(
-            query="standup",
-            time_min="2026-01-01T00:00:00Z",
-            time_max="2026-01-31T23:59:59Z",
-        )
+        from app.mcp.manager import ToolExecutionResult
 
-        assert result["success"] is True
-        assert result["query"] == "standup"
+        with patch.object(
+            calendar_mcp._manager,
+            "execute_tool",
+            new_callable=AsyncMock,
+        ) as execute_tool:
+            execute_tool.return_value = ToolExecutionResult(
+                success=True,
+                result=[{"type": "text", "text": json.dumps({"events": []})}],
+            )
+
+            result = await calendar_mcp.query_events(
+                query="standup",
+                time_min="2026-01-01T00:00:00Z",
+                time_max="2026-01-31T23:59:59Z",
+            )
+
+            execute_tool.assert_awaited_once()
+            called_args = execute_tool.call_args.kwargs
+            assert called_args["arguments"]["time_min"] == "2026-01-01T00:00:00Z"
+            assert called_args["arguments"]["time_max"] == "2026-01-31T23:59:59Z"
+
+            assert result["success"] is True
+            assert result["query"] == "standup"
 
     async def test_google_calendar_direct_query_events_method_exists(
         self, db_session: AsyncSession

@@ -37,6 +37,37 @@ def _pick_text(suggestion: dict[str, Any], keys: tuple[str, ...]) -> str | None:
     return None
 
 
+def _parse_mcp_payload(result: Any) -> Any:
+    if isinstance(result, list):
+        for item in result:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if not text:
+                    continue
+                try:
+                    return json.loads(text)
+                except (json.JSONDecodeError, TypeError):
+                    return text
+        return result
+    return result
+
+
+def _extract_events(payload: Any) -> tuple[list[Any], Any | None]:
+    if isinstance(payload, dict):
+        events = payload.get("events")
+        if isinstance(events, list):
+            return events, None
+        items = payload.get("items")
+        if isinstance(items, list):
+            return items, None
+        return [], payload
+    if isinstance(payload, list):
+        return payload, None
+    if payload is None:
+        return [], None
+    return [], payload
+
+
 class GoogleCalendarMCP:
     """Google Calendar MCP integration.
 
@@ -206,6 +237,7 @@ class GoogleCalendarMCP:
         days_ahead: int = 7,
         time_min: str | None = None,
         time_max: str | None = None,
+        initiated_by: str = "agent",
     ) -> dict[str, Any]:
         """List events from Google Calendar.
 
@@ -214,16 +246,23 @@ class GoogleCalendarMCP:
             days_ahead: Number of days ahead to look
             time_min: Start time in ISO format (optional)
             time_max: End time in ISO format (optional)
+            initiated_by: Agent or user ID that initiated this call
 
         Returns:
             Dict with events list or error
         """
-        # Use MCP client to call the tool
-        client = await self._manager.get_registry()
-        server = await client.get_server("google-calendar")
-
-        if not server or not server.enabled:
-            return {"success": False, "error": "Google Calendar server not enabled"}
+        # Ensure server is registered and enabled
+        server = await self._registry.get_server("google-calendar")
+        if not server:
+            return {
+                "success": False,
+                "error": "Google Calendar server not registered",
+            }
+        if not server.enabled:
+            return {
+                "success": False,
+                "error": "Google Calendar server is disabled",
+            }
 
         # Set default time range
         if not time_min:
@@ -231,13 +270,51 @@ class GoogleCalendarMCP:
         if not time_max:
             time_max = (datetime.utcnow() + timedelta(days=days_ahead)).isoformat() + "Z"
 
-        # This would call the actual MCP tool
-        # For now, return a placeholder
-        return {
-            "success": True,
-            "events": [],
-            "message": "Google Calendar integration ready - awaiting MCP server connection",
+        arguments = {
+            "calendar_id": calendar_id,
+            "time_min": time_min,
+            "time_max": time_max,
         }
+
+        result = await self._manager.execute_tool(
+            server_id="google-calendar",
+            tool_name="calendar_list",
+            arguments=arguments,
+            initiated_by=initiated_by,
+            user_confirmed=False,
+        )
+
+        if result.required_confirmation and not result.success:
+            return {
+                "success": False,
+                "requires_confirmation": True,
+                "message": "User confirmation required to list calendar events",
+            }
+
+        if result.degraded:
+            return {
+                "success": False,
+                "degraded": True,
+                "error": result.error,
+                "degraded_reason": result.degraded_reason,
+            }
+
+        if not result.success:
+            return {
+                "success": False,
+                "error": result.error,
+            }
+
+        payload = _parse_mcp_payload(result.result)
+        events, raw_response = _extract_events(payload)
+        response: dict[str, Any] = {
+            "success": True,
+            "events": events,
+            "message": "Calendar events retrieved.",
+        }
+        if raw_response is not None:
+            response["raw_response"] = raw_response
+        return response
 
     async def query_events(
         self,
@@ -245,6 +322,7 @@ class GoogleCalendarMCP:
         calendar_id: str = "primary",
         time_min: str | None = None,
         time_max: str | None = None,
+        initiated_by: str = "agent",
     ) -> dict[str, Any]:
         """Query/search events from Google Calendar by text search.
 
@@ -253,16 +331,22 @@ class GoogleCalendarMCP:
             calendar_id: Calendar ID (default: 'primary')
             time_min: Start time in ISO format (optional)
             time_max: End time in ISO format (optional)
+            initiated_by: Agent or user ID that initiated this call
 
         Returns:
             Dict with matching events list or error
         """
-        # Use MCP client to call the tool
-        client = await self._manager.get_registry()
-        server = await client.get_server("google-calendar")
-
-        if not server or not server.enabled:
-            return {"success": False, "error": "Google Calendar server not enabled"}
+        server = await self._registry.get_server("google-calendar")
+        if not server:
+            return {
+                "success": False,
+                "error": "Google Calendar server not registered",
+            }
+        if not server.enabled:
+            return {
+                "success": False,
+                "error": "Google Calendar server is disabled",
+            }
 
         # Set default time range if not provided
         if not time_min:
@@ -270,14 +354,53 @@ class GoogleCalendarMCP:
         if not time_max:
             time_max = (datetime.utcnow() + timedelta(days=30)).isoformat() + "Z"
 
-        # This would call the actual MCP calendar_query tool
-        # For now, return a placeholder
-        return {
-            "success": True,
-            "events": [],
+        arguments = {
+            "calendar_id": calendar_id,
             "query": query,
-            "message": "Google Calendar integration ready - awaiting MCP server connection",
+            "time_min": time_min,
+            "time_max": time_max,
         }
+
+        result = await self._manager.execute_tool(
+            server_id="google-calendar",
+            tool_name="calendar_query",
+            arguments=arguments,
+            initiated_by=initiated_by,
+            user_confirmed=False,
+        )
+
+        if result.required_confirmation and not result.success:
+            return {
+                "success": False,
+                "requires_confirmation": True,
+                "message": "User confirmation required to query calendar events",
+            }
+
+        if result.degraded:
+            return {
+                "success": False,
+                "degraded": True,
+                "error": result.error,
+                "degraded_reason": result.degraded_reason,
+            }
+
+        if not result.success:
+            return {
+                "success": False,
+                "error": result.error,
+            }
+
+        payload = _parse_mcp_payload(result.result)
+        events, raw_response = _extract_events(payload)
+        response: dict[str, Any] = {
+            "success": True,
+            "events": events,
+            "query": query,
+            "message": "Calendar query completed.",
+        }
+        if raw_response is not None:
+            response["raw_response"] = raw_response
+        return response
 
     async def create_event(
         self,
