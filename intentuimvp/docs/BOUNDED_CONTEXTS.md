@@ -491,7 +491,7 @@ Per EI-005, the following must be validated:
 - [x] Cross-context communication via well-defined interfaces
 - [x] No circular dependencies between contexts
 - [x] Aggregates enforce domain invariants
-- [ ] Module-level documentation completed (see T2-F9.4)
+- [x] Module-level documentation completed (see T2-F9.4)
 - [ ] Architecture diagrams reviewed (see EI-005 Validation task)
 
 ---
