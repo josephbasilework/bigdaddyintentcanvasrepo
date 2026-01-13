@@ -127,6 +127,45 @@ describe("DependencyEditor", () => {
     );
   });
 
+  it("updates the new dependency label when the relation type changes", () => {
+    const store = createMockStore();
+    mockUseCanvasStore.mockReturnValue(store);
+
+    const onClose = vi.fn();
+    render(<DependencyEditor nodeId="node-1" onClose={onClose} />);
+
+    const selects = screen.getAllByRole("combobox");
+    const relationSelect = selects[1];
+    const labelInput = screen.getByPlaceholderText(/label \(optional\)/i);
+
+    fireEvent.change(relationSelect, { target: { value: "supports" } });
+    expect(labelInput).toHaveValue("Supports");
+
+    fireEvent.change(labelInput, { target: { value: "Custom label" } });
+    fireEvent.change(relationSelect, { target: { value: "references" } });
+    expect(labelInput).toHaveValue("Custom label");
+  });
+
+  it("prevents adding a dependency that would create a cycle", () => {
+    const edges: CanvasEdge[] = [
+      { id: "edge-1", sourceNodeId: "node-2", targetNodeId: "node-1", relationType: "depends_on" },
+    ];
+    const store = createMockStore({ edges });
+    mockUseCanvasStore.mockReturnValue(store);
+
+    const onClose = vi.fn();
+    render(<DependencyEditor nodeId="node-1" onClose={onClose} />);
+
+    const select = screen.getByRole("combobox", { name: /add dependency/i });
+    fireEvent.change(select, { target: { value: "node-2" } });
+
+    const addButton = screen.getByRole("button", { name: /^add$/i });
+    fireEvent.click(addButton);
+
+    expect(store.addEdge).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/dependency cycle detected/i);
+  });
+
   it("displays outgoing dependencies", () => {
     const edges: CanvasEdge[] = [
       { id: "edge-1", sourceNodeId: "node-1", targetNodeId: "node-2", relationType: "depends_on" },
@@ -217,6 +256,24 @@ describe("DependencyEditor", () => {
     }));
   });
 
+  it("blocks relation changes that would create a cycle", () => {
+    const edges: CanvasEdge[] = [
+      { id: "edge-1", sourceNodeId: "node-1", targetNodeId: "node-2", relationType: "references" },
+      { id: "edge-2", sourceNodeId: "node-2", targetNodeId: "node-1", relationType: "depends_on" },
+    ];
+    const store = createMockStore({ edges });
+    mockUseCanvasStore.mockReturnValue(store);
+
+    const onClose = vi.fn();
+    render(<DependencyEditor nodeId="node-1" onClose={onClose} />);
+
+    const relationSelect = screen.getByLabelText(/relation to node 2/i);
+    fireEvent.change(relationSelect, { target: { value: "depends_on" } });
+
+    expect(store.updateEdge).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/dependency cycle detected/i);
+  });
+
   it("keeps custom labels when changing relation type", () => {
     const edges: CanvasEdge[] = [
       {
@@ -254,6 +311,35 @@ describe("DependencyEditor", () => {
         sourceNodeId: "node-1",
         targetNodeId: "node-2",
         relationType: "depends_on",
+        label: "Depends on",
+      },
+    ];
+    const store = createMockStore({ edges });
+    mockUseCanvasStore.mockReturnValue(store);
+
+    const onClose = vi.fn();
+    render(<DependencyEditor nodeId="node-1" onClose={onClose} />);
+
+    const relationSelects = screen.getAllByRole("combobox");
+    const edgeRelationSelect = relationSelects[relationSelects.length - 1];
+
+    fireEvent.change(edgeRelationSelect, { target: { value: "supports" } });
+
+    expect(store.updateEdge).toHaveBeenCalledWith(
+      "edge-1",
+      expect.objectContaining({
+        relationType: "supports",
+        label: "Supports",
+      })
+    );
+  });
+
+  it("treats missing relation types as defaults when updating labels", () => {
+    const edges: CanvasEdge[] = [
+      {
+        id: "edge-1",
+        sourceNodeId: "node-1",
+        targetNodeId: "node-2",
         label: "Depends on",
       },
     ];

@@ -14,6 +14,10 @@ import {
 import { Node } from "./Node";
 import { EdgesLayer } from "./Edge";
 import { EDGE_RELATION_OPTIONS, getEdgeRelationLabel } from "./edgeRelations";
+import {
+  DEPENDENCY_CYCLE_MESSAGE,
+  wouldCreateDependencyCycle,
+} from "../../utils/dependencyCycles";
 import { useAutoSave } from "../../hooks/useAutoSave";
 import { SaveStatusIndicator } from "./SaveStatusIndicator";
 
@@ -370,6 +374,7 @@ export function CanvasWorkspace() {
   );
   const [connectLabel, setConnectLabel] = useState(DEFAULT_RELATION_LABEL);
   const [connectLabelTouched, setConnectLabelTouched] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
   const connectRelationId = useId();
   const connectLabelId = useId();
   const selectionStartRef = useRef<{
@@ -402,6 +407,7 @@ export function CanvasWorkspace() {
 
   const handleCancelConnect = useCallback(() => {
     setConnectSourceNodeId(null);
+    setConnectError(null);
   }, []);
 
   const handleStartConnect = useCallback((nodeId: string) => {
@@ -409,13 +415,14 @@ export function CanvasWorkspace() {
     setConnectRelationType(DEFAULT_RELATION_TYPE);
     setConnectLabel(DEFAULT_RELATION_LABEL);
     setConnectLabelTouched(false);
+    setConnectError(null);
   }, []);
 
   const handleConnectTarget = useCallback((targetNodeId: string) => {
     if (!connectSourceNodeId) return;
 
     if (connectSourceNodeId === targetNodeId) {
-      setConnectSourceNodeId(null);
+      setConnectError("Cannot connect a node to itself.");
       return;
     }
 
@@ -426,35 +433,61 @@ export function CanvasWorkspace() {
     if (!hasEdge) {
       const trimmedLabel = connectLabel.trim();
       const resolvedLabel = trimmedLabel || getEdgeRelationLabel(connectRelationType) || undefined;
+      const candidateEdge: CanvasEdge = {
+        id: `candidate-${connectSourceNodeId}-${targetNodeId}`,
+        sourceNodeId: connectSourceNodeId,
+        targetNodeId,
+        relationType: connectRelationType,
+        ...(resolvedLabel ? { label: resolvedLabel } : {}),
+      };
+      if (
+        connectRelationType === "depends_on" &&
+        wouldCreateDependencyCycle(edges, candidateEdge)
+      ) {
+        setConnectError(DEPENDENCY_CYCLE_MESSAGE);
+        return;
+      }
+
       const edgePayload: Omit<CanvasEdge, "id"> = {
         sourceNodeId: connectSourceNodeId,
         targetNodeId,
         relationType: connectRelationType,
+        ...(resolvedLabel ? { label: resolvedLabel } : {}),
       };
-      if (resolvedLabel) {
-        edgePayload.label = resolvedLabel;
-      }
       addEdge(edgePayload);
     }
 
     setConnectSourceNodeId(null);
+    setConnectError(null);
   }, [addEdge, connectLabel, connectRelationType, connectSourceNodeId, edges]);
 
   const handleRelationTypeChange = useCallback(
     (event: React.ChangeEvent<HTMLSelectElement>) => {
       const nextType = event.target.value as CanvasEdgeRelationType;
+      const trimmedLabel = connectLabel.trim();
+      const currentDefaultLabel = getEdgeRelationLabel(connectRelationType) ?? "";
+      const labelMatchesDefault =
+        trimmedLabel === "" || trimmedLabel === currentDefaultLabel;
       setConnectRelationType(nextType);
-      if (!connectLabelTouched) {
+      setConnectError(null);
+      if (!connectLabelTouched || labelMatchesDefault) {
         setConnectLabel(getEdgeRelationLabel(nextType) ?? "");
+        setConnectLabelTouched(false);
       }
     },
-    [connectLabelTouched]
+    [connectLabel, connectLabelTouched, connectRelationType]
   );
 
   const handleLabelChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    setConnectLabel(event.target.value);
-    setConnectLabelTouched(true);
-  }, []);
+    const nextValue = event.target.value;
+    const trimmedValue = nextValue.trim();
+    const currentDefaultLabel = getEdgeRelationLabel(connectRelationType) ?? "";
+    const labelMatchesDefault =
+      trimmedValue === "" || trimmedValue === currentDefaultLabel;
+    setConnectLabel(nextValue);
+    setConnectLabelTouched(!labelMatchesDefault);
+    setConnectError(null);
+  }, [connectRelationType]);
 
   const cleanupSelectionHandlers = useCallback(() => {
     if (!selectionHandlersRef.current) return;
@@ -533,6 +566,7 @@ export function CanvasWorkspace() {
     setConnectRelationType(DEFAULT_RELATION_TYPE);
     setConnectLabel(DEFAULT_RELATION_LABEL);
     setConnectLabelTouched(false);
+    setConnectError(null);
   }, [connectSourceNodeId]);
 
   useEffect(() => () => {
@@ -752,6 +786,21 @@ export function CanvasWorkspace() {
               />
             </div>
           </div>
+          {connectError && (
+            <div
+              role="alert"
+              style={{
+                backgroundColor: "rgba(239, 68, 68, 0.15)",
+                border: "1px solid rgba(239, 68, 68, 0.4)",
+                borderRadius: "8px",
+                color: "#fecaca",
+                fontSize: "12px",
+                padding: "8px 10px",
+              }}
+            >
+              {connectError}
+            </div>
+          )}
         </div>
         <button
           type="button"

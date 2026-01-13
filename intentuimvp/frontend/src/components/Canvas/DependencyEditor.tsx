@@ -9,6 +9,11 @@ import {
   CanvasNode,
 } from "../../state/canvasStore";
 import { EDGE_RELATION_OPTIONS, getEdgeRelationLabel } from "./edgeRelations";
+import {
+  DEFAULT_DEPENDENCY_RELATION,
+  DEPENDENCY_CYCLE_MESSAGE,
+  wouldCreateDependencyCycle,
+} from "../../utils/dependencyCycles";
 
 interface DependencyEditorProps {
   nodeId: string;
@@ -37,7 +42,9 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
   const [selectedTargetId, setSelectedTargetId] = useState<string>("");
   const [newRelationType, setNewRelationType] = useState<CanvasEdgeRelationType>("depends_on");
   const [newLabel, setNewLabel] = useState("");
+  const [newLabelTouched, setNewLabelTouched] = useState(false);
   const [edgeLabelDrafts, setEdgeLabelDrafts] = useState<Record<string, string>>({});
+  const [dependencyError, setDependencyError] = useState<string | null>(null);
 
   const titleId = useId();
   const outgoingId = useId();
@@ -136,10 +143,57 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
     [clearEdgeLabelDraft, commitEdgeLabel]
   );
 
+  const handleTargetChange = useCallback((event: React.ChangeEvent<HTMLSelectElement>) => {
+    setSelectedTargetId(event.target.value);
+    setDependencyError(null);
+  }, []);
+
+  const handleNewRelationTypeChange = useCallback(
+    (event: React.ChangeEvent<HTMLSelectElement>) => {
+      const nextType = event.target.value as CanvasEdgeRelationType;
+      const trimmedLabel = newLabel.trim();
+      const currentDefaultLabel = getEdgeRelationLabel(newRelationType) ?? "";
+      const labelMatchesDefault =
+        trimmedLabel === "" || trimmedLabel === currentDefaultLabel;
+      setNewRelationType(nextType);
+      setDependencyError(null);
+      if (!newLabelTouched || labelMatchesDefault) {
+        setNewLabel(getEdgeRelationLabel(nextType) ?? "");
+        setNewLabelTouched(false);
+      }
+    },
+    [newLabel, newLabelTouched, newRelationType]
+  );
+
+  const handleNewLabelChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextValue = event.target.value;
+    const trimmedValue = nextValue.trim();
+    const currentDefaultLabel = getEdgeRelationLabel(newRelationType) ?? "";
+    const labelMatchesDefault =
+      trimmedValue === "" || trimmedValue === currentDefaultLabel;
+    setNewLabel(nextValue);
+    setNewLabelTouched(!labelMatchesDefault);
+    setDependencyError(null);
+  }, [newRelationType]);
+
   const handleAddDependency = useCallback(() => {
     if (!selectedTargetId) return;
 
     const label = newLabel.trim() || getEdgeRelationLabel(newRelationType) || undefined;
+    if (newRelationType === "depends_on") {
+      const candidateEdge: CanvasEdge = {
+        id: `candidate-${nodeId}-${selectedTargetId}`,
+        sourceNodeId: nodeId,
+        targetNodeId: selectedTargetId,
+        relationType: newRelationType,
+        label,
+      };
+      if (wouldCreateDependencyCycle(edges, candidateEdge)) {
+        setDependencyError(DEPENDENCY_CYCLE_MESSAGE);
+        return;
+      }
+    }
+
     addEdge({
       sourceNodeId: nodeId,
       targetNodeId: selectedTargetId,
@@ -150,7 +204,9 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
     setSelectedTargetId("");
     setNewLabel("");
     setNewRelationType("depends_on");
-  }, [addEdge, nodeId, selectedTargetId, newRelationType, newLabel]);
+    setNewLabelTouched(false);
+    setDependencyError(null);
+  }, [addEdge, edges, newLabel, newRelationType, nodeId, selectedTargetId]);
 
   const handleRemoveEdge = useCallback(
     (edgeId: string) => {
@@ -163,13 +219,27 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
     (edgeId: string, relationType: CanvasEdgeRelationType) => {
       const edge = edges.find((e) => e.id === edgeId);
       if (!edge) return;
+      const resolvedRelationType = edge.relationType ?? DEFAULT_DEPENDENCY_RELATION;
       const draftLabel = edgeLabelDrafts[edgeId];
       const currentLabel = (draftLabel ?? edge.label ?? "").trim();
-      const currentDefault = getEdgeRelationLabel(edge.relationType) ?? "";
+      const currentDefault = getEdgeRelationLabel(resolvedRelationType) ?? "";
       const isCustomLabel = currentLabel !== "" && currentLabel !== currentDefault;
       const nextDefault = getEdgeRelationLabel(relationType) ?? "";
       const nextLabel = isCustomLabel ? currentLabel : nextDefault;
 
+      if (relationType === "depends_on") {
+        const candidateEdge: CanvasEdge = {
+          ...edge,
+          relationType,
+          label: nextLabel || undefined,
+        };
+        if (wouldCreateDependencyCycle(edges, candidateEdge)) {
+          setDependencyError(DEPENDENCY_CYCLE_MESSAGE);
+          return;
+        }
+      }
+
+      setDependencyError(null);
       updateEdge(edgeId, { relationType, label: nextLabel || undefined });
 
       if (draftLabel !== undefined) {
@@ -263,7 +333,7 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
             <select
               id={addDependencyId}
               value={selectedTargetId}
-              onChange={(e) => setSelectedTargetId(e.target.value)}
+              onChange={handleTargetChange}
               style={{
                 flex: "1 1 180px",
                 padding: "8px 12px",
@@ -283,7 +353,7 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
             </select>
             <select
               value={newRelationType}
-              onChange={(e) => setNewRelationType(e.target.value as CanvasEdgeRelationType)}
+              onChange={handleNewRelationTypeChange}
               style={{
                 flex: "0 0 140px",
                 padding: "8px 12px",
@@ -304,7 +374,7 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
               id={addDependencyLabelId}
               type="text"
               value={newLabel}
-              onChange={(e) => setNewLabel(e.target.value)}
+              onChange={handleNewLabelChange}
               placeholder="Label (optional)"
               aria-label="Dependency label"
               style={{
@@ -335,6 +405,22 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
               Add
             </button>
           </div>
+          {dependencyError && (
+            <div
+              role="alert"
+              style={{
+                marginTop: "10px",
+                padding: "8px 10px",
+                borderRadius: "6px",
+                backgroundColor: "rgba(239, 68, 68, 0.15)",
+                border: "1px solid rgba(239, 68, 68, 0.4)",
+                color: "#fca5a5",
+                fontSize: "12px",
+              }}
+            >
+              {dependencyError}
+            </div>
+          )}
         </div>
 
         {/* Outgoing dependencies */}
