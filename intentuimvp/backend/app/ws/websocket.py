@@ -16,12 +16,15 @@ from app.agui import (
     AgentNotificationPayload,
     AgentToUIMessageType,
     AGUIEnvelope,
+    DashboardSubscribeMessage,
+    DashboardUnsubscribeMessage,
     StateSnapshotMessage,
     StateSnapshotPayload,
     StateSyncRequestMessage,
 )
 from app.config import get_settings
 from app.logging_config import get_correlation_id
+from app.ws.dashboard_streaming import get_dashboard_streaming_service
 from app.ws.state_manager import get_state_manager
 
 logger = logging.getLogger(__name__)
@@ -431,6 +434,91 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             error_msg = AgentNotificationMessage(payload=error_payload)
                             await manager.send_agui_message(error_msg, websocket)
 
+                    # Handle dashboard subscribe requests
+                    elif message_type == "dashboard.subscribe":
+                        try:
+                            subscribe_msg = DashboardSubscribeMessage(**message_data)
+                            dashboard_service = get_dashboard_streaming_service()
+                            subscriptions = await dashboard_service.subscribe(
+                                websocket,
+                                subscribe_msg.payload.dashboard_node_id,
+                                subscribe_msg.payload.canvas_id,
+                            )
+                            # Send confirmation with active subscriptions
+                            await dashboard_service.send_subscribed_confirmation(
+                                websocket,
+                                subscribe_msg.payload.dashboard_node_id,
+                                subscriptions,
+                            )
+                            logger.info(
+                                f"Dashboard subscribed: node_id="
+                                f"{subscribe_msg.payload.dashboard_node_id}"
+                            )
+                        except ValidationError as e:
+                            logger.error(f"Dashboard subscribe validation failed: {e}")
+                            error_payload = AgentNotificationPayload(
+                                level="warning",
+                                title="Invalid Subscribe Request",
+                                message=str(e),
+                            )
+                            error_msg = AgentNotificationMessage(payload=error_payload)
+                            await manager.send_agui_message(error_msg, websocket)
+                        except Exception as e:
+                            logger.error(f"Error handling dashboard subscribe: {e}")
+                            error_payload = AgentNotificationPayload(
+                                level="warning",
+                                title="Subscribe Error",
+                                message="Failed to subscribe to dashboard",
+                            )
+                            error_msg = AgentNotificationMessage(payload=error_payload)
+                            await manager.send_agui_message(error_msg, websocket)
+
+                    # Handle dashboard unsubscribe requests
+                    elif message_type == "dashboard.unsubscribe":
+                        try:
+                            unsubscribe_msg = DashboardUnsubscribeMessage(**message_data)
+                            dashboard_service = get_dashboard_streaming_service()
+                            await dashboard_service.unsubscribe(
+                                websocket,
+                                unsubscribe_msg.payload.dashboard_node_id,
+                            )
+                            # Send acknowledgment
+                            ack_payload = AgentNotificationPayload(
+                                level="info",
+                                title="Unsubscribed",
+                                message=f"Unsubscribed from dashboard "
+                                f"{unsubscribe_msg.payload.dashboard_node_id}",
+                            )
+                            ack_msg = AgentNotificationMessage(
+                                payload=ack_payload,
+                                correlation_id=envelope.message_id,
+                            )
+                            await manager.send_agui_message(ack_msg, websocket)
+                            logger.info(
+                                f"Dashboard unsubscribed: node_id="
+                                f"{unsubscribe_msg.payload.dashboard_node_id}"
+                            )
+                        except ValidationError as e:
+                            logger.error(
+                                f"Dashboard unsubscribe validation failed: {e}"
+                            )
+                            error_payload = AgentNotificationPayload(
+                                level="warning",
+                                title="Invalid Unsubscribe Request",
+                                message=str(e),
+                            )
+                            error_msg = AgentNotificationMessage(payload=error_payload)
+                            await manager.send_agui_message(error_msg, websocket)
+                        except Exception as e:
+                            logger.error(f"Error handling dashboard unsubscribe: {e}")
+                            error_payload = AgentNotificationPayload(
+                                level="warning",
+                                title="Unsubscribe Error",
+                                message="Failed to unsubscribe from dashboard",
+                            )
+                            error_msg = AgentNotificationMessage(payload=error_payload)
+                            await manager.send_agui_message(error_msg, websocket)
+
                     else:
                         # Try to validate as UIToAgentMessageType
                         # This is a placeholder - actual routing would be handled here
@@ -477,6 +565,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+        # Clean up dashboard subscriptions
+        dashboard_service = get_dashboard_streaming_service()
+        await dashboard_service.disconnect(websocket)
         logger.info("WebSocket client disconnected")
 
         # Stop heartbeat if no more connections
@@ -486,6 +577,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
+        # Clean up dashboard subscriptions
+        dashboard_service = get_dashboard_streaming_service()
+        await dashboard_service.disconnect(websocket)
 
         # Stop heartbeat if no more connections
         if not manager.active_connections:

@@ -584,5 +584,83 @@ class AGUIEvent(BaseModel):
 
 
 
+# ============================================================================
+# Dashboard Streaming Protocol
+# ============================================================================
+
+
+class DashboardSubscribePayload(BaseModel):
+    """Payload for dashboard subscription request."""
+
+    dashboard_node_id: int = Field(..., description="Dashboard node identifier")
+    canvas_id: int = Field(..., description="Canvas identifier")
+
+
+class DashboardSubscribeMessage(UIToAgentMessage):
+    """Request to subscribe a WebSocket connection to a dashboard node's updates."""
+
+    type: Literal["dashboard.subscribe"] = "dashboard.subscribe"
+    payload: DashboardSubscribePayload
+
+
+class DashboardUnsubscribePayload(BaseModel):
+    """Payload for dashboard unsubscription request."""
+
+    dashboard_node_id: int = Field(
+        ..., description="Dashboard node identifier to unsubscribe from"
+    )
+
+
+class DashboardUnsubscribeMessage(UIToAgentMessage):
+    """Request to unsubscribe from a dashboard node's updates."""
+
+    type: Literal["dashboard.unsubscribe"] = "dashboard.unsubscribe"
+    payload: DashboardUnsubscribePayload
+
+
+class DashboardUpdatePayload(BaseModel):
+    """Payload for dashboard state update messages."""
+
+    dashboard_node_id: int = Field(..., description="Dashboard node identifier")
+    subscription_target: str = Field(..., description="Type of entity that changed")
+    source_id: str | None = Field(default=None, description="ID of the changed entity")
+    change_type: Literal["created", "updated", "deleted"] = Field(
+        ..., description="Type of change that occurred"
+    )
+    data: dict[str, Any] = Field(
+        default_factory=dict, description="Updated entity data"
+    )
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(UTC),
+        description="Update timestamp (UTC)",
+    )
+
+
+class DashboardUpdateMessage(AgentToUIMessage):
+    """Dashboard state update pushed to subscribed clients.
+
+    Sent when an entity matching a dashboard subscription changes.
+    """
+
+    type: Literal["dashboard.update"] = "dashboard.update"
+    payload: DashboardUpdatePayload
+
+
+class DashboardSubscribedPayload(BaseModel):
+    """Payload for dashboard subscription confirmation."""
+
+    dashboard_node_id: int = Field(..., description="Dashboard node identifier")
+    subscriptions: list[dict[str, Any]] = Field(
+        default_factory=list, description="Active subscriptions for this dashboard"
+    )
+
+
+class DashboardSubscribedMessage(AgentToUIMessage):
+    """Confirmation that a WebSocket connection is now subscribed to a dashboard."""
+
+    type: Literal["dashboard.subscribed"] = "dashboard.subscribed"
+    payload: DashboardSubscribedPayload
+
+
 # For consistency with frontend naming
 AGUIProtocolVersion = AGUI_PROTOCOL_VERSION

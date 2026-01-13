@@ -603,6 +603,13 @@ Use CopilotKit for AG-UI client plumbing:
 - Given dashboard created, When state changes, Then dashboard refreshes deterministically
 - Dashboard does not corrupt workspace state or become a scrolling log
 
+**Subscription Model**:
+- `dashboard_subscription` table
+- `subscription_target`: workspace_state | node | edge | job | artifact | tool_output
+- `source_id`: optional identifier for target-specific source (node id, edge id, job id, artifact id, tool name)
+- `subscription_config`: JSON payload for filters (JSON-safe primitives only)
+- `is_active`: soft toggle; timestamps recorded on create/update
+
 ---
 
 ### FR-016: Audio Blocks + Transcription
