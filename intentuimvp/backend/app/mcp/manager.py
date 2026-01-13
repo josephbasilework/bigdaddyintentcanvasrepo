@@ -11,7 +11,9 @@ Implements graceful degradation (FR-019 VI-006):
 """
 
 import asyncio
+import logging
 import sys
+import time
 from collections import defaultdict
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -31,8 +33,11 @@ finally:
         sys.modules["app.mcp"] = _app_mcp
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
+from app.logging_config import get_correlation_id  # noqa: E402
 from app.mcp.registry import MCPServerRegistry  # noqa: E402
 from app.mcp.security import MCPSecurityValidator  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 
 class ServerHealth(Enum):
@@ -369,12 +374,40 @@ class MCPManager:
         Returns:
             ToolExecutionResult with the execution outcome
         """
+        start_time = time.time()
+        correlation_id = get_correlation_id()
+
         # Security check
         decision = await self._validator.check_permission(
             server_id, tool_name, initiated_by
         )
 
+        base_extra: dict[str, Any] = {
+            "event": "tool_call",
+            "tool_type": "mcp",
+            "server_id": server_id,
+            "tool_name": tool_name,
+            "initiated_by": initiated_by,
+            "correlation_id": correlation_id,
+            "security_level": decision.security_level.value,
+        }
+
+        def build_extra(**overrides: Any) -> dict[str, Any]:
+            execution_time_ms = (time.time() - start_time) * 1000
+            extra = dict(base_extra)
+            extra["execution_time_ms"] = round(execution_time_ms, 2)
+            extra.update(overrides)
+            return extra
+
         if not decision.allowed:
+            logger.warning(
+                "MCP tool execution blocked",
+                extra=build_extra(
+                    success=False,
+                    error=decision.reason,
+                    requires_confirmation=decision.requires_confirmation,
+                ),
+            )
             await self._validator.log_execution(
                 server_id=server_id,
                 tool_name=tool_name,
@@ -391,6 +424,15 @@ class MCPManager:
 
         # Check if confirmation required
         if decision.requires_confirmation and not user_confirmed:
+            logger.warning(
+                "MCP tool execution requires confirmation",
+                extra=build_extra(
+                    success=False,
+                    error="User confirmation required",
+                    confirmed=user_confirmed,
+                    requires_confirmation=True,
+                ),
+            )
             return ToolExecutionResult(
                 success=False,
                 error="User confirmation required",
@@ -402,6 +444,15 @@ class MCPManager:
 
         # Check if server is in degraded/unhealthy state
         if health.state != ServerHealth.HEALTHY:
+            logger.warning(
+                "MCP tool execution skipped due to server health",
+                extra=build_extra(
+                    success=False,
+                    error=f"Server {server_id} is {health.state.value}",
+                    health_state=health.state.value,
+                    consecutive_failures=health.consecutive_failures,
+                ),
+            )
             # Return degraded mode result (FR-019 VI-006)
             return ToolExecutionResult(
                 success=False,
@@ -415,6 +466,15 @@ class MCPManager:
             # Try to reconnect if server is not connected but healthy
             reconnect_success = await self.start_server(server_id)
             if not reconnect_success or server_id not in self._connections:
+                logger.warning(
+                    "MCP tool execution failed due to missing connection",
+                    extra=build_extra(
+                        success=False,
+                        error=f"Server {server_id} not connected",
+                        degraded=health.state != ServerHealth.HEALTHY,
+                        health_state=health.state.value,
+                    ),
+                )
                 return ToolExecutionResult(
                     success=False,
                     error=f"Server {server_id} not connected",
@@ -458,6 +518,15 @@ class MCPManager:
                 result=result_data,
             )
 
+            logger.info(
+                "MCP tool executed successfully",
+                extra=build_extra(
+                    success=True,
+                    confirmed=user_confirmed,
+                    requires_confirmation=decision.requires_confirmation,
+                ),
+            )
+
             return ToolExecutionResult(
                 success=True,
                 result=result_data,
@@ -480,6 +549,17 @@ class MCPManager:
                 error_message=str(e),
                 arguments=arguments,
                 result=None,
+            )
+
+            logger.error(
+                "MCP tool execution failed",
+                extra=build_extra(
+                    success=False,
+                    error=str(e),
+                    confirmed=user_confirmed,
+                    requires_confirmation=decision.requires_confirmation,
+                ),
+                exc_info=True,
             )
 
             # Check if server should be auto-disabled

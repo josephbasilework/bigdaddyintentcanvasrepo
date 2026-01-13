@@ -661,6 +661,100 @@ class TestExecuteTool:
             assert logs[0].success is False
             assert logs[0].error_message == "Tool failed"
 
+    async def test_execute_tool_logs_structured_success(
+        self,
+        manager: MCPManager,
+        test_server: MCPServer,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Test that successful execution emits structured tool_call logs."""
+        import logging
+
+        caplog.set_level(logging.DEBUG, logger="app.mcp.manager")
+
+        with patch("app.mcp.manager.stdio_client") as mock_stdio_client, \
+             patch("app.mcp.manager.ClientSession") as mock_session_cls:
+
+            mock_stdio_client.return_value = _mock_stdio_client()
+
+            mock_result_item = Mock()
+            mock_result_item.model_dump = Mock(return_value={"type": "text"})
+            mock_result = Mock()
+            mock_result.content = [mock_result_item]
+
+            mock_session = _mock_client_session()
+            mock_session.call_tool = AsyncMock(return_value=mock_result)
+            mock_session_cls.return_value = mock_session
+
+            await manager.start_server(test_server.server_id)
+
+            result = await manager.execute_tool(
+                server_id=test_server.server_id,
+                tool_name="read_data",
+                arguments={},
+                initiated_by="test_user",
+            )
+
+            assert result.success is True
+
+        tool_call_logs = [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "tool_call"
+            and getattr(record, "tool_name", None) == "read_data"
+        ]
+        assert len(tool_call_logs) == 1
+        log_entry = tool_call_logs[0]
+        assert log_entry.tool_type == "mcp"
+        assert log_entry.server_id == test_server.server_id
+        assert log_entry.success is True
+        assert log_entry.execution_time_ms >= 0
+        assert log_entry.correlation_id is not None
+
+    async def test_execute_tool_logs_structured_failure(
+        self,
+        manager: MCPManager,
+        test_server: MCPServer,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Test that failed execution emits structured tool_call logs."""
+        import logging
+
+        caplog.set_level(logging.DEBUG, logger="app.mcp.manager")
+
+        with patch("app.mcp.manager.stdio_client") as mock_stdio_client, \
+             patch("app.mcp.manager.ClientSession") as mock_session_cls:
+
+            mock_stdio_client.return_value = _mock_stdio_client()
+
+            mock_session = _mock_client_session()
+            mock_session.call_tool = AsyncMock(side_effect=Exception("Tool failed"))
+            mock_session_cls.return_value = mock_session
+
+            await manager.start_server(test_server.server_id)
+
+            result = await manager.execute_tool(
+                server_id=test_server.server_id,
+                tool_name="read_data",
+                arguments={},
+                initiated_by="test_user",
+            )
+
+            assert result.success is False
+
+        tool_call_logs = [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "tool_call"
+            and getattr(record, "tool_name", None) == "read_data"
+        ]
+        assert len(tool_call_logs) == 1
+        log_entry = tool_call_logs[0]
+        assert log_entry.tool_type == "mcp"
+        assert log_entry.server_id == test_server.server_id
+        assert log_entry.success is False
+        assert "Tool failed" in log_entry.error
+
 
 @pytest.mark.asyncio
 class TestGetAllAvailableTools:
