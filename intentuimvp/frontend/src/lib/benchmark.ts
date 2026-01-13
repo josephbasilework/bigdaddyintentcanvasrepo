@@ -211,13 +211,35 @@ export async function quickBenchmark(): Promise<BenchmarkResult> {
   return result;
 }
 
+/**
+ * Quick benchmark suite helper for manual testing.
+ *
+ * Call this from the browser console to run the full benchmark suite:
+ * ```js
+ * await quickBenchmarkSuite();
+ * ```
+ */
+export async function quickBenchmarkSuite(): Promise<BenchmarkResult[]> {
+  const canvas = document.querySelector("canvas") as HTMLCanvasElement;
+  if (!canvas) {
+    throw new Error("Canvas not found - make sure you're on the canvas page");
+  }
+
+  const results = await runBenchmarkSuite(canvas);
+  console.log(formatBenchmarkResults(results));
+
+  return results;
+}
+
 // Export to window for console access
 declare global {
   interface Window {
     runCanvasBenchmark: typeof quickBenchmark;
+    runBenchmarkSuite: typeof quickBenchmarkSuite;
   }
 }
 
 if (typeof window !== "undefined") {
   window.runCanvasBenchmark = quickBenchmark;
+  window.runBenchmarkSuite = quickBenchmarkSuite;
 }

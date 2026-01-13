@@ -107,6 +107,38 @@ npm run dev
 npm test -- --run perf-state-update
 ```
 
+#### NFR-PERF-006: Canvas 100-Node 60fps Benchmark
+
+The benchmark harness is available in `intentuimvp/frontend/src/lib/benchmark.ts`.
+
+**Manual Testing (Browser Console):**
+
+1. Start the frontend: `npm run dev`
+2. Navigate to the canvas page at http://localhost:3000
+3. Open browser DevTools (F12) and go to the Console tab
+4. Create a test canvas with 100 nodes (or use an existing workspace)
+5. Run the benchmark:
+
+```javascript
+// Quick single benchmark (100 nodes)
+await window.runCanvasBenchmark();
+
+// Full benchmark suite (10, 50, 100, 200 nodes)
+await window.runBenchmarkSuite();
+```
+
+**Expected Results:**
+- 100 nodes: Average FPS ≥ 55 (target: 60fps)
+- Pan/zoom operations should remain smooth during benchmark
+- Results are logged to console and sent to backend telemetry
+
+**Automated Testing:**
+
+```bash
+cd intentuimvp/frontend
+npm test -- benchmark.test.ts --run
+```
+
 ### 4.2 Backend Performance
 
 ```bash
