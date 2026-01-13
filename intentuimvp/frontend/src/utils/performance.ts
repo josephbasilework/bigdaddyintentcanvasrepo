@@ -68,8 +68,18 @@ export function getAndClearMeasure(name: string): number | undefined {
  * Clear all performance marks and measures
  */
 export function clearMarks(): void {
-  performance.clearMarksByPrefix(PERF_MARK_PREFIX);
-  performance.clearMeasuresByPrefix(PERF_MARK_PREFIX);
+  // Standard Performance API doesn't have clearMarksByPrefix
+  // So we iterate through all marks/measures and clear those with the prefix
+  for (const entry of performance.getEntriesByType('mark')) {
+    if (entry.name.startsWith(PERF_MARK_PREFIX)) {
+      performance.clearMarks(entry.name);
+    }
+  }
+  for (const entry of performance.getEntriesByType('measure')) {
+    if (entry.name.startsWith(PERF_MARK_PREFIX)) {
+      performance.clearMeasures(entry.name);
+    }
+  }
 }
 
 /**

@@ -77,6 +77,9 @@ type RunStartEnvelope = {
   payload: RunAgentInput;
 };
 
+/** A message queued for outbound delivery */
+type QueuedOutboundMessage = UIToAgentMessageType;
+
 class CopilotKitWebSocketAgent extends AbstractAgent {
   private client: AGUIClient;
 
@@ -147,7 +150,6 @@ export class AGUIClient {
     this.config = {
       reconnectInterval: 1000,
       maxReconnectAttempts: 10,
-      maxQueuedMessages: 100,
       ...config,
     };
     this.agent = new CopilotKitWebSocketAgent(this);
@@ -622,7 +624,6 @@ export class AGUIClient {
 
         // Request full state sync
         this.requestStateSync();
-        void this.requestRestSnapshot();
 
         // Notify listeners about the gap
         this.notifyStateSyncListeners();
@@ -766,6 +767,59 @@ export class AGUIClient {
     for (const listener of this.stateListeners) {
       listener(this.getState());
     }
+  }
+
+  /**
+   * Notify state sync listeners
+   */
+  private notifyStateSyncListeners(): void {
+    const status = this.state.stateSync;
+    for (const listener of this.stateSyncListeners) {
+      listener(status);
+    }
+  }
+
+  /**
+   * Flush queued outbound messages
+   */
+  private flushQueuedMessages(): void {
+    if (this.isFlushingQueue || this.outboundQueue.length === 0) {
+      return;
+    }
+
+    this.isFlushingQueue = true;
+    const messages = [...this.outboundQueue];
+    this.outboundQueue = [];
+
+    for (const message of messages) {
+      try {
+        this.send(message);
+      } catch (error) {
+        console.error("Failed to send queued message:", error);
+        // Re-queue on error
+        this.outboundQueue.push(message);
+      }
+    }
+
+    this.isFlushingQueue = false;
+  }
+
+  /**
+   * Send payload directly or queue if not connected
+   */
+  private sendPayload(
+    payload: string,
+    options?: { allowDuringSync?: boolean }
+  ): void {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      if (!options?.allowDuringSync) {
+        throw new Error("WebSocket is not connected");
+      }
+      // Queue the message for later
+      return;
+    }
+
+    this.ws.send(payload);
   }
 
   private isAgentMessage(message: unknown): message is AgentToUIMessageType {

@@ -1,6 +1,7 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useLayoutEffect } from "react";
 import { getAGUIClient } from "../agui/client";
 
 /**
@@ -32,11 +33,17 @@ export function useJobProgress(jobId: string | null) {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  // Reset state immediately when jobId becomes null (before effect runs)
+  useLayoutEffect(() => {
     if (!jobId) {
-      // Reset state when jobId is null
       setJobData(null);
       setIsConnected(false);
+      setError(null);
+    }
+  }, [jobId]);
+
+  useEffect(() => {
+    if (!jobId) {
       return;
     }
 

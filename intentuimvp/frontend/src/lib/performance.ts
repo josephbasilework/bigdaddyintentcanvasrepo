@@ -26,7 +26,7 @@ interface PerformanceMark {
  * Send a telemetry event to the backend.
  */
 async function sendTelemetry(event: TelemetryEvent): Promise<void> {
-  const apiBase = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+  const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
   const endpoint = `${apiBase}/api/v1/telemetry`;
 
   try {
@@ -155,16 +155,17 @@ export function trackStateUpdate(
   const tracker = new PerformanceTracker();
   tracker.start("state_update");
 
-  return {
-    ...tracker,
-    end: (): number | undefined => {
-      const duration = tracker.end("state_update", "state_update", {
-        update_type,
-        entity_type,
-      });
-      return duration;
-    },
+  // Return the tracker with a custom end method that includes telemetry
+  const originalEnd = tracker.end.bind(tracker);
+  (tracker as unknown as { end: () => number | undefined }).end = (): number | undefined => {
+    const duration = originalEnd("state_update", "state_update", {
+      update_type,
+      entity_type,
+    });
+    return duration;
   };
+
+  return tracker;
 }
 
 /**
