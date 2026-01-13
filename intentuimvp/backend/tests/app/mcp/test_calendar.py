@@ -450,6 +450,44 @@ class TestGoogleCalendarMCPOperations:
         assert result.get("requires_confirmation") is True
         assert result.get("pending_actions")
 
+    async def test_sync_pending_actions_include_preview(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Ensure pending actions include preview/diff payloads."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
+
+        task_dag = {
+            "tasks": [
+                {
+                    "id": "task-1",
+                    "title": "Task 1",
+                    "calendar_suggestion": {
+                        "summary": "Task 1",
+                        "start": "2026-01-20T10:00:00Z",
+                        "end": "2026-01-20T11:00:00Z",
+                    },
+                }
+            ]
+        }
+
+        with patch.object(
+            calendar_mcp._manager,
+            "start_server",
+            new_callable=AsyncMock,
+        ) as mock_start:
+            mock_start.return_value = True
+            result = await calendar_mcp.sync_with_task_dag(task_dag=task_dag)
+
+        pending_actions = result.get("pending_actions")
+        assert pending_actions
+        pending = pending_actions[0]
+        assert pending["preview"]["tool"] == "calendar_create"
+        assert pending["preview"]["arguments"]["summary"] == "Task 1"
+        assert "calendar_create" in pending["diff"]
+
     async def test_sync_with_task_dag_creates_events(
         self, db_session: AsyncSession
     ) -> None:
@@ -1124,6 +1162,9 @@ class TestCalendarCreateTool:
             assert pending["end"] == "2026-01-20T15:00:00Z"
             assert pending["description"] == "Very important"
             assert pending["calendar_id"] == "work@example.com"
+            assert pending["preview"]["tool"] == "calendar_create"
+            assert pending["preview"]["arguments"]["summary"] == "Important Meeting"
+            assert "calendar_create" in pending["diff"]
 
     async def test_create_event_parses_dict_result(
         self, db_session: AsyncSession

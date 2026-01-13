@@ -34,6 +34,7 @@ finally:
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 from app.logging_config import get_correlation_id  # noqa: E402
+from app.mcp.preview import build_tool_diff, build_tool_preview  # noqa: E402
 from app.mcp.registry import MCPServerRegistry  # noqa: E402
 from app.mcp.security import MCPSecurityValidator  # noqa: E402
 
@@ -149,6 +150,8 @@ class ToolExecutionResult:
     result: Any | None = None
     error: str | None = None
     required_confirmation: bool = False
+    preview: dict[str, Any] | None = None
+    diff: str | None = None
     degraded: bool = False
     degraded_reason: str | None = None
 
@@ -424,6 +427,8 @@ class MCPManager:
 
         # Check if confirmation required
         if decision.requires_confirmation and not user_confirmed:
+            preview = build_tool_preview(tool_name, arguments)
+            diff = build_tool_diff(preview)
             logger.warning(
                 "MCP tool execution requires confirmation",
                 extra=build_extra(
@@ -437,6 +442,8 @@ class MCPManager:
                 success=False,
                 error="User confirmation required",
                 required_confirmation=True,
+                preview=preview,
+                diff=diff,
             )
 
         # Execute the tool

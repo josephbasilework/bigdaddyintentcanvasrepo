@@ -280,4 +280,6 @@ class AgentMCPAdapter:
             "result": result.result,
             "error": result.error,
             "requires_confirmation": result.required_confirmation,
+            "preview": result.preview,
+            "diff": result.diff,
         }

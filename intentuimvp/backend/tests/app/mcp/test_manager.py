@@ -503,13 +503,18 @@ class TestExecuteTool:
         result = await manager.execute_tool(
             server_id=test_server.server_id,
             tool_name="write_data",  # Requires confirmation per security_rules
-            arguments={"data": "test"},
+            arguments={"data": "test", "api_token": "secret"},
             initiated_by="test_user",
             user_confirmed=False,
         )
         assert result.success is False
         assert result.required_confirmation is True
         assert result.error is not None and "confirmation" in result.error.lower()
+        assert result.preview is not None
+        assert result.preview["tool"] == "write_data"
+        assert result.preview["arguments"]["data"] == "test"
+        assert result.preview["arguments"]["api_token"] == "***REDACTED***"
+        assert result.diff is not None and "write_data" in result.diff
 
     async def test_execute_with_confirmation(
         self, manager: MCPManager, test_server: MCPServer

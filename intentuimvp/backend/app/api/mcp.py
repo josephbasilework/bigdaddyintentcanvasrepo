@@ -248,6 +248,8 @@ async def execute_mcp_tool(
             "result": result.result,
             "error": result.error,
             "requires_confirmation": result.required_confirmation,
+            "preview": result.preview,
+            "diff": result.diff,
             "security_level": None,
         }
     finally:

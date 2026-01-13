@@ -62,6 +62,8 @@ class MCPToolExecuteResponse(BaseModel):
     result: dict | list | None = Field(None, description="Result data from tool")
     error: str | None = Field(None, description="Error message if failed")
     requires_confirmation: bool = Field(default=False, description="Whether confirmation was required")
+    preview: dict | None = Field(default=None, description="Preview payload for confirmation")
+    diff: str | None = Field(default=None, description="Diff preview for confirmation")
     security_level: str | None = Field(None, description="Security level applied")
 
 

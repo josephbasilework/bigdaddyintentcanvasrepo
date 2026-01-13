@@ -14,6 +14,7 @@ from googleapiclient.discovery import build  # type: ignore[import-untyped]
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.mcp.manager import MCPManager
+from app.mcp.preview import build_tool_diff, build_tool_preview
 from app.mcp.registry import DEFAULT_SECURITY_RULES, MCPServerRegistry
 
 
@@ -66,6 +67,39 @@ def _extract_events(payload: Any) -> tuple[list[Any], Any | None]:
     if payload is None:
         return [], None
     return [], payload
+
+
+def _calendar_arguments(payload: dict[str, Any]) -> dict[str, Any]:
+    arguments: dict[str, Any] = {
+        "summary": payload.get("summary"),
+        "start": payload.get("start"),
+        "end": payload.get("end"),
+        "calendar_id": payload.get("calendar_id"),
+    }
+    if payload.get("description"):
+        arguments["description"] = payload.get("description")
+    return {key: value for key, value in arguments.items() if value is not None}
+
+
+def _attach_preview_diff(
+    payload: dict[str, Any],
+    preview: dict[str, Any] | None = None,
+    diff: str | None = None,
+) -> dict[str, Any]:
+    resolved_preview = preview
+    resolved_diff = diff
+    if resolved_preview is None or resolved_diff is None:
+        arguments = _calendar_arguments(payload)
+        resolved_preview = resolved_preview or build_tool_preview(
+            "calendar_create", arguments
+        )
+        resolved_diff = resolved_diff or build_tool_diff(resolved_preview)
+
+    return {
+        **payload,
+        "preview": resolved_preview,
+        "diff": resolved_diff,
+    }
 
 
 class GoogleCalendarMCP:
@@ -465,10 +499,8 @@ class GoogleCalendarMCP:
 
         # Handle confirmation requirement (FR-020 HITL gate)
         if result.required_confirmation and not result.success:
-            return {
-                "success": False,
-                "requires_confirmation": True,
-                "pending_action": {
+            pending_action = _attach_preview_diff(
+                {
                     "tool": "calendar_create",
                     "summary": summary,
                     "start": start,
@@ -476,6 +508,13 @@ class GoogleCalendarMCP:
                     "description": description,
                     "calendar_id": calendar_id,
                 },
+                preview=result.preview,
+                diff=result.diff,
+            )
+            return {
+                "success": False,
+                "requires_confirmation": True,
+                "pending_action": pending_action,
                 "message": "User confirmation required to create calendar event",
             }
 
@@ -652,13 +691,16 @@ class GoogleCalendarMCP:
             }
 
         if not user_confirmed:
+            pending_actions = [
+                _attach_preview_diff(payload) for payload in tasks_payload
+            ]
             return {
                 "success": False,
                 "requires_confirmation": True,
                 "message": f"User confirmation required to sync {len(tasks_payload)} calendar task(s).",
                 "created_events": [],
                 "failed_events": failed_events,
-                "pending_actions": tasks_payload,
+                "pending_actions": pending_actions,
             }
 
         created_events: list[dict[str, Any]] = []
@@ -680,6 +722,9 @@ class GoogleCalendarMCP:
             )
 
             if result.get("requires_confirmation"):
+                pending_action = _attach_preview_diff(
+                    result.get("pending_action", payload)
+                )
                 return {
                     "success": False,
                     "requires_confirmation": True,
@@ -687,7 +732,7 @@ class GoogleCalendarMCP:
                     or "User confirmation required to create calendar events.",
                     "created_events": created_events,
                     "failed_events": failed_events,
-                    "pending_actions": [result.get("pending_action", payload)],
+                    "pending_actions": [pending_action],
                 }
 
             if not result.get("success"):
