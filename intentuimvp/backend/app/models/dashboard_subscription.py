@@ -61,6 +61,19 @@ class DashboardSubscription(Base):
         foreign_keys=[dashboard_node_id],
     )
 
+    @property
+    def config(self) -> dict[str, Any]:
+        """Expose parsed config for schema serialization."""
+        return self.get_config()
+
+    @config.setter
+    def config(self, value: dict[str, Any] | None) -> None:
+        """Set config from dictionary or clear when None."""
+        if value is None:
+            self.subscription_config = None
+        else:
+            self.set_config(value)
+
     def get_config(self) -> dict[str, Any]:
         """Get subscription config as dictionary."""
         return json.loads(self.subscription_config) if self.subscription_config else {}
