@@ -532,12 +532,15 @@ def _get_job_retry_state_sync(job_id: str) -> dict[str, Any] | None:
                 metadata = json.loads(job.job_metadata)
                 retry_info["retry_count"] = metadata.get("retry_count", 0)
                 retry_info["max_attempts"] = metadata.get("max_attempts", 3)
-                retry_info["can_retry"] = (
-                    job.status == "failed"
-                    and retry_info["retry_count"] < retry_info["max_attempts"]
-                )
             except json.JSONDecodeError:
                 pass
+
+        # Determine if job can be retried - must be done after extracting metadata
+        # A failed job with retry_count < max_attempts can be retried
+        retry_info["can_retry"] = (
+            job.status == "failed"
+            and retry_info["retry_count"] < retry_info["max_attempts"]
+        )
 
         return retry_info
     finally:
