@@ -168,6 +168,39 @@ async def enqueue_perspective_gather(
     )
 
 
+async def enqueue_perspective_analysis(
+    topic: str,
+    perspectives: list[str] | None = None,
+    user_id: str | None = None,
+    workspace_id: str | None = None,
+    input_refs: list[int] | None = None,
+) -> str:
+    """Enqueue a perspective analysis job (FR-012: Multi-Judge Compute).
+
+    This job uses the PerspectiveAgent to analyze a topic from multiple perspectives
+    (skeptic, advocate, synthesizer) and creates critic + synthesis nodes on the canvas.
+
+    Args:
+        topic: Topic to analyze
+        perspectives: Optional list of perspective types (defaults to skeptic, advocate, synthesizer)
+        user_id: Optional user ID
+        workspace_id: Optional workspace ID
+        input_refs: Optional list of node IDs to link critic nodes to
+
+    Returns:
+        Job ID
+    """
+    job_data: dict[str, Any] = {"topic": topic, "perspectives": perspectives}
+    if input_refs is not None:
+        job_data["input_refs"] = input_refs
+    return await enqueue_job(
+        JobType.PERSPECTIVE_ANALYSIS,
+        job_data,
+        user_id=user_id,
+        workspace_id=workspace_id,
+    )
+
+
 async def enqueue_synthesis(
     query: str,
     perspective_results: list[dict[str, Any]],

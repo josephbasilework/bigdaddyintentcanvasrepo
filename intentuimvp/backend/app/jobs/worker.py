@@ -37,6 +37,12 @@ from app.models.node import Node, NodeType
 from app.repositories.canvas_repo import CanvasRepository
 from app.repositories.edge_repo import EdgeRepository
 from app.repositories.node_repo import NodeRepository
+from app.schemas.node import (
+    BiasAnalysisSchema,
+    CriticNodeMetadata,
+    PerspectiveSchema,
+    SynthesisNodeMetadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +198,208 @@ async def _load_input_nodes(
     nodes = list(result.scalars().all())
     nodes_by_id = {node.id: node for node in nodes}
     return [nodes_by_id[node_id] for node_id in unique_ids if node_id in nodes_by_id]
+
+
+async def _store_perspective_nodes(
+    *,
+    job_id: str,
+    user_id: str | None,
+    workspace_id: str | None,
+    topic: str,
+    evaluation: dict[str, Any],
+    input_refs: list[int | str | float] | None,
+) -> tuple[int, list[int], list[int], int]:
+    """Store perspective analysis results as critic + synthesis nodes (FR-012).
+
+    FR-012: Creates critic nodes for each perspective (skeptic, advocate, synthesizer)
+    and a synthesis node. Critic nodes link to target nodes via CRITIQUES edges;
+    the synthesis node links to critics via SUPPORTS edges.
+
+    Args:
+        job_id: The job ID for this analysis
+        user_id: User ID who requested the analysis
+        workspace_id: Canvas/workspace ID
+        topic: The topic being analyzed
+        evaluation: PerspectiveEvaluation dictionary from PerspectiveAgent
+        input_refs: Optional list of node IDs used as inputs/targets for linking
+
+    Returns:
+        Tuple of (synthesis_node_id, critic_node_ids, edge_ids, canvas_id)
+    """
+    async with AsyncSessionLocal() as session:
+        canvas = await _resolve_canvas(session, user_id, workspace_id)
+
+        # Load input/target nodes for linking
+        input_nodes = await _load_input_nodes(session, input_refs, canvas.id)
+
+        topic_text = evaluation.get("topic", topic) or topic
+        raw_perspectives = evaluation.get("perspectives", [])
+
+        perspective_schemas: list[PerspectiveSchema] = []
+        for perspective in raw_perspectives:
+            if isinstance(perspective, BaseModel):
+                perspective = perspective.model_dump()
+
+            perspective_id = perspective.get("id") or str(uuid.uuid4())
+            try:
+                confidence = float(perspective.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                confidence = 0.0
+
+            perspective_schemas.append(
+                PerspectiveSchema(
+                    id=str(perspective_id),
+                    name=perspective.get("name", "unknown"),
+                    description=perspective.get("description", ""),
+                    stance=perspective.get("stance", "neutral"),
+                    arguments=perspective.get("arguments") or [],
+                    evidence=perspective.get("evidence") or [],
+                    confidence=confidence,
+                    strengths=perspective.get("strengths") or [],
+                    weaknesses=perspective.get("weaknesses") or [],
+                    failed=bool(perspective.get("failed", False)),
+                    failure_reason=perspective.get("failure_reason"),
+                )
+            )
+
+        base_x = 0.0
+        base_y = 0.0
+        base_z = 0.0
+        if input_nodes:
+            positions = [node.get_position() for node in input_nodes]
+            base_x = sum(pos.get("x", 0.0) for pos in positions) / len(positions)
+            base_y = sum(pos.get("y", 0.0) for pos in positions) / len(positions)
+            base_z = max(pos.get("z", 0.0) for pos in positions)
+
+        start_y = base_y
+        if perspective_schemas:
+            start_y = base_y - ((len(perspective_schemas) - 1) * PERSPECTIVE_OFFSET_Y) / 2
+
+        node_repo = NodeRepository(session)
+        edge_repo = EdgeRepository(session)
+
+        critic_node_ids: list[int] = []
+        all_edge_ids: list[int] = []
+        source_node_id = input_nodes[0].id if len(input_nodes) == 1 else None
+
+        # Create a critic node for each perspective
+        for idx, perspective in enumerate(perspective_schemas):
+            label_suffix = " (failed)" if perspective.failed else ""
+            label = _truncate_label(
+                f"{perspective.name.title()} Critic{label_suffix}", limit=50
+            )
+
+            position = {
+                "x": base_x + PERSPECTIVE_OFFSET_X,
+                "y": start_y + idx * PERSPECTIVE_OFFSET_Y,
+                "z": base_z + PERSPECTIVE_OFFSET_Z,
+            }
+
+            node_metadata = CriticNodeMetadata(
+                topic=topic_text,
+                perspective_type=perspective.name,
+                perspective=perspective,
+                source_node_id=source_node_id,
+            )
+
+            critic_node = await node_repo.create_node(
+                canvas_id=canvas.id,
+                label=label,
+                type=NodeType.CRITIC,
+                position=position,
+                node_metadata=node_metadata.model_dump(),
+            )
+            critic_node_ids.append(critic_node.id)
+
+            # Link critic node to input/target nodes with CRITIQUES edge
+            if input_nodes:
+                for input_node in input_nodes:
+                    edge = await edge_repo.create_edge(
+                        canvas_id=canvas.id,
+                        from_node_id=critic_node.id,
+                        to_node_id=input_node.id,
+                        relation_type=RelationType.CRITIQUES,
+                        label=f"{perspective.name} critique",
+                        metadata={
+                            "jobId": job_id,
+                            "perspective": perspective.name,
+                            "confidence": perspective.confidence,
+                            "failed": perspective.failed,
+                        },
+                    )
+                    all_edge_ids.append(edge.id)
+
+            logger.info(
+                f"[{job_id}] Created critic node for perspective '{perspective.name}'",
+                extra={"node_id": critic_node.id, "stance": perspective.stance},
+            )
+
+        # Create synthesis node with combined analysis
+        recommendation = evaluation.get("recommendation") or ""
+        consensus_points = evaluation.get("consensus_points") or []
+        disagreement_points = evaluation.get("disagreement_points") or []
+        bias_analysis = evaluation.get("bias_analysis") or {}
+        try:
+            overall_confidence = float(evaluation.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            overall_confidence = 0.0
+
+        synthesis_label = _truncate_label(
+            f"Synthesis: {topic_text}" if topic_text else "Synthesis", limit=50
+        )
+
+        synthesis_position = {
+            "x": base_x + SYNTHESIS_OFFSET_X,
+            "y": base_y,
+            "z": base_z + PERSPECTIVE_OFFSET_Z + 1,
+        }
+
+        bias_schema = None
+        if bias_analysis:
+            bias_schema = BiasAnalysisSchema(
+                detected_biases=bias_analysis.get("detected_biases") or [],
+                bias_explanations=bias_analysis.get("bias_explanations") or [],
+                mitigation_suggestions=bias_analysis.get("mitigation_suggestions") or [],
+                overall_bias_rating=bias_analysis.get("overall_bias_rating", "unknown"),
+            )
+
+        synthesis_metadata = SynthesisNodeMetadata(
+            topic=topic_text,
+            perspectives=perspective_schemas,
+            consensus_points=consensus_points,
+            disagreement_points=disagreement_points,
+            bias_analysis=bias_schema,
+            recommendation=recommendation,
+            confidence=overall_confidence,
+            source_node_ids=critic_node_ids,
+        )
+
+        synthesis_node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label=synthesis_label,
+            type=NodeType.SYNTHESIS,
+            position=synthesis_position,
+            node_metadata=synthesis_metadata.model_dump(),
+        )
+
+        # Link synthesis node to all critic nodes with SUPPORTS edges
+        for critic_id in critic_node_ids:
+            edge = await edge_repo.create_edge(
+                canvas_id=canvas.id,
+                from_node_id=synthesis_node.id,
+                to_node_id=critic_id,
+                relation_type=RelationType.SUPPORTS,
+                label="synthesizes",
+                metadata={"jobId": job_id, "synthesis": True},
+            )
+            all_edge_ids.append(edge.id)
+
+        logger.info(
+            f"[{job_id}] Created synthesis node linked to {len(critic_node_ids)} critic nodes",
+            extra={"synthesis_node_id": synthesis_node.id},
+        )
+
+    return synthesis_node.id, critic_node_ids, all_edge_ids, canvas.id
 
 
 def _compute_report_position(input_nodes: list[Node]) -> dict[str, float]:
@@ -863,6 +1071,127 @@ async def perspective_gather_job(
 
         return JobResult(
             success=False, error=f"Perspective gathering failed: {str(e)}", metadata={"job_id": job_id}
+        )
+
+
+async def perspective_analysis_job(
+    ctx: dict[str, Any],
+    topic: str,
+    perspectives: list[str] | None = None,
+    input_refs: list[int | str | float] | None = None,
+) -> JobResult:
+    """Run perspective analysis using LLM-as-judge patterns (FR-012).
+
+    This job analyzes a topic from multiple perspectives (skeptic, advocate, synthesizer)
+    using the PerspectiveAgent and creates critic + synthesis nodes on the canvas.
+
+    Args:
+        ctx: ARQ execution context (contains job_id, user_id, workspace_id)
+        topic: Topic to analyze
+        perspectives: Optional list of perspective types (defaults to skeptic, advocate, synthesizer)
+        input_refs: Optional list of node IDs to link critic nodes to
+
+    Returns:
+        JobResult with synthesis node ID and analysis results.
+    """
+    from app.agents.perspective_agent import get_perspective_agent
+
+    job_id = ctx.get("job_id", str(uuid.uuid4()))
+    user_id = ctx.get("user_id")
+    workspace_id = ctx.get("workspace_id")
+
+    # Create job in progress tracker
+    await progress_tracker.create_job(
+        job_id=job_id,
+        job_type=JobType.PERSPECTIVE_ANALYSIS,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        parameters={"topic": topic, "perspectives": perspectives, "input_refs": input_refs},
+    )
+
+    logger.info(f"[{job_id}] Starting perspective analysis for topic: {topic}")
+
+    try:
+        await check_job_cancelled(job_id)
+
+        # Use default perspectives if none provided (FR-012)
+        if perspectives is None or len(perspectives) == 0:
+            perspectives = ["skeptic", "advocate", "synthesizer"]
+
+        # Update initial progress
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=10,
+            current_step="Initializing perspective analysis",
+            step_number=1,
+            steps_total=2,
+        )
+
+        await check_job_cancelled(job_id)
+
+        # Get the perspective agent and run evaluation
+        agent = get_perspective_agent()
+        evaluation = await agent.evaluate(topic)
+
+        await check_job_cancelled(job_id)
+
+        # Update progress after evaluation
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=70,
+            current_step="Creating critic and synthesis nodes",
+            step_number=2,
+            steps_total=2,
+        )
+
+        # Store perspective nodes using _store_perspective_nodes (FR-012)
+        synthesis_node_id, critic_node_ids, edge_ids, canvas_id = await _store_perspective_nodes(
+            job_id=job_id,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            topic=topic,
+            evaluation=evaluation.model_dump(),
+            input_refs=input_refs,
+        )
+
+        result_data = {
+            "topic": topic,
+            "synthesis_node_id": synthesis_node_id,
+            "critic_node_ids": critic_node_ids,
+            "edge_ids": edge_ids,
+            "canvas_id": canvas_id,
+            "evaluation": evaluation.model_dump(),
+            "timestamp": datetime.now(UTC).isoformat(),
+            "job_id": job_id,
+        }
+
+        logger.info(
+            f"[{job_id}] Perspective analysis completed: "
+            f"{len(critic_node_ids)} critics, synthesis node {synthesis_node_id}"
+        )
+
+        # Mark job as complete
+        await progress_tracker.complete_job(job_id=job_id, result_data=result_data)
+
+        return JobResult(success=True, data=result_data)
+
+    except JobCancelledError:
+        logger.info(f"[{job_id}] Perspective analysis job was cancelled")
+        return JobResult(
+            success=False,
+            error="Job was cancelled",
+            metadata={"job_id": job_id, "cancelled": True},
+        )
+    except Exception as e:
+        logger.error(f"[{job_id}] Perspective analysis failed: {e}", exc_info=True)
+
+        # Mark job as failed
+        await progress_tracker.fail_job(job_id=job_id, error_message=str(e))
+
+        return JobResult(
+            success=False,
+            error=f"Perspective analysis failed: {str(e)}",
+            metadata={"job_id": job_id},
         )
 
 
@@ -1560,6 +1889,7 @@ class WorkerSettings:
     functions = [
         deep_research_job,
         perspective_gather_job,
+        perspective_analysis_job,
         synthesis_job,
         export_job,
         transcription_job,

@@ -3,19 +3,19 @@
 Tests the perspective-analysis endpoint (FR-012: Multi-Judge Compute).
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI, testclient
 
-from app.api.jobs import router as jobs_router
+from app.api import jobs
 
 
 @pytest.fixture
 def jobs_app() -> FastAPI:
     """Create a test FastAPI app with jobs router."""
     app = FastAPI()
-    app.include_router(jobs_router)
+    app.include_router(jobs.router)
     return app
 
 
@@ -35,8 +35,10 @@ class TestPerspectiveAnalysisEndpoint:
         """Test successfully creating a perspective analysis job."""
         mock_job_id = "test-job-uuid-1234"
 
-        with patch(
-            "app.jobs.client.enqueue_perspective_analysis",
+        # Patch the function where it's imported in the api.jobs module
+        with patch.object(
+            jobs,
+            "enqueue_perspective_analysis",
             new=AsyncMock(return_value=mock_job_id),
         ) as mock_enqueue:
             response = client.post(
@@ -70,8 +72,9 @@ class TestPerspectiveAnalysisEndpoint:
         """Test creating a perspective analysis job with input_refs."""
         mock_job_id = "test-job-uuid-5678"
 
-        with patch(
-            "app.jobs.client.enqueue_perspective_analysis",
+        with patch.object(
+            jobs,
+            "enqueue_perspective_analysis",
             new=AsyncMock(return_value=mock_job_id),
         ) as mock_enqueue:
             response = client.post(
@@ -103,8 +106,9 @@ class TestPerspectiveAnalysisEndpoint:
         """Test that default perspectives are used when not provided."""
         mock_job_id = "test-job-uuid-9999"
 
-        with patch(
-            "app.jobs.client.enqueue_perspective_analysis",
+        with patch.object(
+            jobs,
+            "enqueue_perspective_analysis",
             new=AsyncMock(return_value=mock_job_id),
         ) as mock_enqueue:
             response = client.post(
@@ -179,8 +183,9 @@ class TestPerspectiveAnalysisEndpoint:
         # to the job layer which handles validation
         mock_job_id = "test-job-uuid-0000"
 
-        with patch(
-            "app.jobs.client.enqueue_perspective_analysis",
+        with patch.object(
+            jobs,
+            "enqueue_perspective_analysis",
             new=AsyncMock(return_value=mock_job_id),
         ) as mock_enqueue:
             response = client.post(
