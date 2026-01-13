@@ -12,6 +12,7 @@ import { DependencyEditor, DependencyDisplay } from "./DependencyEditor";
 import { PlanNode } from "./PlanNode";
 import { DAGNode } from "./DAGNode";
 import { DashboardNode } from "./DashboardNode";
+import { SuccessMetricsDashboard } from "./SuccessMetricsDashboard";
 import { JobNode } from "./JobNode";
 import { CalendarSyncDialog } from "./CalendarSyncDialog";
 import { PerspectiveRerunDialog } from "./PerspectiveRerunDialog";
@@ -529,6 +530,14 @@ export function Node({
           border: isSelected ? "2px solid #38bdf8" : "1px solid #1e3a5f",
           boxShadow: isSelected ? "0 0 20px rgba(56, 189, 248, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
         };
+      case "success_metrics":
+        return {
+          ...baseStyle,
+          backgroundColor: "#0f1a2f",
+          border: isSelected ? "2px solid #34d399" : "1px solid #1a3f4a",
+          boxShadow: isSelected ? "0 0 20px rgba(52, 211, 153, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
+          maxWidth: "800px",
+        };
       case "job":
         return {
           ...baseStyle,
@@ -557,6 +566,8 @@ export function Node({
         return "🧩";
       case "dashboard":
         return "📈";
+      case "success_metrics":
+        return "🎯";
       case "job":
         return "⚙️";
       default:
@@ -681,6 +692,11 @@ export function Node({
             <DAGNode dag={node.dagData} />
           ) : node.type === "dashboard" ? (
             <DashboardNode nodeId={node.id} />
+          ) : node.type === "success_metrics" ? (
+            <SuccessMetricsDashboard
+              userId={node.metadata?.userId as string | undefined}
+              workspaceId={node.metadata?.workspaceId as string | undefined}
+            />
           ) : node.type === "job" && node.jobData ? (
             <JobNode
               id={node.id}

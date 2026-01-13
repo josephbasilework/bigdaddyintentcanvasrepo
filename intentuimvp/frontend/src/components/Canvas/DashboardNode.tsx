@@ -6,10 +6,20 @@ import type {
   DashboardSubscriptionTarget,
 } from "../../agui/protocol";
 import { useDashboardStream } from "../../hooks/useDashboardStream";
-import { useCanvasStore } from "../../state/canvasStore";
+import { useCanvasStore, type CanvasNode } from "../../state/canvasStore";
+import { SuccessMetricsDashboard } from "./SuccessMetricsDashboard";
 
 interface DashboardNodeProps {
   nodeId?: string;
+}
+
+/** Dashboard types supported by the DashboardNode component */
+export type DashboardType = "workspace_pulse" | "success_metrics";
+
+/** Get the dashboard type from a node's metadata */
+function getDashboardType(node: CanvasNode | undefined): DashboardType {
+  const dashboardType = node?.metadata?.dashboardType as string | undefined;
+  return dashboardType === "success_metrics" ? "success_metrics" : "workspace_pulse";
 }
 
 type CountMap = Record<string, number>;
@@ -66,6 +76,18 @@ export function DashboardNode({ nodeId }: DashboardNodeProps) {
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const canvasId = useCanvasStore((state) => state.canvasId);
 
+  // Get the current dashboard node to determine its type
+  const dashboardNode = useMemo(
+    () => (nodeId ? nodes.find((node) => node.id === nodeId) : undefined),
+    [nodeId, nodes]
+  );
+
+  const dashboardType = useMemo(
+    () => getDashboardType(dashboardNode),
+    [dashboardNode]
+  );
+
+  // Workspace Pulse dashboard data (compute before conditional return)
   const dashboardNumericId = useMemo(() => {
     if (!nodeId) return null;
     const parsed = Number(nodeId);
@@ -190,6 +212,19 @@ export function DashboardNode({ nodeId }: DashboardNodeProps) {
       : "Sync the dashboard to the backend to enable streaming.";
   const lastUpdateLabel = lastUpdate ? lastUpdate.toLocaleTimeString() : "No updates yet";
 
+  // Render SuccessMetricsDashboard if that's the type (after all hooks are called)
+  if (dashboardType === "success_metrics") {
+    return (
+      <div style={{ color: "#e2e8f0" }}>
+        <SuccessMetricsDashboard
+          pollInterval={60000}
+          enabled={true}
+        />
+      </div>
+    );
+  }
+
+  // Otherwise render the Workspace Pulse dashboard (default)
   return (
     <div
       role="region"
