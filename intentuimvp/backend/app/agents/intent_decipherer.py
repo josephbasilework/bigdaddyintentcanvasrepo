@@ -5,6 +5,8 @@ This agent analyzes user input to extract:
 - Intent classification with confidence scores
 - Multi-intent decomposition for complex requests
 - Parameter extraction for action execution
+
+Implements NFR-PERF-003: Intent deciphering latency tracking.
 """
 
 import logging
@@ -15,8 +17,7 @@ from pydantic import BaseModel, Field
 
 from app.agents.base import BaseAgent
 from app.context.models import Assumption, AssumptionCategory
-from app.jobs.metrics_collection import MetricTimer, record_metric
-from app.logging_config import get_correlation_id
+from app.telemetry import track_intent_decipher
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +123,8 @@ class IntentDeciphererAgent(BaseAgent):
     async def decipher(self, user_input: str) -> IntentDecipheringResult:
         """Decipher the user's intent from their input.
 
+        Implements NFR-PERF-003: Tracks intent deciphering latency.
+
         Args:
             user_input: The user's text input.
 
@@ -136,23 +139,21 @@ class IntentDeciphererAgent(BaseAgent):
             {"role": "user", "content": user_prompt},
         ]
 
-        correlation_id = get_correlation_id()
         try:
-            with MetricTimer("intent_decipher", correlation_id, {"input_length": len(user_input)}):
+            # Track intent deciphering latency with telemetry
+            with track_intent_decipher(
+                agent_name="IntentDeciphererAgent",
+                model=self.model,
+                command_length=len(user_input),
+            ):
                 result = await self.generate_structured(
                     messages=messages,
                     response_model=IntentDecipheringResult,
                 )
+
             return result
 
         except Exception as e:
-            # Record failed attempt metric
-            record_metric(
-                "intent_decipher",
-                correlation_id,
-                -1,  # Indicate failure
-                {"error": str(e), "input_length": len(user_input)},
-            )
             logger.error(f"Intent deciphering failed: {e}", exc_info=True)
             # Return safe fallback
             return self._fallback_result(user_input, str(e))
