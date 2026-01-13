@@ -7,7 +7,14 @@ import { recordWsReconnect } from "@/lib/performance";
  * WebSocket message types supported by the backend.
  */
 export interface WebSocketMessage {
-  type: "heartbeat" | "echo" | "update" | "error" | "state.update" | "state.snapshot";
+  type:
+    | "heartbeat"
+    | "echo"
+    | "update"
+    | "error"
+    | "state.update"
+    | "state.snapshot"
+    | "raw";
   message?: string;
   sequence?: number;
   payload?: unknown;
@@ -22,56 +29,21 @@ export interface QueuedEvent {
   data: string | object;
   /** Timestamp when the event was queued */
   timestamp: number;
+  /** Sequence number (if available) */
+  sequence?: number;
 }
 
 /**
- * Configuration options for the useWebSocket hook.
+ * Enhanced WebSocket options with reconnection features.
  */
 export interface UseWebSocketOptions {
-  /**
-   * WebSocket URL to connect to.
-   * Defaults to ws://localhost:8000/ws in development,
-   * wss:// in production based on the current origin.
-   */
   url?: string;
-
-  /**
-   * Callback invoked when a new message is received.
-   */
   onMessage?: (message: WebSocketMessage) => void;
-
-  /**
-   * Callback invoked when the connection is established.
-   */
   onOpen?: (event: WebSocketEventMap["open"]) => void;
-
-  /**
-   * Callback invoked when the connection is closed.
-   */
   onClose?: (event: WebSocketEventMap["close"]) => void;
-
-  /**
-   * Callback invoked when an error occurs.
-   */
   onError?: (event: WebSocketEventMap["error"]) => void;
-
-  /**
-   * Whether to automatically reconnect on disconnect.
-   * @default true
-   */
   reconnect?: boolean;
-
-  /**
-   * Maximum number of reconnection attempts before giving up.
-   * @default 10
-   */
   maxReconnectAttempts?: number;
-
-  /**
-   * Initial reconnection delay in milliseconds.
-   * Subsequent attempts use exponential backoff.
-   * @default 1000
-   */
   reconnectDelayMs?: number;
 
   /**
@@ -99,31 +71,12 @@ export interface UseWebSocketOptions {
 }
 
 /**
- * Return value of the useWebSocket hook.
+ * Enhanced return value with sequence and queue information.
  */
 export interface UseWebSocketReturn {
-  /**
-   * The current WebSocket connection state.
-   */
   connectionState: "connecting" | "open" | "closed" | "error";
-
-  /**
-   * Send a message through the WebSocket connection.
-   * Queues the event if disconnected.
-   *
-   * @param data - The data to send (object will be JSON stringified).
-   */
   send: (data: string | object) => void;
-
-  /**
-   * Manually close the WebSocket connection.
-   * Automatic reconnection will be disabled.
-   */
   disconnect: () => void;
-
-  /**
-   * Manually attempt to reconnect.
-   */
   reconnect: () => void;
 
   /**
@@ -154,29 +107,16 @@ const getDefaultWebSocketUrl = (): string => {
 };
 
 /**
- * Custom React hook for managing WebSocket connections.
+ * Enhanced WebSocket hook with:
+ * - Exponential backoff reconnection (1s base, 30s cap, max 10 attempts)
+ * - Event queuing during disconnection
+ * - Queued event flushing after reconnect
+ * - Sequence gap detection with REST snapshot sync
+ * - Telemetry tracking for NFR-PERF-005
  *
- * Features:
- * - Automatic connection on mount
- * - Auto-reconnect with exponential backoff (1s, 2s, 4s, ..., 30s cap, max 10 attempts)
- * - Event queuing during disconnection with flushing on reconnect
- * - Sequence gap detection with REST snapshot sync fallback
- * - JSON message serialization/deserialization
- * - Type-safe message handling
- * - Manual send/reconnect/disconnect methods
- *
- * @example
- * ```tsx
- * const { connectionState, send, queuedEventCount, lastSequence } = useWebSocket({
- *   onMessage: (msg) => console.log("Received:", msg),
- *   onEventsFlushed: (events) => console.log(`Flushed ${events.length} events`),
- *   onSyncSnapshot: async () => await fetch('/api/snapshot').then(r => r.json()),
- * });
- *
- * send({ type: "greeting", text: "Hello" });
- * ```
+ * Implements T2-F9.2: WebSocket reconnect + queued events
  */
-export function useWebSocket(
+export function useWebSocketEnhanced(
   options: UseWebSocketOptions = {}
 ): UseWebSocketReturn {
   const {
@@ -240,33 +180,50 @@ export function useWebSocket(
   /**
    * Queue an event to be sent after reconnect.
    */
-  const queueEvent = useCallback((data: string | object): boolean => {
-    if (eventQueueRef.current.length >= maxQueueSize) {
-      console.warn(
-        `WebSocket: Event queue full (${maxQueueSize}), dropping event`
-      );
-      return false;
-    }
+  const queueEvent = useCallback(
+    (data: string | object): boolean => {
+      if (eventQueueRef.current.length >= maxQueueSize) {
+        console.warn(
+          `WebSocket: Event queue full (${maxQueueSize}), dropping event`
+        );
+        return false;
+      }
 
-    eventQueueRef.current.push({
-      data,
-      timestamp: Date.now(),
-    });
-    setQueuedEventCount(eventQueueRef.current.length);
-    return true;
-  }, [maxQueueSize]);
+      let sequence: number | undefined;
+      if (typeof data === "object" && data !== null) {
+        const candidate = data as {
+          sequence?: unknown;
+          payload?: { sequence?: unknown } | null;
+        };
+        if (typeof candidate.sequence === "number") {
+          sequence = candidate.sequence;
+        } else if (candidate.payload && typeof candidate.payload.sequence === "number") {
+          sequence = candidate.payload.sequence;
+        }
+      }
+
+      eventQueueRef.current.push({
+        data,
+        timestamp: Date.now(),
+        sequence,
+      });
+      setQueuedEventCount(eventQueueRef.current.length);
+      return true;
+    },
+    [maxQueueSize]
+  );
 
   /**
    * Flush all queued events after reconnect.
    */
   const flushQueuedEvents = useCallback(async () => {
+    if (eventQueueRef.current.length === 0) {
+      return;
+    }
+
     const queuedEvents = [...eventQueueRef.current];
     eventQueueRef.current = [];
     setQueuedEventCount(0);
-
-    if (queuedEvents.length === 0) {
-      return;
-    }
 
     console.log(`WebSocket: Flushing ${queuedEvents.length} queued events`);
 
@@ -280,18 +237,67 @@ export function useWebSocket(
 
     // Send all queued events
     const flushed: QueuedEvent[] = [];
+    const retryQueue: QueuedEvent[] = [];
     for (const event of queuedEvents) {
       try {
-        const message = typeof event.data === "string" ? event.data : JSON.stringify(event.data);
+        const message =
+          typeof event.data === "string"
+            ? event.data
+            : JSON.stringify(event.data);
         ws.send(message);
         flushed.push(event);
       } catch (error) {
         console.error("WebSocket: Failed to send queued event", error);
+        retryQueue.push(event);
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+          break;
+        }
       }
+    }
+
+    if (retryQueue.length > 0) {
+      eventQueueRef.current = [...retryQueue, ...eventQueueRef.current];
+      setQueuedEventCount(eventQueueRef.current.length);
     }
 
     onEventsFlushed?.(flushed);
   }, [onEventsFlushed]);
+
+  const extractSequence = useCallback((message: WebSocketMessage): number | null => {
+    if (typeof message.sequence === "number") {
+      return message.sequence;
+    }
+
+    if (message.payload && typeof message.payload === "object") {
+      const payload = message.payload as { sequence?: unknown };
+      if (typeof payload.sequence === "number") {
+        return payload.sequence;
+      }
+    }
+
+    return null;
+  }, []);
+
+  const extractSnapshotSequence = useCallback((snapshot: unknown): number | null => {
+    if (!snapshot || typeof snapshot !== "object") {
+      return null;
+    }
+
+    const candidate = snapshot as {
+      sequence?: unknown;
+      payload?: { sequence?: unknown } | null;
+    };
+
+    if (typeof candidate.sequence === "number") {
+      return candidate.sequence;
+    }
+
+    if (candidate.payload && typeof candidate.payload.sequence === "number") {
+      return candidate.payload.sequence;
+    }
+
+    return null;
+  }, []);
 
   /**
    * Request REST snapshot sync when sequence gap detected.
@@ -306,59 +312,89 @@ export function useWebSocket(
     hasSequenceGapRef.current = true;
 
     try {
-      console.info("WebSocket: Requesting REST snapshot sync due to sequence gap");
-      await onSyncSnapshot();
+      console.info(
+        "WebSocket: Requesting REST snapshot sync due to sequence gap"
+      );
+      const snapshot = await onSyncSnapshot();
+      const snapshotSequence = extractSnapshotSequence(snapshot);
+      if (snapshotSequence !== null) {
+        lastSequenceRef.current = snapshotSequence;
+        setLastSequence(snapshotSequence);
+      } else {
+        lastSequenceRef.current = null;
+        setLastSequence(null);
+      }
+
+      hasSequenceGapRef.current = false;
+      setHasSequenceGap(false);
       console.info("WebSocket: Snapshot sync completed");
     } catch (error) {
       console.error("WebSocket: Snapshot sync failed", error);
     } finally {
       isSyncingSnapshotRef.current = false;
     }
-  }, [onSyncSnapshot]);
+  }, [extractSnapshotSequence, onSyncSnapshot]);
 
   /**
    * Process incoming message and check for sequence gaps.
    */
-  const processMessage = useCallback((message: WebSocketMessage) => {
-    if (!enableSequenceTracking) {
+  const processMessage = useCallback(
+    (message: WebSocketMessage) => {
+      if (!enableSequenceTracking) {
+        onMessage?.(message);
+        return;
+      }
+
+      if (message.type === "state.snapshot") {
+        const snapshotSequence = extractSequence(message);
+        if (snapshotSequence !== null) {
+          lastSequenceRef.current = snapshotSequence;
+          setLastSequence(snapshotSequence);
+        }
+        if (hasSequenceGapRef.current) {
+          hasSequenceGapRef.current = false;
+          setHasSequenceGap(false);
+        }
+        onMessage?.(message);
+        return;
+      }
+
+      const msgSequence = extractSequence(message);
+      if (msgSequence !== null) {
+        const lastSeq = lastSequenceRef.current;
+
+        // Check for duplicate or out-of-order
+        if (lastSeq !== null && msgSequence <= lastSeq) {
+          console.warn(
+            `WebSocket: Duplicate/out-of-order sequence: expected > ${lastSeq}, got ${msgSequence}`
+          );
+          return;
+        }
+
+        // Check for sequence gap
+        if (lastSeq !== null && msgSequence !== lastSeq + 1) {
+          console.warn(
+            `WebSocket: Sequence gap detected: expected ${lastSeq + 1}, got ${msgSequence}`
+          );
+          void requestSnapshotSync();
+          return;
+        }
+
+        // Update last sequence
+        lastSequenceRef.current = msgSequence;
+        setLastSequence(msgSequence);
+
+        // Clear gap flag if we're now in sync
+        if (hasSequenceGapRef.current && !isSyncingSnapshotRef.current) {
+          hasSequenceGapRef.current = false;
+          setHasSequenceGap(false);
+        }
+      }
+
       onMessage?.(message);
-      return;
-    }
-
-    const msgSequence = message.sequence;
-    if (msgSequence !== undefined) {
-      const lastSeq = lastSequenceRef.current;
-
-      // Check for duplicate or out-of-order
-      if (lastSeq !== null && msgSequence <= lastSeq) {
-        console.warn(
-          `WebSocket: Duplicate/out-of-order sequence: expected > ${lastSeq}, got ${msgSequence}`
-        );
-        return;
-      }
-
-      // Check for sequence gap
-      if (lastSeq !== null && msgSequence !== lastSeq + 1) {
-        console.warn(
-          `WebSocket: Sequence gap detected: expected ${lastSeq + 1}, got ${msgSequence}`
-        );
-        void requestSnapshotSync();
-        return;
-      }
-
-      // Update last sequence
-      lastSequenceRef.current = msgSequence;
-      setLastSequence(msgSequence);
-
-      // Clear gap flag if we're now in sync
-      if (hasSequenceGapRef.current && !isSyncingSnapshotRef.current) {
-        hasSequenceGapRef.current = false;
-        setHasSequenceGap(false);
-      }
-    }
-
-    onMessage?.(message);
-  }, [enableSequenceTracking, onMessage, requestSnapshotSync]);
+    },
+    [enableSequenceTracking, extractSequence, onMessage, requestSnapshotSync]
+  );
 
   /**
    * Attempt to reconnect to the WebSocket server.
@@ -400,6 +436,7 @@ export function useWebSocket(
     maxReconnectAttempts,
     getReconnectDelay,
     clearReconnectTimeout,
+    connect,
   ]);
 
   /**
@@ -434,6 +471,10 @@ export function useWebSocket(
         setConnectionState("open");
         onOpen?.(event);
 
+        if (hasSequenceGapRef.current) {
+          void requestSnapshotSync();
+        }
+
         // Flush queued events after reconnect
         void flushQueuedEvents();
       };
@@ -452,7 +493,9 @@ export function useWebSocket(
       };
 
       ws.onclose = (event) => {
-        console.log(`WebSocket: Closed (code: ${event.code}, reason: ${event.reason})`);
+        console.log(
+          `WebSocket: Closed (code: ${event.code}, reason: ${event.reason})`
+        );
         setConnectionState("closed");
 
         // Track disconnect time for NFR-PERF-005
@@ -478,7 +521,17 @@ export function useWebSocket(
       setConnectionState("error");
       scheduleReconnect();
     }
-  }, [urlProp, onOpen, onClose, onError, flushQueuedEvents, processMessage, scheduleReconnect, clearReconnectTimeout]);
+  }, [
+    urlProp,
+    onOpen,
+    onClose,
+    onError,
+    flushQueuedEvents,
+    processMessage,
+    requestSnapshotSync,
+    scheduleReconnect,
+    clearReconnectTimeout,
+  ]);
 
   /**
    * Send data through the WebSocket connection.
@@ -488,13 +541,16 @@ export function useWebSocket(
     (data: string | object) => {
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
-        console.warn("WebSocket: Cannot send message, connection not open. Queuing for reconnect.");
+        console.warn(
+          "WebSocket: Cannot send message, connection not open. Queuing for reconnect."
+        );
         queueEvent(data);
         return;
       }
 
       try {
-        const message = typeof data === "string" ? data : JSON.stringify(data);
+        const message =
+          typeof data === "string" ? data : JSON.stringify(data);
         ws.send(message);
       } catch (error) {
         console.error("WebSocket: Failed to send message", error);
