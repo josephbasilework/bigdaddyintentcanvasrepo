@@ -135,12 +135,23 @@ const normalizeDagTask = (value: unknown): DAGTask | null => {
   const priority = normalizeDagPriority(value.priority);
   const status = normalizeDagStatus(value.status);
   const dependencies = normalizeTextArray(value.dependencies);
+  const calendarSuggestionValue = value.calendarSuggestion ?? value.calendar_suggestion;
+  const calendarSuggestion = isRecord(calendarSuggestionValue)
+    ? calendarSuggestionValue
+    : undefined;
+  const calendarEventId = normalizeText(value.calendarEventId ?? value.calendar_event_id);
+  const calendarEventUrl = normalizeText(
+    value.calendarEventUrl ?? value.calendar_event_url
+  );
 
   const task: DAGTask = { id, title, status };
   if (description) task.description = description;
   if (priority) task.priority = priority;
   if (estimatedEffort) task.estimatedEffort = estimatedEffort;
   if (dependencies !== undefined) task.dependencies = dependencies;
+  if (calendarSuggestion) task.calendarSuggestion = calendarSuggestion;
+  if (calendarEventId) task.calendarEventId = calendarEventId;
+  if (calendarEventUrl) task.calendarEventUrl = calendarEventUrl;
   return task;
 };
 

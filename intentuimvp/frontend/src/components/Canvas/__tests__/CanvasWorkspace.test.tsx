@@ -101,6 +101,13 @@ describe("normalizeNode", () => {
               status: "in_progress",
               priority: "high",
               estimated_effort: "2 hours",
+              calendar_suggestion: {
+                summary: "Kickoff",
+                start: "2026-01-01T10:00:00Z",
+                end: "2026-01-01T11:00:00Z",
+              },
+              calendar_event_id: "event-123",
+              calendar_event_url: "https://calendar.google.com/event?eid=event-123",
             },
             {
               id: "task-2",
@@ -128,6 +135,13 @@ describe("normalizeNode", () => {
       status: "in_progress",
       priority: "high",
       estimatedEffort: "2 hours",
+      calendarSuggestion: {
+        summary: "Kickoff",
+        start: "2026-01-01T10:00:00Z",
+        end: "2026-01-01T11:00:00Z",
+      },
+      calendarEventId: "event-123",
+      calendarEventUrl: "https://calendar.google.com/event?eid=event-123",
     });
     expect(result?.dagData?.dependencies).toEqual([
       { taskId: "task-2", dependsOnTaskId: "task-1", type: "hard" },

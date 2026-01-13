@@ -263,6 +263,22 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
         {tasks.map((task) => {
           const pos = layout.positions.get(task.id);
           if (!pos) return null;
+          const calendarStatus =
+            task.calendarEventId || task.calendarEventUrl
+              ? "linked"
+              : task.calendarSuggestion
+              ? "suggested"
+              : null;
+          const calendarLabel = calendarStatus
+            ? calendarStatus === "linked"
+              ? "Calendar linked"
+              : "Calendar suggested"
+            : null;
+          const calendarBadgeColor = calendarStatus === "linked" ? "#48bb78" : "#63b3ed";
+          const calendarBadgeBackground =
+            calendarStatus === "linked"
+              ? "rgba(72, 187, 120, 0.2)"
+              : "rgba(99, 179, 237, 0.2)";
 
           return (
             <g
@@ -273,7 +289,9 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
               onKeyDown={(e) => handleTaskKeyDown(e, task.id)}
               tabIndex={onTaskClick ? 0 : -1}
               role={onTaskClick ? "button" : "group"}
-              aria-label={`Task: ${task.title}, Status: ${task.status}${task.priority ? `, Priority: ${task.priority}` : ""}`}
+              aria-label={`Task: ${task.title}, Status: ${task.status}${
+                task.priority ? `, Priority: ${task.priority}` : ""
+              }${calendarLabel ? `, ${calendarLabel}` : ""}`}
             >
               {/* Node background */}
               <rect
@@ -350,6 +368,28 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
                     {task.estimatedEffort.length > 10
                       ? task.estimatedEffort.substring(0, 10)
                       : task.estimatedEffort}
+                  </text>
+                </g>
+              )}
+
+              {calendarStatus && (
+                <g>
+                  <rect
+                    x="110"
+                    y="52"
+                    width="38"
+                    height="14"
+                    rx="3"
+                    fill={calendarBadgeBackground}
+                  />
+                  <text
+                    x="129"
+                    y="62"
+                    fontSize="8"
+                    fill={calendarBadgeColor}
+                    textAnchor="middle"
+                  >
+                    CAL
                   </text>
                 </g>
               )}

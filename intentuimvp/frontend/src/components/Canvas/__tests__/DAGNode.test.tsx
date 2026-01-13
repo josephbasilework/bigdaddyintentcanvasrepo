@@ -114,6 +114,26 @@ describe("DAGNode", () => {
     expect(screen.getByText("L")).toBeInTheDocument();
   });
 
+  it("renders calendar badge when task includes calendar suggestion", () => {
+    const dag: DAGData = {
+      tasks: [
+        {
+          id: "task-1",
+          title: "Schedule kickoff",
+          status: "pending",
+          calendarSuggestion: { summary: "Kickoff" },
+        },
+      ],
+    };
+
+    render(<DAGNode dag={dag} />);
+
+    expect(screen.getByText("CAL")).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /calendar suggested/i })
+    ).toBeInTheDocument();
+  });
+
   it("calls onTaskClick when task is clicked", () => {
     const onTaskClick = vi.fn();
     const dag: DAGData = {

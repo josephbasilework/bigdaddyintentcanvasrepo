@@ -53,6 +53,9 @@ export interface DAGTask {
   priority?: 'high' | 'medium' | 'low';
   estimatedEffort?: string;
   dependencies?: string[];
+  calendarSuggestion?: Record<string, unknown>;
+  calendarEventId?: string;
+  calendarEventUrl?: string;
 }
 
 /**
