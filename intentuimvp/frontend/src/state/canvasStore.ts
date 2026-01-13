@@ -16,7 +16,7 @@ export interface GraphNodeAnnotation {
 // Types for canvas entities
 export interface CanvasNode {
   id: string;
-  type: 'text' | 'document' | 'audio' | 'graph' | 'plan' | 'dag';
+  type: 'text' | 'document' | 'audio' | 'graph' | 'plan' | 'dag' | 'dashboard';
   x: number;
   y: number;
   z: number;

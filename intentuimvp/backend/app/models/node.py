@@ -26,6 +26,7 @@ class NodeType(str, Enum):
     GRAPH = "graph"
     PLAN = "plan"
     DAG = "dag"
+    DASHBOARD = "dashboard"
 
 
 class Node(Base):

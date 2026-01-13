@@ -26,6 +26,7 @@ const NODE_TYPES: Set<CanvasNode["type"]> = new Set([
   "graph",
   "plan",
   "dag",
+  "dashboard",
 ]);
 const EDGE_STYLE_TYPES: Set<CanvasEdge["type"]> = new Set(["solid", "dashed", "dotted"]);
 const EDGE_RELATION_TYPES: Set<CanvasEdgeRelationType> = new Set(

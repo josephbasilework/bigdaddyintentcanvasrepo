@@ -14,8 +14,8 @@ const DEFAULT_NODE_TYPE: CanvasNode["type"] = "text";
 const COMMAND_NODE_TYPES: Record<string, CanvasNode["type"]> = {
   "/research": "document",
   "/judge": "document",
-  "/plan": "graph",
-  "/dashboard": "graph",
+  "/plan": "plan",
+  "/dashboard": "dashboard",
   "/graph": "graph",
   "/export": "document",
 };

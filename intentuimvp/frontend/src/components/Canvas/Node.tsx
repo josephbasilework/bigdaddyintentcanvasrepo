@@ -11,6 +11,7 @@ import { GraphAnnotation, GraphAnnotationDisplay } from "./GraphAnnotation";
 import { DependencyEditor, DependencyDisplay } from "./DependencyEditor";
 import { PlanNode } from "./PlanNode";
 import { DAGNode } from "./DAGNode";
+import { DashboardNode } from "./DashboardNode";
 
 interface NodeProps {
   node: CanvasNode;
@@ -310,6 +311,13 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
           border: isSelected ? "2px solid #9f7aea" : "1px solid #553c9a",
           boxShadow: isSelected ? "0 0 20px rgba(159, 122, 234, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
         };
+      case "dashboard":
+        return {
+          ...baseStyle,
+          backgroundColor: "#141c2f",
+          border: isSelected ? "2px solid #38bdf8" : "1px solid #1e3a5f",
+          boxShadow: isSelected ? "0 0 20px rgba(56, 189, 248, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
+        };
       default:
         return baseStyle;
     }
@@ -329,6 +337,8 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
         return "🧭";
       case "dag":
         return "🧩";
+      case "dashboard":
+        return "📈";
       default:
         return "📦";
     }
@@ -428,6 +438,8 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
             <PlanNode plan={node.planData} />
           ) : node.type === "dag" && node.dagData ? (
             <DAGNode dag={node.dagData} />
+          ) : node.type === "dashboard" ? (
+            <DashboardNode nodeId={node.id} />
           ) : node.content && (
             <div style={{
               fontSize: "13px",

@@ -200,9 +200,47 @@ describe('workspace canvas', () => {
 
     const [node] = useCanvasStore.getState().nodes;
     expect(node.title).toBe('Plan: Build Q1 roadmap');
-    expect(node.type).toBe('graph');
+    expect(node.type).toBe('plan');
     expect(node.content).toBe('Build Q1 roadmap');
     expect(node.metadata).toMatchObject({ command: '/plan' });
+  });
+
+  it('creates dashboard nodes for dashboard commands', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/api/workspace')) {
+        return Promise.resolve(createResponse({ nodes: [], edges: [] }));
+      }
+      if (url.includes('/api/context/assumptions')) {
+        return Promise.resolve(createResponse({
+          intent: 'dashboard',
+          confidence: 0.9,
+          alternatives: [],
+          assumptions: [],
+          reasoning: '',
+          should_auto_execute: true,
+        }));
+      }
+      if (url.includes('/api/commands')) {
+        return Promise.resolve(createResponse({ correlation_id: 'cmd-3', status: 'queued' }));
+      }
+      return Promise.resolve(createResponse({}));
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const commandInput = screen.getByRole('textbox', { name: /command input/i });
+    fireEvent.change(commandInput, { target: { value: '/dashboard Sales KPIs' } });
+    fireEvent.keyDown(commandInput, { key: 'Enter' });
+
+    await waitFor(() => expect(useCanvasStore.getState().nodes).toHaveLength(1));
+
+    const [node] = useCanvasStore.getState().nodes;
+    expect(node.title).toBe('Dashboard: Sales KPIs');
+    expect(node.type).toBe('dashboard');
+    expect(node.metadata).toMatchObject({ command: '/dashboard' });
   });
 
   it('persists assumption resolutions before executing commands', async () => {

@@ -134,6 +134,17 @@ describe("normalizeNode", () => {
     ]);
   });
 
+  it("should preserve dashboard node types", () => {
+    const result = normalizeNode({
+      id: "dashboard-node",
+      type: "dashboard",
+      title: "Ops Dashboard",
+    });
+
+    expect(result?.type).toBe("dashboard");
+    expect(result?.title).toBe("Ops Dashboard");
+  });
+
   it("should handle legacy nodeId field", () => {
     const result = normalizeNode({
       nodeId: "legacy-id",
