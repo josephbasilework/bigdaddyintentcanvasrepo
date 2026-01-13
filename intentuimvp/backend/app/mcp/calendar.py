@@ -500,6 +500,34 @@ class GoogleCalendarMCP:
                 "failed_events": failed_events,
             }
 
+        server = await self._registry.get_server("google-calendar")
+        if not server:
+            return {
+                "success": False,
+                "error": "Google Calendar server not registered",
+                "message": "Calendar sync requires a configured Google Calendar MCP server.",
+                "created_events": [],
+                "failed_events": failed_events,
+            }
+        if not server.enabled:
+            return {
+                "success": False,
+                "error": "Google Calendar server is disabled",
+                "message": "Calendar sync requires an enabled Google Calendar MCP server.",
+                "created_events": [],
+                "failed_events": failed_events,
+            }
+
+        connected = await self._manager.start_server("google-calendar")
+        if not connected:
+            return {
+                "success": False,
+                "error": "Google Calendar server not connected",
+                "message": "Calendar sync requires an active Google Calendar MCP connection.",
+                "created_events": [],
+                "failed_events": failed_events,
+            }
+
         if not user_confirmed:
             return {
                 "success": False,

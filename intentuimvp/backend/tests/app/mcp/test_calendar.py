@@ -300,6 +300,32 @@ class TestGoogleCalendarMCPRegistration:
 class TestGoogleCalendarMCPOperations:
     """Tests for Google Calendar MCP operations."""
 
+    async def test_sync_with_task_dag_returns_error_when_server_not_registered(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test sync_with_task_dag fails when server is not registered."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        task_dag = {
+            "tasks": [
+                {
+                    "id": "task-1",
+                    "title": "Task 1",
+                    "calendar_suggestion": {
+                        "summary": "Task 1",
+                        "start": "2026-01-13T10:00:00Z",
+                        "end": "2026-01-13T11:00:00Z",
+                    },
+                }
+            ]
+        }
+
+        result = await calendar_mcp.sync_with_task_dag(task_dag=task_dag)
+
+        assert result["success"] is False
+        assert result.get("requires_confirmation") is not True
+        assert result.get("error") == "Google Calendar server not registered"
+
     async def test_list_events_returns_error_when_not_configured(
         self, db_session: AsyncSession
     ) -> None:
@@ -370,6 +396,9 @@ class TestGoogleCalendarMCPOperations:
     ) -> None:
         """Test sync_with_task_dag requires confirmation by default."""
         calendar_mcp = GoogleCalendarMCP(db_session)
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
 
         task_dag = {
             "tasks": [
@@ -385,7 +414,13 @@ class TestGoogleCalendarMCPOperations:
             ]
         }
 
-        result = await calendar_mcp.sync_with_task_dag(task_dag=task_dag)
+        with patch.object(
+            calendar_mcp._manager,
+            "start_server",
+            new_callable=AsyncMock,
+        ) as mock_start:
+            mock_start.return_value = True
+            result = await calendar_mcp.sync_with_task_dag(task_dag=task_dag)
 
         assert result["success"] is False
         assert result.get("requires_confirmation") is True
@@ -396,6 +431,9 @@ class TestGoogleCalendarMCPOperations:
     ) -> None:
         """Test sync_with_task_dag creates calendar events when confirmed."""
         calendar_mcp = GoogleCalendarMCP(db_session)
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
 
         task_dag = {
             "tasks": [
@@ -424,24 +462,30 @@ class TestGoogleCalendarMCPOperations:
         }
 
         with patch.object(
-            calendar_mcp,
-            "create_event",
+            calendar_mcp._manager,
+            "start_server",
             new_callable=AsyncMock,
-        ) as mock_create:
-            mock_create.side_effect = [
-                {
-                    "success": True,
-                    "event": {"id": "event-1", "htmlLink": "https://example.com/event-1"},
-                },
-                {"success": True, "event": {"id": "event-2"}},
-            ]
+        ) as mock_start:
+            mock_start.return_value = True
+            with patch.object(
+                calendar_mcp,
+                "create_event",
+                new_callable=AsyncMock,
+            ) as mock_create:
+                mock_create.side_effect = [
+                    {
+                        "success": True,
+                        "event": {"id": "event-1", "htmlLink": "https://example.com/event-1"},
+                    },
+                    {"success": True, "event": {"id": "event-2"}},
+                ]
 
-            result = await calendar_mcp.sync_with_task_dag(
-                task_dag=task_dag,
-                calendar_id="primary",
-                user_confirmed=True,
-                initiated_by="tester",
-            )
+                result = await calendar_mcp.sync_with_task_dag(
+                    task_dag=task_dag,
+                    calendar_id="primary",
+                    user_confirmed=True,
+                    initiated_by="tester",
+                )
 
         assert result["success"] is True
         assert len(result["created_events"]) == 2
@@ -585,26 +629,35 @@ class TestFR020Compliance:
     ) -> None:
         """Test that Task DAG sync method exists (FR-020 AC3)."""
         calendar_mcp = GoogleCalendarMCP(db_session)
+        await calendar_mcp.register_calendar_server(
+            token_json=json.dumps({"token": "test", "refresh_token": "test"})
+        )
 
         # Verify the method exists
         assert hasattr(calendar_mcp, "sync_with_task_dag")
 
         # Call it
-        result = await calendar_mcp.sync_with_task_dag(
-            task_dag={
-                "tasks": [
-                    {
-                        "id": "task-1",
-                        "title": "Task 1",
-                        "calendar_suggestion": {
-                            "summary": "Task 1",
-                            "start": "2026-01-20T10:00:00Z",
-                            "end": "2026-01-20T11:00:00Z",
-                        },
-                    }
-                ]
-            }
-        )
+        with patch.object(
+            calendar_mcp._manager,
+            "start_server",
+            new_callable=AsyncMock,
+        ) as mock_start:
+            mock_start.return_value = True
+            result = await calendar_mcp.sync_with_task_dag(
+                task_dag={
+                    "tasks": [
+                        {
+                            "id": "task-1",
+                            "title": "Task 1",
+                            "calendar_suggestion": {
+                                "summary": "Task 1",
+                                "start": "2026-01-20T10:00:00Z",
+                                "end": "2026-01-20T11:00:00Z",
+                            },
+                        }
+                    ]
+                }
+            )
 
         assert result["success"] is False
         assert result.get("requires_confirmation") is True
