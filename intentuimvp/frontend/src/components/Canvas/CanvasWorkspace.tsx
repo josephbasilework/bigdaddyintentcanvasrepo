@@ -2,7 +2,15 @@
 
 import { useEffect, useCallback, useState, useId, useRef } from "react";
 import { createPortal } from "react-dom";
-import { useCanvasStore, CanvasEdge, CanvasNode, CanvasEdgeRelationType } from "../../state/canvasStore";
+import {
+  useCanvasStore,
+  CanvasEdge,
+  CanvasNode,
+  CanvasEdgeRelationType,
+  DAGData,
+  DAGTask,
+  PlanData,
+} from "../../state/canvasStore";
 import { Node } from "./Node";
 import { EdgesLayer } from "./Edge";
 import { EDGE_RELATION_OPTIONS, getEdgeRelationLabel } from "./edgeRelations";
@@ -11,7 +19,14 @@ import { SaveStatusIndicator } from "./SaveStatusIndicator";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const NODE_TYPES: Set<CanvasNode["type"]> = new Set(["text", "document", "audio", "graph"]);
+const NODE_TYPES: Set<CanvasNode["type"]> = new Set([
+  "text",
+  "document",
+  "audio",
+  "graph",
+  "plan",
+  "dag",
+]);
 const EDGE_STYLE_TYPES: Set<CanvasEdge["type"]> = new Set(["solid", "dashed", "dotted"]);
 const EDGE_RELATION_TYPES: Set<CanvasEdgeRelationType> = new Set(
   EDGE_RELATION_OPTIONS.map((option) => option.value)
@@ -27,6 +42,165 @@ const getString = (value: unknown): string | null =>
 
 const getNumber = (value: unknown, fallback: number): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+const DAG_STATUS_VALUES = new Set<DAGTask["status"]>([
+  "pending",
+  "in_progress",
+  "completed",
+  "blocked",
+]);
+const DAG_PRIORITY_VALUES = new Set<DAGTask["priority"]>(["high", "medium", "low"]);
+const DAG_DEPENDENCY_TYPES = new Set(["hard", "soft"]);
+
+const normalizeText = (value: unknown): string | null => {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return null;
+};
+
+const normalizeTextArray = (value: unknown): string[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .map((item) => normalizeText(item))
+    .filter((item): item is string => Boolean(item));
+  return items.length > 0 ? items : [];
+};
+
+const normalizeDagStatus = (value: unknown): DAGTask["status"] => {
+  const raw = normalizeText(value);
+  if (!raw) return "pending";
+  const normalized = raw.toLowerCase().replace(/\s+/g, "_");
+  if (DAG_STATUS_VALUES.has(normalized as DAGTask["status"])) {
+    return normalized as DAGTask["status"];
+  }
+  return "pending";
+};
+
+const normalizeDagPriority = (value: unknown): DAGTask["priority"] | undefined => {
+  const raw = normalizeText(value);
+  if (!raw) return undefined;
+  const normalized = raw.toLowerCase();
+  if (DAG_PRIORITY_VALUES.has(normalized as DAGTask["priority"])) {
+    return normalized as DAGTask["priority"];
+  }
+  return undefined;
+};
+
+const normalizeDagDependencyType = (value: unknown): "hard" | "soft" | undefined => {
+  const raw = normalizeText(value);
+  if (!raw) return undefined;
+  const normalized = raw.toLowerCase();
+  return DAG_DEPENDENCY_TYPES.has(normalized)
+    ? (normalized as "hard" | "soft")
+    : undefined;
+};
+
+const normalizePlanData = (value: unknown): PlanData | undefined => {
+  if (!isRecord(value)) return undefined;
+  const goal = normalizeText(value.goal);
+  const approach = normalizeText(value.approach);
+  if (!goal || !approach) return undefined;
+
+  const estimatedTotalEffort = normalizeText(
+    value.estimatedTotalEffort ??
+      value.estimated_total_effort ??
+      value.estimated_effort
+  );
+  const assumptions = normalizeTextArray(value.assumptions);
+  const risks = normalizeTextArray(value.risks);
+
+  const plan: PlanData = { goal, approach };
+  if (estimatedTotalEffort) plan.estimatedTotalEffort = estimatedTotalEffort;
+  if (assumptions !== undefined) plan.assumptions = assumptions;
+  if (risks !== undefined) plan.risks = risks;
+  return plan;
+};
+
+const normalizeDagTask = (value: unknown): DAGTask | null => {
+  if (!isRecord(value)) return null;
+  const id = normalizeText(value.id ?? value.task_id ?? value.taskId);
+  const title = normalizeText(value.title ?? value.name);
+  if (!id || !title) return null;
+
+  const description = normalizeText(value.description);
+  const estimatedEffort = normalizeText(
+    value.estimatedEffort ?? value.estimated_effort ?? value.estimated
+  );
+  const priority = normalizeDagPriority(value.priority);
+  const status = normalizeDagStatus(value.status);
+  const dependencies = normalizeTextArray(value.dependencies);
+
+  const task: DAGTask = { id, title, status };
+  if (description) task.description = description;
+  if (priority) task.priority = priority;
+  if (estimatedEffort) task.estimatedEffort = estimatedEffort;
+  if (dependencies !== undefined) task.dependencies = dependencies;
+  return task;
+};
+
+type DagDependency = NonNullable<DAGData["dependencies"]>[number];
+
+const normalizeDagDependency = (value: unknown): DagDependency | null => {
+  if (!isRecord(value)) return null;
+  const taskId = normalizeText(value.taskId ?? value.task_id ?? value.taskID ?? value.task);
+  const dependsOnTaskId = normalizeText(
+    value.dependsOnTaskId ??
+      value.depends_on_task_id ??
+      value.dependsOn ??
+      value.depends_on
+  );
+  if (!taskId || !dependsOnTaskId) return null;
+
+  const type = normalizeDagDependencyType(
+    value.type ?? value.dependency_type ?? value.dependencyType
+  );
+
+  const dependency: DagDependency = { taskId, dependsOnTaskId };
+  if (type) dependency.type = type;
+  return dependency;
+};
+
+const normalizeDagData = (value: unknown): DAGData | undefined => {
+  if (!isRecord(value)) return undefined;
+  if (!Array.isArray(value.tasks)) return undefined;
+
+  const tasks = value.tasks.map(normalizeDagTask).filter(Boolean) as DAGTask[];
+  const dependenciesRaw = Array.isArray(value.dependencies) ? value.dependencies : [];
+  const dependencies = dependenciesRaw
+    .map(normalizeDagDependency)
+    .filter(Boolean) as DagDependency[];
+
+  let resolvedDependencies = dependencies;
+  if (resolvedDependencies.length === 0) {
+    const derived = tasks.flatMap((task) => {
+      if (!Array.isArray(task.dependencies) || task.dependencies.length === 0) {
+        return [];
+      }
+      return task.dependencies
+        .map((dependencyId) =>
+          dependencyId
+            ? { taskId: task.id, dependsOnTaskId: dependencyId, type: "hard" as const }
+            : null
+        )
+        .filter(Boolean) as DagDependency[];
+    });
+
+    if (derived.length > 0) {
+      resolvedDependencies = derived;
+    }
+  }
+
+  const dag: DAGData = { tasks };
+  if (resolvedDependencies.length > 0) {
+    dag.dependencies = resolvedDependencies;
+  }
+  return dag;
+};
 
 export const normalizeNode = (value: unknown): CanvasNode | null => {
   if (!isRecord(value)) return null;
@@ -52,9 +226,41 @@ export const normalizeNode = (value: unknown): CanvasNode | null => {
   const metadataCandidate = value.metadata ?? value.node_metadata ?? value.nodeMetadata;
   const metadata = isRecord(metadataCandidate) ? metadataCandidate : undefined;
 
+  const planData = [
+    value.planData,
+    value.plan_data,
+    value.plan_metadata,
+    value.planMetadata,
+    value.plan,
+    metadata?.planData,
+    metadata?.plan_data,
+    metadata?.plan_metadata,
+    metadata?.planMetadata,
+    metadata?.plan,
+  ]
+    .map(normalizePlanData)
+    .find(Boolean);
+
+  const dagData = [
+    value.dagData,
+    value.dag_data,
+    value.task_dag,
+    value.taskDag,
+    value.dag,
+    metadata?.dagData,
+    metadata?.dag_data,
+    metadata?.task_dag,
+    metadata?.taskDag,
+    metadata?.dag,
+  ]
+    .map(normalizeDagData)
+    .find(Boolean);
+
   const node: CanvasNode = { id, type, x, y, z, title };
   if (content) node.content = content;
   if (metadata) node.metadata = metadata;
+  if (planData) node.planData = planData;
+  if (dagData) node.dagData = dagData;
   return node;
 };
 

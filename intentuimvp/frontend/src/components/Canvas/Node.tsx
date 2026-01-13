@@ -296,6 +296,20 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
           border: isSelected ? "2px solid #ffd93d" : "1px solid #3a2a3a",
           boxShadow: isSelected ? "0 0 20px rgba(255, 217, 61, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
         };
+      case "plan":
+        return {
+          ...baseStyle,
+          backgroundColor: "#132a2d",
+          border: isSelected ? "2px solid #38b2ac" : "1px solid #285e61",
+          boxShadow: isSelected ? "0 0 20px rgba(56, 178, 172, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
+        };
+      case "dag":
+        return {
+          ...baseStyle,
+          backgroundColor: "#241a2d",
+          border: isSelected ? "2px solid #9f7aea" : "1px solid #553c9a",
+          boxShadow: isSelected ? "0 0 20px rgba(159, 122, 234, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
+        };
       default:
         return baseStyle;
     }
@@ -311,6 +325,10 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
         return "🎙️";
       case "graph":
         return "📊";
+      case "plan":
+        return "🧭";
+      case "dag":
+        return "🧩";
       default:
         return "📦";
     }

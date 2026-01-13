@@ -62,6 +62,78 @@ describe("normalizeNode", () => {
     });
   });
 
+  it("should normalize plan metadata for plan nodes", () => {
+    const result = normalizeNode({
+      id: "plan-node",
+      type: "plan",
+      metadata: {
+        plan_metadata: {
+          goal: "Launch product",
+          approach: "Iterate quickly",
+          estimated_total_effort: "2 weeks",
+          assumptions: ["Team available"],
+          risks: ["Scope creep"],
+        },
+      },
+    });
+
+    expect(result?.type).toBe("plan");
+    expect(result?.planData).toEqual({
+      goal: "Launch product",
+      approach: "Iterate quickly",
+      estimatedTotalEffort: "2 weeks",
+      assumptions: ["Team available"],
+      risks: ["Scope creep"],
+    });
+  });
+
+  it("should normalize task DAG metadata for dag nodes", () => {
+    const result = normalizeNode({
+      id: "dag-node",
+      type: "dag",
+      metadata: {
+        task_dag: {
+          tasks: [
+            {
+              id: "task-1",
+              title: "First task",
+              description: "Do the first thing",
+              status: "in_progress",
+              priority: "high",
+              estimated_effort: "2 hours",
+            },
+            {
+              id: "task-2",
+              title: "Second task",
+              status: "pending",
+              dependencies: ["task-1"],
+            },
+          ],
+          dependencies: [
+            {
+              task_id: "task-2",
+              depends_on_task_id: "task-1",
+              dependency_type: "hard",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(result?.type).toBe("dag");
+    expect(result?.dagData?.tasks).toHaveLength(2);
+    expect(result?.dagData?.tasks[0]).toMatchObject({
+      id: "task-1",
+      title: "First task",
+      status: "in_progress",
+      priority: "high",
+      estimatedEffort: "2 hours",
+    });
+    expect(result?.dagData?.dependencies).toEqual([
+      { taskId: "task-2", dependsOnTaskId: "task-1", type: "hard" },
+    ]);
+  });
+
   it("should handle legacy nodeId field", () => {
     const result = normalizeNode({
       nodeId: "legacy-id",
