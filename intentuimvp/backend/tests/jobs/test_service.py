@@ -98,6 +98,18 @@ class TestJobServiceEnqueue:
         assert job_id is not None
         assert isinstance(job_id, str)
 
+    async def test_enqueue_planner(self, job_service, redis_pool) -> None:
+        """Should enqueue a planner job successfully."""
+        job_id = await job_service.enqueue_planner(
+            goal="Build a new feature",
+            context="Working on project X",
+            user_id="test-user",
+            workspace_id="test-workspace",
+        )
+
+        assert job_id is not None
+        assert isinstance(job_id, str)
+
     async def test_enqueue_generic_job(self, job_service, redis_pool) -> None:
         """Should enqueue a generic job using JobType."""
         job_id = await job_service.enqueue_job(

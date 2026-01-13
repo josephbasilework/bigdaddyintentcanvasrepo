@@ -9,6 +9,8 @@ import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog";
 import { AudioCapture, AudioRecording } from "./AudioCapture";
 import { GraphAnnotation, GraphAnnotationDisplay } from "./GraphAnnotation";
 import { DependencyEditor, DependencyDisplay } from "./DependencyEditor";
+import { PlanNode } from "./PlanNode";
+import { DAGNode } from "./DAGNode";
 
 interface NodeProps {
   node: CanvasNode;
@@ -404,6 +406,10 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
               }}
               aria-label={`Audio capture for ${node.title}`}
             />
+          ) : node.type === "plan" && node.planData ? (
+            <PlanNode plan={node.planData} />
+          ) : node.type === "dag" && node.dagData ? (
+            <DAGNode dag={node.dagData} />
           ) : node.content && (
             <div style={{
               fontSize: "13px",

@@ -47,6 +47,7 @@ from app.jobs.client import (
     enqueue_export,
     enqueue_job,
     enqueue_perspective_gather,
+    enqueue_planner,
     enqueue_synthesis,
     enqueue_transcription,
     retry_job,
@@ -74,6 +75,8 @@ class JobService:
         - enqueue_perspective_gather: Enqueue perspective gathering job
         - enqueue_synthesis: Enqueue synthesis job
         - enqueue_export: Enqueue export job
+        - enqueue_transcription: Enqueue transcription job
+        - enqueue_planner: Enqueue planner job
         - get_job: Get job details from database
         - get_job_status: Get job status from Redis queue
         - get_user_jobs: List jobs for a user
@@ -287,6 +290,30 @@ class JobService:
         """
         job_id = await enqueue_transcription(audio_block_id, user_id, workspace_id)
         logger.info(f"JobService: Enqueued transcription job {job_id}")
+        return job_id
+
+    async def enqueue_planner(
+        self,
+        goal: str,
+        context: str = "",
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> str:
+        """Enqueue a planner job.
+
+        Generates a structured plan and task DAG for the requested goal.
+
+        Args:
+            goal: The user's goal or objective to plan for
+            context: Optional additional context (selected nodes, workspace state, etc.)
+            user_id: Optional user ID
+            workspace_id: Optional workspace ID
+
+        Returns:
+            Job ID
+        """
+        job_id = await enqueue_planner(goal, context, user_id, workspace_id)
+        logger.info(f"JobService: Enqueued planner job {job_id}")
         return job_id
 
     async def get_job(self, job_id: str):

@@ -16,7 +16,7 @@ export interface GraphNodeAnnotation {
 // Types for canvas entities
 export interface CanvasNode {
   id: string;
-  type: 'text' | 'document' | 'audio' | 'graph';
+  type: 'text' | 'document' | 'audio' | 'graph' | 'plan' | 'dag';
   x: number;
   y: number;
   z: number;
@@ -25,6 +25,46 @@ export interface CanvasNode {
   metadata?: Record<string, unknown>;
   /** Graph-specific annotations (only for type='graph') */
   graphAnnotation?: GraphNodeAnnotation;
+  /** Plan-specific data (only for type='plan') */
+  planData?: PlanData;
+  /** DAG-specific data (only for type='dag') */
+  dagData?: DAGData;
+}
+
+/**
+ * Plan metadata for plan-type nodes.
+ */
+export interface PlanData {
+  goal: string;
+  approach: string;
+  estimatedTotalEffort?: string;
+  assumptions?: string[];
+  risks?: string[];
+}
+
+/**
+ * Task data for DAG visualization.
+ */
+export interface DAGTask {
+  id: string;
+  title: string;
+  description?: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'blocked';
+  priority?: 'high' | 'medium' | 'low';
+  estimatedEffort?: string;
+  dependencies?: string[];
+}
+
+/**
+ * DAG data for dag-type nodes.
+ */
+export interface DAGData {
+  tasks: DAGTask[];
+  dependencies?: Array<{
+    taskId: string;
+    dependsOnTaskId: string;
+    type?: 'hard' | 'soft';
+  }>;
 }
 
 export type CanvasEdgeRelationType =

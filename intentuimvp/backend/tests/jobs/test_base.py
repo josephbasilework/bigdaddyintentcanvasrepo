@@ -22,6 +22,7 @@ class TestJobTypes:
         assert JobType.PERSPECTIVE_GATHER == "perspective_gather"
         assert JobType.SYNTHESIS == "synthesis"
         assert JobType.EXPORT == "export"
+        assert JobType.PLANNER == "planner"
 
 
 class TestJobStatus:
