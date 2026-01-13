@@ -12,6 +12,7 @@ interface ContextMenuProps {
   onConnect?: () => void;
   onAnnotate?: () => void;
   onEditDependencies?: () => void;
+  onExportDoc?: () => void;
 }
 
 /**
@@ -23,6 +24,7 @@ interface ContextMenuProps {
  * - Duplicate node
  * - Connect to another node
  * - Annotate (for graph-type nodes)
+ * - Export documentation (for plan-type nodes)
  */
 export function NodeContextMenu({
   x,
@@ -34,6 +36,7 @@ export function NodeContextMenu({
   onConnect,
   onAnnotate,
   onEditDependencies,
+  onExportDoc,
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const positionComputedRef = useRef(false);
@@ -138,6 +141,11 @@ export function NodeContextMenu({
         {onEditDependencies && (
           <MenuItem label="Edit dependencies" onClick={() => handleAction(onEditDependencies)}>
             🔗 Dependencies...
+          </MenuItem>
+        )}
+        {onExportDoc && (
+          <MenuItem label="Export documentation" onClick={() => handleAction(onExportDoc)}>
+            📄 Export doc...
           </MenuItem>
         )}
         <div

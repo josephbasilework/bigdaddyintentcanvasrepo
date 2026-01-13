@@ -30,6 +30,7 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface NodeProps {
   node: CanvasNode;
+  canvasId?: number | null;
   onStartConnect?: (nodeId: string) => void;
   connectSourceNodeId?: string | null;
   onConnectTarget?: (nodeId: string) => void;
@@ -41,7 +42,13 @@ interface NodeProps {
  * Displays a node with its title and content, supports drag-to-move,
  * and handles selection state.
  */
-export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarget }: NodeProps) {
+export function Node({
+  node,
+  canvasId,
+  onStartConnect,
+  connectSourceNodeId,
+  onConnectTarget,
+}: NodeProps) {
   const {
     selectNode,
     selectedNodeId,
@@ -647,7 +654,7 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
           ) : node.type === "dag" && node.dagData ? (
             <DAGNode dag={node.dagData} />
           ) : node.type === "dashboard" ? (
-            <DashboardNode nodeId={node.id} />
+            <DashboardNode nodeId={node.id} canvasId={canvasId} />
           ) : node.content && (
             <div style={{
               fontSize: "13px",
