@@ -21,7 +21,13 @@ from app.agents.intent_decipherer import (
     IntentDecipheringResult,
     get_intent_decipherer,
 )
-from app.context.models import Assumption, ContextPayload, RoutingDecision, parse_assumption
+from app.context.models import (
+    Assumption,
+    AssumptionNotResolvedError,
+    ContextPayload,
+    RoutingDecision,
+    parse_assumption,
+)
 from app.jobs.metrics_collection import MetricTimer
 from app.logging_config import get_correlation_id
 
@@ -92,6 +98,43 @@ KEYWORD_PATTERNS: list[tuple[re.Pattern[str], str, float, str]] = [
 
 class LLMRoutingError(RuntimeError):
     """Raised when LLM routing fails and should fall back to keywords."""
+
+
+def check_assumptions_resolved(
+    assumptions: list[Assumption],
+    user_confirmed_assumptions: list[str] | None = None,
+) -> None:
+    """Check if all assumptions have been resolved before executing dependent actions.
+
+    Per SI-001 invariant from PRD §14: Assumption must be resolved before
+    executing dependent actions. See PRD §14: Domain Invariants & Business Rules.
+
+    Args:
+        assumptions: List of assumptions extracted by the agent.
+        user_confirmed_assumptions: List of assumption IDs that user has confirmed.
+
+    Raises:
+        AssumptionNotResolvedError: If any assumptions require confirmation
+            and have not been resolved by the user.
+    """
+    if not assumptions:
+        return
+
+    unresolved = [
+        a for a in assumptions
+        if user_confirmed_assumptions is None or a.id not in user_confirmed_assumptions
+    ]
+
+    if unresolved:
+        assumption_summary = "\n".join(
+            f"  - {a.text} (confidence: {a.confidence:.2f})"
+            for a in unresolved
+        )
+        raise AssumptionNotResolvedError(
+            f"[SI-001] Cannot execute action with unresolved assumptions. "
+            f"The following assumptions require user confirmation:\n{assumption_summary}\n"
+            f"See PRD §14: Domain Invariants & Business Rules"
+        )
 
 
 class IntentDeciphererProtocol(Protocol):

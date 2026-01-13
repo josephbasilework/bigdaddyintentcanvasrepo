@@ -33,9 +33,20 @@ class AssumptionCategory(str, Enum):
     OTHER = "other"
 
 
+class AssumptionNotResolvedError(RuntimeError):
+    """Raised when dependent actions are executed before assumptions are resolved.
+
+    Per SI-001 invariant from PRD §14: Assumption must be resolved before
+    executing dependent actions. See PRD §14: Domain Invariants & Business Rules.
+    """
+
+
 @dataclass
 class Assumption:
     """An assumption extracted by an agent that needs user confirmation.
+
+    Per SI-001 invariant from PRD §14: Assumption must be resolved before
+    executing dependent actions. See PRD §14: Domain Invariants & Business Rules.
 
     Attributes:
         id: Unique identifier for this assumption.

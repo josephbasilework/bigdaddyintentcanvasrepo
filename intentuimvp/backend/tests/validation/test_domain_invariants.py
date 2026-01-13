@@ -295,16 +295,104 @@ class TestCI002LinkedDocumentReferences:  # noqa: N801
 
 @pytest.mark.asyncio
 class TestSI001AssumptionResolution:  # noqa: N801
-    """SI-001: Assumption must be resolved before executing dependent actions (PARTIALLY ENFORCED).
+    """SI-001: Assumption must be resolved before executing dependent actions (FULLY ENFORCED).
 
-    Validation logic: Partial - Assumption dataclass exists in context models
-    Error includes invariant ID: Not yet implemented - no blocking errors
-    Documentation link: Not yet implemented
+    Validation logic: check_assumptions_resolved()
+    Error includes invariant ID: AssumptionNotResolvedError message contains "[SI-001]"
+    Documentation link: check_assumptions_resolved() references PRD §14
     """
 
-    async def test_assumption_blocking_exists(self) -> None:
-        """Documents that SI-001 is PARTIALLY enforced via context API blocking."""
-        assert True, "SI-001 partially enforced via context API"
+    async def test_unresolved_assumptions_raise_error(self) -> None:
+        """Attempting to execute action with unresolved assumptions should raise AssumptionNotResolvedError."""
+        from app.context.models import Assumption, AssumptionNotResolvedError
+        from app.context.router import check_assumptions_resolved
+
+        assumptions = [
+            Assumption(
+                id="assumption-1",
+                text="User wants to research topic X",
+                confidence=0.3,
+                category="intent",
+            ),
+            Assumption(
+                id="assumption-2",
+                text="Using default calendar",
+                confidence=0.4,
+                category="parameter",
+            ),
+        ]
+
+        with pytest.raises(AssumptionNotResolvedError) as exc_info:
+            check_assumptions_resolved(assumptions)
+
+        assert "[SI-001]" in str(exc_info.value)
+        assert "PRD" in str(exc_info.value)
+
+    async def test_partially_resolved_assumptions_raise_error(self) -> None:
+        """Attempting to execute action when only some assumptions are resolved should raise error."""
+        from app.context.models import Assumption, AssumptionNotResolvedError
+        from app.context.router import check_assumptions_resolved
+
+        assumptions = [
+            Assumption(
+                id="assumption-1",
+                text="User wants to research topic X",
+                confidence=0.3,
+                category="intent",
+            ),
+            Assumption(
+                id="assumption-2",
+                text="Using default calendar",
+                confidence=0.4,
+                category="parameter",
+            ),
+        ]
+
+        confirmed = ["assumption-1"]
+
+        with pytest.raises(AssumptionNotResolvedError) as exc_info:
+            check_assumptions_resolved(assumptions, confirmed)
+
+        assert "[SI-001]" in str(exc_info.value)
+
+    async def test_all_resolved_assumptions_succeed(self) -> None:
+        """When all assumptions are resolved, check should not raise an error."""
+        from app.context.models import Assumption
+        from app.context.router import check_assumptions_resolved
+
+        assumptions = [
+            Assumption(
+                id="assumption-1",
+                text="User wants to research topic X",
+                confidence=0.3,
+                category="intent",
+            ),
+        ]
+
+        confirmed = ["assumption-1"]
+        check_assumptions_resolved(assumptions, confirmed)
+
+    async def test_no_assumptions_succeeds(self) -> None:
+        """When there are no assumptions, check should not raise an error."""
+        from app.context.router import check_assumptions_resolved
+
+        check_assumptions_resolved([])
+
+    async def test_assumption_dataclass_exists(self) -> None:
+        """Verify Assumption dataclass exists with PRD §14 reference."""
+        from app.context.models import Assumption
+
+        assumption = Assumption(
+            id="test-id",
+            text="Test assumption",
+            confidence=0.5,
+            category="intent",
+        )
+
+        assert assumption.id == "test-id"
+        assert assumption.text == "Test assumption"
+        assert assumption.confidence == 0.5
+        assert assumption.category == "intent"
 
 
 @pytest.mark.asyncio

@@ -567,6 +567,9 @@ class GoogleCalendarMCP:
     ) -> dict[str, Any]:
         """Synchronize calendar events with Task DAG.
 
+        Per TI-002 invariant from PRD §14: CalendarSync requires active MCP
+        connection. See PRD §14: Domain Invariants & Business Rules.
+
         Creates calendar events from task deadlines and syncs
         task completion back to calendar.
 
@@ -666,16 +669,16 @@ class GoogleCalendarMCP:
         if not server:
             return {
                 "success": False,
-                "error": "Google Calendar server not registered",
-                "message": "Calendar sync requires a configured Google Calendar MCP server.",
+                "error": "[TI-002] Google Calendar server not registered",
+                "message": "Calendar sync requires a configured Google Calendar MCP server. See PRD §14: Domain Invariants & Business Rules",
                 "created_events": [],
                 "failed_events": failed_events,
             }
         if not server.enabled:
             return {
                 "success": False,
-                "error": "Google Calendar server is disabled",
-                "message": "Calendar sync requires an enabled Google Calendar MCP server.",
+                "error": "[TI-002] Google Calendar server is disabled",
+                "message": "Calendar sync requires an enabled Google Calendar MCP server. See PRD §14: Domain Invariants & Business Rules",
                 "created_events": [],
                 "failed_events": failed_events,
             }
@@ -684,8 +687,8 @@ class GoogleCalendarMCP:
         if not connected:
             return {
                 "success": False,
-                "error": "Google Calendar server not connected",
-                "message": "Calendar sync requires an active Google Calendar MCP connection.",
+                "error": "[TI-002] Google Calendar server not connected",
+                "message": "Calendar sync requires an active Google Calendar MCP connection. See PRD §14: Domain Invariants & Business Rules",
                 "created_events": [],
                 "failed_events": failed_events,
             }
