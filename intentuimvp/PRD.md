@@ -231,6 +231,7 @@ Current AI interfaces are:
 | Google Docs integration | Focus on Calendar first | Phase 1.5 |
 | Advanced annotatable graphs | Basic visualization sufficient for MVP | Phase 2 |
 | Mobile/tablet interfaces | Desktop-first for power users | Phase 3 |
+| Advanced prompt injection detection | MVP relies on structured outputs, HITL gates, and action constraints | Phase 2 |
 | Multi-user collaboration | Single-user reduces complexity | Phase 2 |
 | Offline functionality | Requires significant architectural changes | Phase 3 |
 | Custom agent creation | Power user feature | Phase 2 |
@@ -973,7 +974,7 @@ For actions not in the matrix:
 | Secret Exposure | Low | Critical | Environment variables only, secret scanning, no hardcoding |
 | Agent Hallucination | Medium | High | Safety guardrails, action blocking, confirmation for destructive actions |
 | MCP Vulnerabilities | Medium | Medium | Security validation, allowlist pattern, capability scoping |
-| Prompt Injection | Medium | Medium | Input sanitization (PromptInjectionDetector), structured outputs, action constraints |
+| Prompt Injection | Medium | Medium | **Phase 2**: Structured outputs, action constraints, HITL gates for destructive actions provide sufficient MVP protection. Advanced detection (PromptInjectionDetector) deferred to Phase 2 when multi-user scenarios increase risk. |
 
 ---
 
