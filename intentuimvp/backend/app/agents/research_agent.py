@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from app.agents.base import BaseAgent
 from app.agents.tools import get_tool_manager
+from app.gateway.client import GatewayClient
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,37 @@ class ResearchReport(BaseModel):
     )
 
 
+class ResearchDecomposition(BaseModel):
+    """Structured response for query decomposition."""
+
+    sub_queries: list[str] = Field(
+        default_factory=list, description="Sub-queries to investigate"
+    )
+
+
+class ResearchSynthesis(BaseModel):
+    """Structured response for research synthesis."""
+
+    summary: str | None = Field(
+        default=None, description="Executive summary of findings"
+    )
+    key_points: list[str] = Field(
+        default_factory=list, description="Key points discovered"
+    )
+    detailed_findings: str | None = Field(
+        default=None, description="Detailed findings"
+    )
+    confidence: float | None = Field(
+        default=None, ge=0.0, le=1.0, description="Confidence in findings"
+    )
+    limitations: list[str] = Field(
+        default_factory=list, description="Known limitations"
+    )
+    follow_up_questions: list[str] = Field(
+        default_factory=list, description="Suggested follow-up questions"
+    )
+
+
 @dataclass
 class ResearchConfig:
     """Configuration for research agent."""
@@ -89,7 +121,7 @@ class ResearchAgent(BaseAgent):
 
     def __init__(
         self,
-        gateway: Any | None = None,
+        gateway: GatewayClient | None = None,
         model: str = "openai/gpt-4o",
         temperature: float = 0.4,
         config: ResearchConfig | None = None,
@@ -187,14 +219,16 @@ Return your response as a JSON object with a "sub_queries" array containing stri
         ]
 
         try:
-            response = await self.generate(messages=messages)
-            content = response["choices"][0]["message"]["content"]
-
-            import json
-
-            parsed = json.loads(content)
-            return parsed.get("sub_queries", [query])
-
+            result = await self.generate_structured(
+                messages=messages,
+                response_model=ResearchDecomposition,
+            )
+            sub_queries = [
+                sub_query.strip()
+                for sub_query in result.sub_queries
+                if sub_query and sub_query.strip()
+            ]
+            return sub_queries or [query]
         except Exception as e:
             logger.warning(f"Query decomposition failed: {e}")
             return [query]
@@ -304,25 +338,24 @@ Synthesize this into a comprehensive research report. Return as JSON with fields
         ]
 
         try:
-            response = await self.generate(messages=messages)
-            content = response["choices"][0]["message"]["content"]
-
-            import json
-
-            parsed = json.loads(content)
-
+            synthesis = await self.generate_structured(
+                messages=messages,
+                response_model=ResearchSynthesis,
+            )
             return ResearchReport(
                 topic=topic,
-                summary=parsed.get("summary", "Research synthesis failed"),
-                key_points=parsed.get("key_points", []),
-                detailed_findings=parsed.get(
-                    "detailed_findings", findings_text
-                ),
+                summary=synthesis.summary or "Research synthesis failed",
+                key_points=synthesis.key_points,
+                detailed_findings=synthesis.detailed_findings or findings_text,
                 sources=sources,
                 steps=steps,
-                confidence=parsed.get("confidence", 0.5),
-                limitations=parsed.get("limitations", []),
-                follow_up_questions=parsed.get("follow_up_questions", []),
+                confidence=(
+                    synthesis.confidence
+                    if synthesis.confidence is not None
+                    else 0.5
+                ),
+                limitations=synthesis.limitations,
+                follow_up_questions=synthesis.follow_up_questions,
             )
 
         except Exception as e:
@@ -346,13 +379,13 @@ Synthesize this into a comprehensive research report. Return as JSON with fields
 _agent: ResearchAgent | None = None
 
 
-def get_research_agent() -> ResearchAgent:
+def get_research_agent(gateway: GatewayClient | None = None) -> ResearchAgent:
     """Get the singleton Research Agent instance.
 
     Returns:
         Research Agent instance.
     """
     global _agent
-    if _agent is None:
-        _agent = ResearchAgent()
+    if _agent is None or gateway is not None:
+        _agent = ResearchAgent(gateway=gateway)
     return _agent
