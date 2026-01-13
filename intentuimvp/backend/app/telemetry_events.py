@@ -298,7 +298,7 @@ def _log_pii_redaction(event_name: str, field_name: str, pii_result: Any) -> Non
 # ============================================================================
 
 def emit_telemetry_event(event: TelemetryEvent) -> None:
-    """Emit a telemetry event via Logfire.
+    """Emit a telemetry event via Logfire and persist to database.
 
     Args:
         event: TelemetryEvent to emit.
@@ -318,9 +318,53 @@ def emit_telemetry_event(event: TelemetryEvent) -> None:
                 "workspace_id": event.workspace_id,
             },
         )
+
+        # Persist to database for metrics aggregation
+        _persist_event_to_db(event)
     except Exception as e:
         # Don't fail application if telemetry emission fails
         logger.warning(f"Failed to emit telemetry event {event.event_name}: {e}")
+
+
+def _persist_event_to_db(event: TelemetryEvent) -> None:
+    """Persist telemetry event to database for metrics aggregation.
+
+    Args:
+        event: TelemetryEvent to persist.
+    """
+    try:
+        # Serialize event_data to JSON for storage
+        import json
+
+        from app.database import SessionLocal
+        from app.models.telemetry_event import TelemetryEventDB
+
+        event_data_json = json.dumps(event.event_data)
+
+        # Create database record
+        db_event = TelemetryEventDB(
+            event_id=event.event_id,
+            event_name=event.event_name,
+            event_timestamp=event.event_timestamp,
+            user_id=event.user_id,
+            session_id=event.session_id,
+            workspace_id=event.workspace_id,
+            run_id=event.run_id,
+            correlation_id=event.correlation_id,
+            event_data=event_data_json,
+            source_service=event.source_service,
+            environment=event.environment,
+        )
+
+        # Persist to database (use sync session for sync context)
+        with SessionLocal() as db:
+            db.add(db_event)
+            db.commit()
+
+        logger.debug(f"Persisted telemetry event to DB: {event.event_id}")
+    except Exception as e:
+        # Don't fail if persistence fails, but log warning
+        logger.warning(f"Failed to persist telemetry event {event.event_id} to DB: {e}")
 
 
 # ============================================================================

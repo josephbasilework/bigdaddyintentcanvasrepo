@@ -24,6 +24,7 @@ from app.jobs.worker import (
     synthesis_job,
     transcription_job,
 )
+from app.telemetry_events import emit_job_enqueued
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,16 @@ async def enqueue_job(
                 exc_info=True,
             )
         logger.info(f"Job {job_id} enqueued successfully as {job}")
+
+        # Emit job.enqueued telemetry event
+        emit_job_enqueued(
+            user_id=user_id,
+            workspace_id=workspace_id or "default",
+            job_id=job_id,
+            job_type=job_type.value,
+            job_params=job_data,
+        )
+
         return job_id
 
     except Exception as e:
