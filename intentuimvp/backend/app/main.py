@@ -19,6 +19,7 @@ from app.api.mcp import router as mcp_router
 from app.api.nodes import router as nodes_router
 from app.api.preferences import router as preferences_router
 from app.api.runs import router as runs_router
+from app.api.telemetry import router as telemetry_router
 from app.api.workspace import router as workspace_router
 from app.config import get_settings
 from app.database import SessionLocal
@@ -175,6 +176,7 @@ def create_app() -> FastAPI:
     app.include_router(backup_router, tags=["backup"])
     app.include_router(mcp_router, tags=["mcp"])
     app.include_router(jobs_router, tags=["jobs"])
+    app.include_router(telemetry_router, tags=["telemetry"])
 
     @app.get("/")
     async def root() -> dict[str, object]:
