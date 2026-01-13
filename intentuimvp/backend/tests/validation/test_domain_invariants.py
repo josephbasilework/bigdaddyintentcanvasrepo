@@ -496,9 +496,9 @@ class TestTI002CalendarSyncMCPConnection:  # noqa: N801
     """
 
     async def test_mcp_connection_check_exists(self) -> None:
-        """Documents that TI-002 is PARTIALLY enforced via MCP utilities."""
+        """Documents that TI-002 is FULLY enforced via GoogleCalendarMCP.sync_with_task_dag()."""
         from app.mcp.calendar import GoogleCalendarMCP
-        assert GoogleCalendarMCP is not None, "TI-002 partially enforced via MCP utilities"
+        assert GoogleCalendarMCP is not None, "TI-002 enforced via sync_with_task_dag()"
 
     async def test_calendar_sync_error_includes_invariant_id(self) -> None:
         """Verify calendar sync errors include [TI-002] invariant ID."""
