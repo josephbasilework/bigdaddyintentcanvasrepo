@@ -4,6 +4,72 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.node import NodeType
 
+# FR-012: Schemas for Multi-Judge Compute nodes (critic + synthesis)
+
+
+class PerspectiveSchema(BaseModel):
+    """Schema for individual perspective data (stored in critic nodes)."""
+
+    id: str = Field(description="Unique perspective identifier")
+    name: str = Field(description="Name of this perspective (skeptic, advocate, synthesizer)")
+    description: str = Field(description="Description of the viewpoint")
+    stance: str = Field(description="Overall stance (pro, con, neutral)")
+    arguments: list[str] = Field(description="Key arguments from this perspective")
+    evidence: list[str] = Field(default_factory=list, description="Supporting evidence")
+    confidence: float = Field(ge=0.0, le=1.0, description="Confidence in this perspective")
+    strengths: list[str] = Field(default_factory=list)
+    weaknesses: list[str] = Field(default_factory=list)
+    failed: bool = Field(default=False, description="True if perspective generation failed")
+    failure_reason: str | None = Field(default=None, description="Reason for failure")
+
+
+class BiasAnalysisSchema(BaseModel):
+    """Schema for bias analysis (stored in synthesis nodes)."""
+
+    detected_biases: list[str] = Field(default_factory=list)
+    bias_explanations: list[str] = Field(default_factory=list)
+    mitigation_suggestions: list[str] = Field(default_factory=list)
+    overall_bias_rating: str = Field(default="unknown", description="low, medium, high")
+
+
+class CriticNodeMetadata(BaseModel):
+    """Metadata for critic nodes (FR-012).
+
+    Critic nodes store individual perspective evaluations from the multi-judge compute.
+    Each critic node represents one perspective (skeptic, advocate, or synthesizer).
+    """
+
+    topic: str = Field(description="Topic being analyzed")
+    perspective_type: str = Field(description="Type: skeptic, advocate, or synthesizer")
+    perspective: PerspectiveSchema = Field(description="The perspective evaluation data")
+    source_node_id: int | None = Field(
+        default=None, description="ID of the node this analysis targets"
+    )
+
+
+class SynthesisNodeMetadata(BaseModel):
+    """Metadata for synthesis nodes (FR-012).
+
+    Synthesis nodes store the combined multi-perspective analysis including:
+    - All individual perspectives
+    - Consensus and disagreement points
+    - Bias analysis
+    - Overall recommendation
+    """
+
+    topic: str = Field(description="Topic being analyzed")
+    perspectives: list[PerspectiveSchema] = Field(description="All perspectives analyzed")
+    consensus_points: list[str] = Field(default_factory=list)
+    disagreement_points: list[str] = Field(default_factory=list)
+    bias_analysis: BiasAnalysisSchema | None = Field(
+        default=None, description="Analysis of potential biases"
+    )
+    recommendation: str = Field(description="Overall assessment")
+    confidence: float = Field(ge=0.0, le=1.0)
+    source_node_ids: list[int] = Field(
+        default_factory=list, description="IDs of critic nodes this synthesis combines"
+    )
+
 
 class NodePosition(BaseModel):
     """Node position coordinates."""

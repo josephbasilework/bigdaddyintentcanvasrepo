@@ -8,6 +8,12 @@ from app.database import Base
 from app.models.canvas import Canvas
 from app.models.edge import Edge, RelationType
 from app.models.node import Node, NodeType
+from app.schemas.node import (
+    BiasAnalysisSchema,
+    CriticNodeMetadata,
+    PerspectiveSchema,
+    SynthesisNodeMetadata,
+)
 
 
 @pytest.fixture
@@ -636,3 +642,297 @@ class TestCascadeDelete:
 
         deleted_edge = db_session.query(Edge).filter_by(id=edge_id).first()
         assert deleted_edge is None
+
+
+class TestCriticAndSynthesisNodeTypes:
+    """Tests for Critic and Synthesis node types (FR-012: Multi-Judge Compute)."""
+
+    def test_critic_node_type_exists(self):
+        """Test CRITIC node type is defined."""
+        assert NodeType.CRITIC == "critic"
+
+    def test_synthesis_node_type_exists(self):
+        """Test SYNTHESIS node type is defined."""
+        assert NodeType.SYNTHESIS == "synthesis"
+
+    def test_create_critic_node(self, db_session: Session):
+        """Test creating a critic node."""
+        canvas = Canvas(user_id="user-123", name="Test Canvas")
+        db_session.add(canvas)
+        db_session.commit()
+
+        perspective = PerspectiveSchema(
+            id="persp-001",
+            name="skeptic",
+            description="Critical analysis of the topic",
+            stance="con",
+            arguments=["Weak evidence", "Unfounded assumptions"],
+            evidence=["Source A lacks credibility"],
+            confidence=0.7,
+            strengths=["Rigorous scrutiny"],
+            weaknesses=["May miss positive aspects"],
+        )
+
+        metadata = CriticNodeMetadata(
+            topic="Should AI development continue unregulated?",
+            perspective_type="skeptic",
+            perspective=perspective,
+            source_node_id=42,
+        )
+
+        node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.CRITIC,
+            label="Skeptic Perspective",
+            position='{"x": 100, "y": 200, "z": 0}',
+            node_metadata=metadata.model_dump_json(),
+        )
+        db_session.add(node)
+        db_session.commit()
+        db_session.refresh(node)
+
+        assert node.id is not None
+        assert node.canvas_id == canvas.id
+        assert node.type == NodeType.CRITIC
+        assert node.label == "Skeptic Perspective"
+        retrieved_metadata = node.get_metadata()
+        assert retrieved_metadata["topic"] == "Should AI development continue unregulated?"
+        assert retrieved_metadata["perspective_type"] == "skeptic"
+        assert retrieved_metadata["source_node_id"] == 42
+
+    def test_create_synthesis_node(self, db_session: Session):
+        """Test creating a synthesis node."""
+        canvas = Canvas(user_id="user-123", name="Test Canvas")
+        db_session.add(canvas)
+        db_session.commit()
+
+        perspectives = [
+            PerspectiveSchema(
+                id="persp-001",
+                name="skeptic",
+                description="Critical analysis",
+                stance="con",
+                arguments=["Argument 1"],
+                confidence=0.7,
+            ),
+            PerspectiveSchema(
+                id="persp-002",
+                name="advocate",
+                description="Supportive analysis",
+                stance="pro",
+                arguments=["Argument 2"],
+                confidence=0.8,
+            ),
+        ]
+
+        bias_analysis = BiasAnalysisSchema(
+            detected_biases=["Framing bias"],
+            bias_explanations=["Topic framed negatively"],
+            mitigation_suggestions=["Include neutral framing"],
+            overall_bias_rating="medium",
+        )
+
+        metadata = SynthesisNodeMetadata(
+            topic="Should AI development continue unregulated?",
+            perspectives=perspectives,
+            consensus_points=["Both sides agree on need for transparency"],
+            disagreement_points=["Disagree on regulatory scope"],
+            bias_analysis=bias_analysis,
+            recommendation="Implement moderate oversight",
+            confidence=0.75,
+            source_node_ids=[1, 2, 3],
+        )
+
+        node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.SYNTHESIS,
+            label="Multi-Perspective Synthesis",
+            position='{"x": 300, "y": 400, "z": 0}',
+            node_metadata=metadata.model_dump_json(),
+        )
+        db_session.add(node)
+        db_session.commit()
+        db_session.refresh(node)
+
+        assert node.id is not None
+        assert node.canvas_id == canvas.id
+        assert node.type == NodeType.SYNTHESIS
+        assert node.label == "Multi-Perspective Synthesis"
+        retrieved_metadata = node.get_metadata()
+        assert retrieved_metadata["topic"] == "Should AI development continue unregulated?"
+        assert len(retrieved_metadata["perspectives"]) == 2
+        assert retrieved_metadata["consensus_points"] == ["Both sides agree on need for transparency"]
+        assert retrieved_metadata["bias_analysis"]["overall_bias_rating"] == "medium"
+        assert retrieved_metadata["recommendation"] == "Implement moderate oversight"
+
+    def test_critic_node_to_dict(self, db_session: Session):
+        """Test critic node serialization to dictionary."""
+        canvas = Canvas(user_id="user-123", name="Test Canvas")
+        db_session.add(canvas)
+        db_session.commit()
+
+        perspective = PerspectiveSchema(
+            id="persp-001",
+            name="advocate",
+            description="Supportive view",
+            stance="pro",
+            arguments=["Strong argument"],
+            confidence=0.8,
+        )
+
+        metadata = CriticNodeMetadata(
+            topic="Test topic",
+            perspective_type="advocate",
+            perspective=perspective,
+        )
+
+        node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.CRITIC,
+            label="Advocate Perspective",
+            position='{"x": 50, "y": 100, "z": 0}',
+            node_metadata=metadata.model_dump_json(),
+        )
+        db_session.add(node)
+        db_session.commit()
+        db_session.refresh(node)
+
+        result = node.to_dict()
+        assert result["id"] == node.id
+        assert result["canvasId"] == canvas.id
+        assert result["type"] == NodeType.CRITIC
+        assert result["label"] == "Advocate Perspective"
+        assert result["position"] == {"x": 50, "y": 100, "z": 0}
+        assert result["metadata"]["perspective_type"] == "advocate"
+
+    def test_synthesis_node_to_dict(self, db_session: Session):
+        """Test synthesis node serialization to dictionary."""
+        canvas = Canvas(user_id="user-123", name="Test Canvas")
+        db_session.add(canvas)
+        db_session.commit()
+
+        metadata = SynthesisNodeMetadata(
+            topic="Test topic",
+            perspectives=[],
+            consensus_points=["Common ground"],
+            recommendation="Balanced approach",
+            confidence=0.6,
+        )
+
+        node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.SYNTHESIS,
+            label="Combined Analysis",
+            position='{"x": 200, "y": 300, "z": 0}',
+            node_metadata=metadata.model_dump_json(),
+        )
+        db_session.add(node)
+        db_session.commit()
+        db_session.refresh(node)
+
+        result = node.to_dict()
+        assert result["id"] == node.id
+        assert result["canvasId"] == canvas.id
+        assert result["type"] == NodeType.SYNTHESIS
+        assert result["label"] == "Combined Analysis"
+        assert result["position"] == {"x": 200, "y": 300, "z": 0}
+        assert result["metadata"]["confidence"] == 0.6
+
+    def test_perspective_schema_validation(self):
+        """Test PerspectiveSchema with all fields."""
+        perspective = PerspectiveSchema(
+            id="test-id",
+            name="synthesizer",
+            description="Bridge-building analysis",
+            stance="neutral",
+            arguments=["Finding common ground", "Identifying shared values"],
+            evidence=["Source verification"],
+            confidence=0.85,
+            strengths=["Balanced view"],
+            weaknesses=["May oversimplify"],
+        )
+
+        assert perspective.id == "test-id"
+        assert perspective.name == "synthesizer"
+        assert perspective.stance == "neutral"
+        assert perspective.confidence == 0.85
+        assert perspective.failed is False
+        assert perspective.failure_reason is None
+
+    def test_perspective_schema_with_failure(self):
+        """Test PerspectiveSchema representing a failed perspective."""
+        perspective = PerspectiveSchema(
+            id="failed-persp",
+            name="skeptic",
+            description="Failed to generate",
+            stance="neutral",
+            arguments=[],
+            confidence=0.0,
+            failed=True,
+            failure_reason="Timeout after 30s",
+        )
+
+        assert perspective.failed is True
+        assert perspective.failure_reason == "Timeout after 30s"
+        assert perspective.confidence == 0.0
+
+    def test_bias_analysis_schema_defaults(self):
+        """Test BiasAnalysisSchema default values."""
+        bias = BiasAnalysisSchema()
+
+        assert bias.detected_biases == []
+        assert bias.bias_explanations == []
+        assert bias.mitigation_suggestions == []
+        assert bias.overall_bias_rating == "unknown"
+
+    def test_critic_synthesis_with_failed_perspectives(self, db_session: Session):
+        """Test synthesis node with failed perspectives included."""
+        canvas = Canvas(user_id="user-123", name="Test Canvas")
+        db_session.add(canvas)
+        db_session.commit()
+
+        successful_perspective = PerspectiveSchema(
+            id="good-persp",
+            name="advocate",
+            description="Successful analysis",
+            stance="pro",
+            arguments=["Strong case"],
+            confidence=0.8,
+        )
+
+        failed_perspective = PerspectiveSchema(
+            id="bad-persp",
+            name="skeptic",
+            description="Failed to generate",
+            stance="neutral",
+            arguments=[],
+            confidence=0.0,
+            failed=True,
+            failure_reason="Gateway timeout",
+        )
+
+        metadata = SynthesisNodeMetadata(
+            topic="Mixed results topic",
+            perspectives=[successful_perspective, failed_perspective],
+            consensus_points=[],
+            recommendation="Partial analysis available",
+            confidence=0.4,
+        )
+
+        node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.SYNTHESIS,
+            label="Partial Analysis",
+            position='{"x": 0, "y": 0, "z": 0}',
+            node_metadata=metadata.model_dump_json(),
+        )
+        db_session.add(node)
+        db_session.commit()
+        db_session.refresh(node)
+
+        retrieved_metadata = node.get_metadata()
+        perspectives = retrieved_metadata["perspectives"]
+        assert len(perspectives) == 2
+        # Check that failed perspective is included
+        assert perspectives[1]["failed"] is True
+        assert perspectives[1]["failure_reason"] == "Gateway timeout"
