@@ -14,6 +14,7 @@ import { DAGNode } from "./DAGNode";
 import { DashboardNode } from "./DashboardNode";
 import { JobNode } from "./JobNode";
 import { CalendarSyncDialog } from "./CalendarSyncDialog";
+import { PerspectiveRerunDialog } from "./PerspectiveRerunDialog";
 import {
   CalendarApprovalDialog,
   type PendingCalendarAction,
@@ -95,6 +96,7 @@ export function Node({
     pendingAction: PendingCalendarAction | null;
     isFirstAction: boolean;
   } | null>(null);
+  const [isPerspectiveRerunOpen, setIsPerspectiveRerunOpen] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
   const focusFromPointerRef = useRef(false);
   const scale = useTransformComponent(({ state }) => state.scale);
@@ -256,6 +258,20 @@ export function Node({
     event.stopPropagation();
     event.preventDefault();
     handleCalendarSyncOpen();
+  };
+
+  // FR-012: Multi-Judge Compute - Rerun with more compute handlers
+  const handleRerunWithMoreCompute = () => {
+    setIsPerspectiveRerunOpen(true);
+  };
+
+  const handlePerspectiveRerunClose = () => {
+    setIsPerspectiveRerunOpen(false);
+  };
+
+  const handlePerspectiveRerunCreated = (jobId: string) => {
+    console.log("Perspective analysis job created:", jobId);
+    // Optionally add the new job node to the canvas here
   };
 
   const handleCalendarSyncConfirm = useCallback(
@@ -672,6 +688,11 @@ export function Node({
               jobData={node.jobData}
               isSelected={isSelected}
               onSelect={handleClick}
+              onRerunWithMoreCompute={
+                node.jobData.jobType === "perspective_analysis"
+                  ? handleRerunWithMoreCompute
+                  : undefined
+              }
             />
           ) : node.content && (
             <div style={{
@@ -908,6 +929,15 @@ export function Node({
         documentCount={deleteDialog?.documentCount ?? 0}
         onCancel={handleCancelDelete}
         onConfirm={handleConfirmDelete}
+      />
+
+      {/* FR-012: Multi-Judge Compute - Rerun with more compute dialog */}
+      <PerspectiveRerunDialog
+        isOpen={isPerspectiveRerunOpen}
+        onClose={handlePerspectiveRerunClose}
+        topic={node.title}
+        targetNodeId={node.id}
+        onJobCreated={handlePerspectiveRerunCreated}
       />
     </>
   );

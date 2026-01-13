@@ -218,4 +218,128 @@ describe("JobNode", () => {
       expect(liveIndicator).toBeInTheDocument();
     });
   });
+
+  describe("FR-012: Multi-Judge Compute - Rerun with more compute", () => {
+    it("should show rerun button for completed perspective_analysis jobs", () => {
+      const perspectiveJobData: JobData = {
+        jobId: "perspective-job-123",
+        jobType: "perspective_analysis",
+        status: "complete",
+        progressPercent: 100,
+        data: undefined,
+      };
+
+      const onRerun = vi.fn();
+
+      render(
+        <JobNode
+          {...defaultProps}
+          jobData={perspectiveJobData}
+          onRerunWithMoreCompute={onRerun}
+        />
+      );
+
+      const rerunButton = screen.getByRole("button", { name: /Rerun with more compute/i });
+      expect(rerunButton).toBeInTheDocument();
+    });
+
+    it("should not show rerun button for in-progress perspective_analysis jobs", () => {
+      const perspectiveJobData: JobData = {
+        jobId: "perspective-job-123",
+        jobType: "perspective_analysis",
+        status: "in_progress",
+        progressPercent: 50,
+        data: undefined,
+      };
+
+      render(
+        <JobNode {...defaultProps} jobData={perspectiveJobData} onRerunWithMoreCompute={vi.fn()} />
+      );
+
+      expect(screen.queryByRole("button", { name: /Rerun with more compute/i })).not.toBeInTheDocument();
+    });
+
+    it("should not show rerun button when onRerunWithMoreCompute is not provided", () => {
+      const perspectiveJobData: JobData = {
+        jobId: "perspective-job-123",
+        jobType: "perspective_analysis",
+        status: "complete",
+        progressPercent: 100,
+        data: undefined,
+      };
+
+      render(<JobNode {...defaultProps} jobData={perspectiveJobData} />);
+
+      expect(screen.queryByRole("button", { name: /Rerun with more compute/i })).not.toBeInTheDocument();
+    });
+
+    it("should call onRerunWithMoreCompute when rerun button is clicked", () => {
+      const perspectiveJobData: JobData = {
+        jobId: "perspective-job-123",
+        jobType: "perspective_analysis",
+        status: "complete",
+        progressPercent: 100,
+        data: undefined,
+      };
+
+      const onRerun = vi.fn();
+
+      render(
+        <JobNode
+          {...defaultProps}
+          jobData={perspectiveJobData}
+          onRerunWithMoreCompute={onRerun}
+        />
+      );
+
+      const rerunButton = screen.getByRole("button", { name: /Rerun with more compute/i });
+      rerunButton.click();
+
+      expect(onRerun).toHaveBeenCalledTimes(1);
+    });
+
+    it("should stop propagation when rerun button is clicked", () => {
+      const perspectiveJobData: JobData = {
+        jobId: "perspective-job-123",
+        jobType: "perspective_analysis",
+        status: "complete",
+        progressPercent: 100,
+        data: undefined,
+      };
+
+      const onRerun = vi.fn();
+      const onSelect = vi.fn();
+
+      render(
+        <JobNode
+          {...defaultProps}
+          jobData={perspectiveJobData}
+          onRerunWithMoreCompute={onRerun}
+          onSelect={onSelect}
+        />
+      );
+
+      const rerunButton = screen.getByRole("button", { name: /Rerun with more compute/i });
+      rerunButton.click();
+
+      expect(onRerun).toHaveBeenCalledTimes(1);
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+
+    it("should not show rerun button for non-perspective_analysis jobs", () => {
+      const researchJobData: JobData = {
+        jobId: "research-job-123",
+        jobType: "deep_research",
+        status: "complete",
+        progressPercent: 100,
+        data: undefined,
+      };
+
+      render(
+        <JobNode {...defaultProps} jobData={researchJobData} onRerunWithMoreCompute={vi.fn()} />
+      );
+
+      expect(screen.queryByRole("button", { name: /Rerun with more compute/i })).not.toBeInTheDocument();
+    });
+  });
 });
