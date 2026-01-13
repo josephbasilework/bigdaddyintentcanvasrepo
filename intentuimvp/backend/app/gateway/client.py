@@ -257,16 +257,16 @@ class GatewayClient:
         base_delay = settings.gateway_retry_base_delay_ms
         exponential_delay = base_delay * (2**attempt)
 
-        # Cap at max delay
-        capped_delay = min(exponential_delay, settings.gateway_retry_max_delay_ms)
-
-        # Add jitter if configured (±25% of delay)
+        # Add jitter before capping to ensure we never exceed max
         if settings.gateway_retry_jitter:
-            jitter_range = capped_delay * 0.25
+            jitter_range = exponential_delay * 0.25
             jitter = random.uniform(-jitter_range, jitter_range)
-            final_delay = int(capped_delay + jitter)
+            delayed = exponential_delay + jitter
         else:
-            final_delay = int(capped_delay)
+            delayed = exponential_delay
+
+        # Cap at max delay (after jitter to ensure we never exceed)
+        final_delay = min(int(delayed), settings.gateway_retry_max_delay_ms)
 
         return max(final_delay, base_delay)  # Ensure at least base delay
 

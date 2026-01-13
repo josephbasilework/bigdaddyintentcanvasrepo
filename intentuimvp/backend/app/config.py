@@ -28,6 +28,28 @@ class Settings(BaseSettings):
         default="https://gateway.pydantic.dev/proxy/openai/",
         description="Pydantic AI Gateway base URL",
     )
+    gateway_retry_max_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum retry attempts for Gateway requests (NFR-REL-001)",
+    )
+    gateway_retry_base_delay_ms: int = Field(
+        default=1000,
+        ge=100,
+        le=10000,
+        description="Base delay for exponential backoff in milliseconds",
+    )
+    gateway_retry_max_delay_ms: int = Field(
+        default=30000,
+        ge=5000,
+        le=120000,
+        description="Maximum delay between retries in milliseconds",
+    )
+    gateway_retry_jitter: bool = Field(
+        default=True,
+        description="Add random jitter to retry delays to prevent thundering herd",
+    )
 
     # xAI (for fallback models)
     xai_api_key: str = Field(default="", description="xAI API key (optional)")
