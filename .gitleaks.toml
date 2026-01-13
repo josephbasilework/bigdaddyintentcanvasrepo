@@ -7,6 +7,7 @@ title = "IntentUI Secret Scanning"
 description = "Global allowlist for test files with redacted secrets."
 paths = [
   '''intentuimvp/backend/tests/test_logging_config\.py''',
+  '''intentuimvp/backend/tests/test_telemetry_events\.py''',
 ]
 
 [[rules]]
@@ -54,6 +55,7 @@ keywords = ["api_key", "apikey", "secret", "token"]
   condition = "AND"
   paths = [
     '''intentuimvp/backend/tests/test_logging_config\.py''',
+    '''intentuimvp/backend/tests/test_telemetry_events\.py''',
   ]
   regexTarget = "line"
   regexes = [
