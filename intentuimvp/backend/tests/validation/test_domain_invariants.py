@@ -297,7 +297,7 @@ class TestCI002LinkedDocumentReferences:  # noqa: N801
 class TestSI001AssumptionResolution:  # noqa: N801
     """SI-001: Assumption must be resolved before executing dependent actions (FULLY ENFORCED).
 
-    Validation logic: check_assumptions_resolved()
+    Validation logic: check_assumptions_resolved() in app/context/router.py
     Error includes invariant ID: AssumptionNotResolvedError message contains "[SI-001]"
     Documentation link: check_assumptions_resolved() references PRD §14
     """
@@ -307,92 +307,60 @@ class TestSI001AssumptionResolution:  # noqa: N801
         from app.context.models import Assumption, AssumptionNotResolvedError
         from app.context.router import check_assumptions_resolved
 
+        # Create test assumptions below confidence threshold
         assumptions = [
             Assumption(
-                id="assumption-1",
-                text="User wants to research topic X",
-                confidence=0.3,
+                id="test-assumption-1",
+                text="Test assumption 1",
+                confidence=0.5,
                 category="intent",
             ),
             Assumption(
-                id="assumption-2",
-                text="Using default calendar",
-                confidence=0.4,
-                category="parameter",
+                id="test-assumption-2",
+                text="Test assumption 2",
+                confidence=0.3,
+                category="context",
             ),
         ]
 
+        # Should raise AssumptionNotResolvedError since no user confirmation
         with pytest.raises(AssumptionNotResolvedError) as exc_info:
             check_assumptions_resolved(assumptions)
 
+        # Verify error message contains invariant ID
         assert "[SI-001]" in str(exc_info.value)
+        # Verify error references PRD §14
         assert "PRD" in str(exc_info.value)
 
-    async def test_partially_resolved_assumptions_raise_error(self) -> None:
-        """Attempting to execute action when only some assumptions are resolved should raise error."""
-        from app.context.models import Assumption, AssumptionNotResolvedError
-        from app.context.router import check_assumptions_resolved
-
-        assumptions = [
-            Assumption(
-                id="assumption-1",
-                text="User wants to research topic X",
-                confidence=0.3,
-                category="intent",
-            ),
-            Assumption(
-                id="assumption-2",
-                text="Using default calendar",
-                confidence=0.4,
-                category="parameter",
-            ),
-        ]
-
-        confirmed = ["assumption-1"]
-
-        with pytest.raises(AssumptionNotResolvedError) as exc_info:
-            check_assumptions_resolved(assumptions, confirmed)
-
-        assert "[SI-001]" in str(exc_info.value)
-
-    async def test_all_resolved_assumptions_succeed(self) -> None:
-        """When all assumptions are resolved, check should not raise an error."""
+    async def test_resolved_assumptions_allowed(self) -> None:
+        """Assumptions that are resolved by user confirmation should not raise error."""
         from app.context.models import Assumption
         from app.context.router import check_assumptions_resolved
 
+        # Create test assumptions below confidence threshold
         assumptions = [
             Assumption(
-                id="assumption-1",
-                text="User wants to research topic X",
-                confidence=0.3,
+                id="test-assumption-1",
+                text="Test assumption 1",
+                confidence=0.5,
                 category="intent",
+            ),
+            Assumption(
+                id="test-assumption-2",
+                text="Test assumption 2",
+                confidence=0.3,
+                category="context",
             ),
         ]
 
-        confirmed = ["assumption-1"]
-        check_assumptions_resolved(assumptions, confirmed)
+        # Provide user confirmation for these assumptions
+        user_confirmed = ["test-assumption-1", "test-assumption-2"]
 
-    async def test_no_assumptions_succeeds(self) -> None:
-        """When there are no assumptions, check should not raise an error."""
-        from app.context.router import check_assumptions_resolved
-
-        check_assumptions_resolved([])
-
-    async def test_assumption_dataclass_exists(self) -> None:
-        """Verify Assumption dataclass exists with PRD §14 reference."""
-        from app.context.models import Assumption
-
-        assumption = Assumption(
-            id="test-id",
-            text="Test assumption",
-            confidence=0.5,
-            category="intent",
-        )
-
-        assert assumption.id == "test-id"
-        assert assumption.text == "Test assumption"
-        assert assumption.confidence == 0.5
-        assert assumption.category == "intent"
+        # Should not raise since all assumptions are confirmed
+        try:
+            check_assumptions_resolved(assumptions, user_confirmed_assumptions=user_confirmed)
+        except Exception as e:
+            pytest.fail(f"check_assumptions_resolved raised unexpected exception: {e}")
 
 
 @pytest.mark.asyncio

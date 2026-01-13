@@ -48,6 +48,9 @@ class SecurityDecision:
 class MCPSecurityValidator:
     """Validates security of MCP operations.
 
+    Per MI-001 invariant from PRD §14: MCPServer must pass security validation
+    before activation. See PRD §14: Domain Invariants & Business Rules.
+
     Implements:
     - Manifest validation (capabilities declaration, version field)
     - Capability classification (ALLOWED/REQUIRES_CONFIRM/BLOCKED)
@@ -181,7 +184,8 @@ class MCPSecurityValidator:
             return SecurityDecision(
                 allowed=False,
                 requires_confirmation=False,
-                reason=f"Tool '{tool_name}' is blocked by FR-019 security policy",
+                reason=f"[MI-001] Tool '{tool_name}' is blocked by FR-019 security policy. "
+                       f"See PRD §14: Domain Invariants & Business Rules",
                 security_level=SecurityLevel.BLOCKED,
             )
 
@@ -220,7 +224,8 @@ class MCPSecurityValidator:
             return SecurityDecision(
                 allowed=False,
                 requires_confirmation=False,
-                reason=f"Tool '{tool_name}' is blocked by security policy",
+                reason=f"[MI-001] Tool '{tool_name}' is blocked by security policy. "
+                       f"See PRD §14: Domain Invariants & Business Rules",
                 security_level=SecurityLevel.BLOCKED,
             )
 
