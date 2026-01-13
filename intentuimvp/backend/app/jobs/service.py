@@ -65,6 +65,7 @@ from app.jobs.client import (
     get_queue_stats as client_get_queue_stats,
 )
 from app.jobs.progress import progress_tracker
+from app.telemetry import emit_job_enqueued as emit_telemetry_job_enqueued
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +195,15 @@ class JobService:  # noqa: F811
         """
         job_id = await enqueue_job(job_type, job_data, user_id, workspace_id)
         logger.info(f"JobService: Enqueued job {job_id} of type {job_type}")
+
+        # Emit telemetry event for Research Job Completion metric (JM-8)
+        emit_telemetry_job_enqueued(
+            job_id=job_id,
+            job_type=job_type,
+            job_params=job_data,
+            user_id=user_id,
+        )
+
         return job_id
 
     async def _check_for_duplicate_deep_research(

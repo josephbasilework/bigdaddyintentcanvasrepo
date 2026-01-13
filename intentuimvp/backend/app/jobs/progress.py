@@ -23,6 +23,7 @@ from app.database import SessionLocal
 from app.jobs.base import JobStateMachine
 from app.logging_config import get_correlation_id
 from app.models.job import Job
+from app.telemetry import emit_job_completed
 from app.ws.websocket import manager as ws_manager
 
 logger = logging.getLogger(__name__)
@@ -437,6 +438,16 @@ class JobProgressTracker:
                 },
             )
 
+            # Emit telemetry event for Research Job Completion metric (JM-8)
+            emit_job_completed(
+                job_id=job_id,
+                job_type=job.job_type,
+                status="success",
+                execution_duration_ms=int(duration_ms) if duration_ms else 0,
+                user_id=job.user_id,
+                correlation_id=get_correlation_id(),
+            )
+
     async def fail_job(
         self,
         job_id: str,
@@ -480,6 +491,17 @@ class JobProgressTracker:
                 },
             )
 
+            # Emit telemetry event for Research Job Completion metric (JM-8)
+            emit_job_completed(
+                job_id=job_id,
+                job_type=job.job_type,
+                status="failed",
+                execution_duration_ms=int(duration_ms) if duration_ms else 0,
+                failure_reason=error_message[:500],  # Truncate long error messages
+                user_id=job.user_id,
+                correlation_id=get_correlation_id(),
+            )
+
     async def cancel_job(self, job_id: str) -> None:
         """Mark job as cancelled and emit cancellation event.
 
@@ -515,6 +537,16 @@ class JobProgressTracker:
                     "outcome": "cancelled",
                     "correlation_id": get_correlation_id(),
                 },
+            )
+
+            # Emit telemetry event for Research Job Completion metric (JM-8)
+            emit_job_completed(
+                job_id=job_id,
+                job_type=job.job_type,
+                status="cancelled",
+                execution_duration_ms=int(duration_ms) if duration_ms else 0,
+                user_id=job.user_id,
+                correlation_id=get_correlation_id(),
             )
 
     async def emit_event(self, event: ProgressEvent) -> None:

@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.mcp.models import MCPServer, SecurityLevel
+from app.telemetry import emit_mcp_configured
 
 
 class MCPServerRegistry:
@@ -91,6 +92,15 @@ class MCPServerRegistry:
             )
             self._session.add(server)
             await self._session.flush()
+
+            # Emit telemetry event for MCP Adoption metric (JM-8)
+            emit_mcp_configured(
+                mcp_id=server_id,
+                mcp_type=transport_type,
+                mcp_name=name,
+                is_active=enabled,
+            )
+
             return server
 
     async def get_server(self, server_id: str) -> MCPServer | None:
