@@ -1,12 +1,19 @@
-"""Perspective Agent for LLM-as-judge patterns.
+"""Perspective Agent for LLM-as-judge patterns (FR-012).
 
 This agent provides:
-- Multiple perspective analysis on a topic
-- Objective evaluation of claims and arguments
-- Bias detection and mitigation
-- Structured comparison of viewpoints
+- Multiple perspective analysis on a topic (skeptic, advocate, synthesizer)
+- Sequential perspective execution with 30s timeout per perspective
+- Graceful failure handling (proceed with available perspectives)
+- Structured comparison of viewpoints per PRD FR-012
+
+PRD Reference: FR-012 Multi-Judge Compute (LLM-as-Judge) + Synthesis
+Default Perspectives:
+1. skeptic - Challenges claims, looks for weak evidence
+2. advocate - Steelmans the argument, finds supporting evidence
+3. synthesizer - Identifies common ground and key tensions
 """
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
@@ -18,10 +25,13 @@ from app.agents.base import BaseAgent
 
 logger = logging.getLogger(__name__)
 
+# FR-012: Timeout per perspective is 30 seconds
+PERSPECTIVE_TIMEOUT = 30.0
+
 
 # Perspective models
 class Perspective(BaseModel):
-    """A single perspective on a topic."""
+    """A single perspective on a topic (FR-012)."""
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     name: str = Field(description="Name of this perspective")
@@ -32,6 +42,8 @@ class Perspective(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, description="Confidence in this perspective")
     strengths: list[str] = Field(default_factory=list)
     weaknesses: list[str] = Field(default_factory=list)
+    failed: bool = Field(default=False, description="True if perspective generation failed")
+    failure_reason: str | None = Field(default=None, description="Reason for failure")
 
 
 class BiasAnalysis(BaseModel):
@@ -65,27 +77,31 @@ class PerspectiveConfig:
 
 
 class PerspectiveAgent(BaseAgent):
-    """Agent for analyzing multiple perspectives on a topic.
+    """Agent for analyzing multiple perspectives on a topic (FR-012).
 
     The perspective agent uses LLM-as-judge patterns to:
-    1. Generate diverse perspectives on a topic
+    1. Generate diverse perspectives on a topic (sequential execution)
     2. Analyze arguments from each viewpoint
     3. Identify consensus and disagreement
     4. Detect and analyze potential biases
     5. Provide balanced recommendations
+    6. Handle failures gracefully (proceed with available perspectives)
+
+    FR-012 Default Perspectives:
+    1. skeptic - Challenges claims, looks for weak evidence
+    2. advocate - Steelmans the argument, finds supporting evidence
+    3. synthesizer - Identifies common ground and key tensions
 
     Usage:
         agent = PerspectiveAgent()
         evaluation = await agent.evaluate("Should AI development continue unregulated?")
     """
 
+    # FR-012: Default perspectives for multi-judge compute
     DEFAULT_PERSPECTIVES = [
-        "utilitarian",
-        "deontological",
-        "virtue_ethics",
-        "precautionary",
-        "innovation_focused",
-        "stakeholder_focused",
+        "skeptic",      # Challenges claims, looks for weak evidence
+        "advocate",     # Steelmans the argument, finds supporting evidence
+        "synthesizer",  # Identifies common ground and key tensions
     ]
 
     def __init__(
@@ -129,7 +145,12 @@ class PerspectiveAgent(BaseAgent):
         topic: str,
         perspectives: list[str] | None = None,
     ) -> PerspectiveEvaluation:
-        """Evaluate multiple perspectives on a topic.
+        """Evaluate multiple perspectives on a topic (FR-012).
+
+        FR-012 Implementation:
+        - Sequential execution (single model)
+        - 30 second timeout per perspective
+        - If perspective fails: proceed with available, note in output
 
         Args:
             topic: Topic to analyze.
@@ -138,33 +159,89 @@ class PerspectiveAgent(BaseAgent):
         Returns:
             PerspectiveEvaluation with analysis.
         """
-        # Select perspectives
+        # FR-012: Select perspectives (configurable 1-3)
         perspective_names = (
             perspectives[: self.config.num_perspectives]
             if perspectives
             else self.DEFAULT_PERSPECTIVES[: self.config.num_perspectives]
         )
 
-        # Generate each perspective
+        # FR-012: Generate each perspective sequentially with timeout
+        # If perspective fails: proceed with available perspectives
         perspective_objs: list[Perspective] = []
         for name in perspective_names:
-            perspective = await self._generate_perspective(topic, name)
-            perspective_objs.append(perspective)
+            try:
+                # FR-012: 30 second timeout per perspective
+                perspective = await asyncio.wait_for(
+                    self._generate_perspective(topic, name),
+                    timeout=PERSPECTIVE_TIMEOUT,
+                )
+                perspective_objs.append(perspective)
+                logger.info(
+                    f"Perspective '{name}' generated successfully",
+                    extra={"perspective": name, "confidence": perspective.confidence},
+                )
+            except TimeoutError:
+                # FR-012: If perspective fails, note in output and proceed
+                logger.warning(
+                    f"Perspective '{name}' timed out after {PERSPECTIVE_TIMEOUT}s",
+                    extra={"perspective": name, "timeout": PERSPECTIVE_TIMEOUT},
+                )
+                perspective_objs.append(
+                    Perspective(
+                        name=name,
+                        description="Perspective generation timed out",
+                        stance="neutral",
+                        arguments=[f"Timed out after {PERSPECTIVE_TIMEOUT}s"],
+                        confidence=0.0,
+                        failed=True,
+                        failure_reason=f"Timeout after {PERSPECTIVE_TIMEOUT}s",
+                    )
+                )
+            except Exception as e:
+                # FR-012: If perspective fails, note in output and proceed
+                logger.warning(
+                    f"Perspective '{name}' generation failed: {e}",
+                    extra={"perspective": name, "error": str(e)},
+                    exc_info=True,
+                )
+                perspective_objs.append(
+                    Perspective(
+                        name=name,
+                        description="Perspective generation failed",
+                        stance="neutral",
+                        arguments=["Generation failed"],
+                        confidence=0.0,
+                        failed=True,
+                        failure_reason=str(e),
+                    )
+                )
 
-        # Analyze consensus and disagreement
-        consensus_points = await self._find_consensus(perspective_objs)
-        disagreement_points = await self._find_disagreements(perspective_objs)
+        # Filter out failed perspectives for analysis
+        successful_perspectives = [p for p in perspective_objs if not p.failed]
 
-        # Bias analysis
+        # Only run consensus/disagreement if we have at least 2 successful perspectives
+        if len(successful_perspectives) >= 2:
+            consensus_points = await self._find_consensus(successful_perspectives)
+            disagreement_points = await self._find_disagreements(successful_perspectives)
+        else:
+            consensus_points = []
+            disagreement_points = []
+            logger.info(
+                "Skipping consensus/disagreement analysis due to insufficient successful perspectives",
+                extra={"successful_count": len(successful_perspectives)},
+            )
+
+        # Bias analysis (only if we have successful perspectives)
         bias_analysis = (
-            await self._analyze_biases(topic, perspective_objs)
-            if self.config.include_bias_analysis
+            await self._analyze_biases(topic, successful_perspectives)
+            if self.config.include_bias_analysis and successful_perspectives
             else BiasAnalysis()
         )
 
         # Generate recommendation
         recommendation = await self._generate_recommendation(
-            topic, perspective_objs, consensus_points, disagreement_points
+            topic, successful_perspectives, consensus_points, disagreement_points
         )
 
         # Calculate overall confidence
@@ -183,7 +260,12 @@ class PerspectiveAgent(BaseAgent):
     async def _generate_perspective(
         self, topic: str, perspective_type: str
     ) -> Perspective:
-        """Generate a single perspective on the topic.
+        """Generate a single perspective on the topic (FR-012).
+
+        FR-012 Perspective Types:
+        - skeptic: Challenges claims, looks for weak evidence
+        - advocate: Steelmans the argument, finds supporting evidence
+        - synthesizer: Identifies common ground and key tensions
 
         Args:
             topic: Topic to analyze.
@@ -191,62 +273,77 @@ class PerspectiveAgent(BaseAgent):
 
         Returns:
             Perspective with analysis.
-        """
-        system_prompt = f"""You are an analyst providing a {perspective_type} perspective.
 
+        Raises:
+            Exception: If generation fails (caller handles gracefully).
+        """
+        # FR-012: Specific prompts for each perspective type
+        system_prompts = {
+            "skeptic": """You are a SKEPTIC analyst. Your role is to:
+- Challenge claims and look for weak evidence
+- Question assumptions and identify logical fallacies
+- Point out what's missing or inadequately supported
+- Find counterarguments and alternative explanations
+- Be rigorous about evidence quality""",
+            "advocate": """You are an ADVOCATE analyst. Your role is to:
+- Steelman the argument (present the strongest version)
+- Find supporting evidence and strong reasoning
+- Highlight the best aspects of the position
+- Give the view its fairest, most compelling presentation
+- Assume good faith and charitable interpretation""",
+            "synthesizer": """You are a SYNTHESIZER analyst. Your role is to:
+- Identify common ground across different viewpoints
+- Find areas of agreement and shared values
+- Highlight key tensions and trade-offs
+- Bridge divides and find middle ground
+- Focus on what unites rather than divides""",
+        }
+
+        # Get the appropriate prompt, defaulting to a generic one
+        system_prompt = system_prompts.get(
+            perspective_type,
+            f"""You are a {perspective_type} analyst.
 Your task is to analyze the given topic fairly from this specific viewpoint.
 - Present strong arguments supporting this perspective
 - Acknowledge limitations or weaknesses of this view
 - Provide evidence or reasoning where applicable
-- Be honest about uncertainty
+- Be honest about uncertainty""",
+        )
+
+        system_prompt += """
 
 Return your analysis as JSON with:
-- name: perspective name
-- description: brief description
-- stance: pro/con/neutral
+- name: perspective name (use the perspective type)
+- description: brief description of this viewpoint
+- stance: pro/con/neutral regarding the topic
 - arguments: array of key arguments (3-5)
-- evidence: array of supporting points
+- evidence: array of supporting points or evidence
 - confidence: how confident in this view (0-1)
-- strengths: array of strengths
-- weaknesses: array of weaknesses"""
+- strengths: array of strengths of this perspective
+- weaknesses: array of weaknesses or limitations"""
 
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"Topic: {topic}"},
         ]
 
-        try:
-            response = await self.generate(messages=messages)
-            content = response["choices"][0]["message"]["content"]
+        response = await self.generate(messages=messages)
+        content = response["choices"][0]["message"]["content"]
 
-            import json
+        import json
 
-            parsed = json.loads(content)
+        parsed = json.loads(content)
 
-            return Perspective(
-                name=perspective_type,
-                description=parsed.get("description", ""),
-                stance=parsed.get("stance", "neutral"),
-                arguments=parsed.get("arguments", []),
-                evidence=parsed.get("evidence", []),
-                confidence=parsed.get("confidence", 0.5),
-                strengths=parsed.get("strengths", []),
-                weaknesses=parsed.get("weaknesses", []),
-            )
-
-        except Exception as e:
-            logger.warning(f"Perspective generation failed for {perspective_type}: {e}")
-
-            # Return fallback
-            return Perspective(
-                name=perspective_type,
-                description=f"Analysis from {perspective_type} viewpoint",
-                stance="neutral",
-                arguments=["Analysis unavailable"],
-                confidence=0.3,
-                strengths=[],
-                weaknesses=["Generation failed"],
-            )
+        return Perspective(
+            name=perspective_type,
+            description=parsed.get("description", ""),
+            stance=parsed.get("stance", "neutral"),
+            arguments=parsed.get("arguments", []),
+            evidence=parsed.get("evidence", []),
+            confidence=parsed.get("confidence", 0.5),
+            strengths=parsed.get("strengths", []),
+            weaknesses=parsed.get("weaknesses", []),
+        )
 
     async def _find_consensus(
         self, perspectives: list[Perspective]
