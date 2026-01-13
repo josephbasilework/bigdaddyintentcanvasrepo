@@ -938,6 +938,133 @@ async def transcription_job(
         )
 
 
+async def planner_job(
+    ctx: dict[str, Any],
+    goal: str,
+    context: str = "",
+) -> JobResult:
+    """Execute a planning job to generate a structured plan with task DAG.
+
+    This job uses the PlannerAgent to decompose a user goal into:
+    - Structured plan with objectives and approach
+    - Task DAG (Directed Acyclic Graph) with dependencies
+    - Execution order for parallelizable work
+
+    Args:
+        ctx: ARQ execution context (contains job_id, user_id, workspace_id)
+        goal: The user's goal or objective to plan for
+        context: Optional additional context (selected nodes, workspace state, etc.)
+
+    Returns:
+        JobResult with plan data or error.
+    """
+    job_id = ctx.get("job_id", str(uuid.uuid4()))
+    user_id = ctx.get("user_id")
+    workspace_id = ctx.get("workspace_id")
+
+    await progress_tracker.create_job(
+        job_id=job_id,
+        job_type=JobType.PLANNER,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        parameters={"goal": goal, "context": context},
+    )
+
+    logger.info(f"[{job_id}] Starting planner job for goal: {goal[:50]}...")
+
+    try:
+        await check_job_cancelled(job_id)
+
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=10,
+            current_step="Analyzing goal and context",
+            step_number=1,
+            steps_total=3,
+        )
+
+        from app.agents.planner_agent import get_planner
+
+        planner = get_planner()
+
+        await check_job_cancelled(job_id)
+
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=30,
+            current_step="Generating structured plan",
+            step_number=2,
+            steps_total=3,
+        )
+
+        progress_task = await _stream_periodic_progress(
+            job_id=job_id,
+            current_step="Generating structured plan",
+            step_number=2,
+            steps_total=3,
+            progress_percent=50,
+        )
+
+        try:
+            planner_result = await planner.plan(goal, context)
+        finally:
+            progress_task.cancel()
+            try:
+                await progress_task
+            except asyncio.CancelledError:
+                pass
+
+        await check_job_cancelled(job_id)
+
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=90,
+            current_step="Finalizing plan and execution order",
+            step_number=3,
+            steps_total=3,
+        )
+
+        execution_order = planner_result.task_dag.get_execution_order()
+
+        result_data = {
+            "plan_metadata": planner_result.plan_metadata.model_dump(),
+            "task_dag": planner_result.task_dag.model_dump(),
+            "execution_order": execution_order,
+            "source_references": planner_result.source_references,
+            "reasoning": planner_result.reasoning,
+            "success": planner_result.success,
+            "job_id": job_id,
+        }
+
+        logger.info(
+            f"[{job_id}] Planner job completed: "
+            f"{len(planner_result.task_dag.tasks)} tasks, "
+            f"{len(execution_order)} execution layers"
+        )
+
+        await progress_tracker.complete_job(job_id=job_id, result_data=result_data)
+
+        return JobResult(success=planner_result.success, data=result_data)
+
+    except JobCancelledError:
+        logger.info(f"[{job_id}] Planner job was cancelled")
+        return JobResult(
+            success=False,
+            error="Job was cancelled",
+            metadata={"job_id": job_id, "cancelled": True},
+        )
+    except Exception as e:
+        logger.error(f"[{job_id}] Planner job failed: {e}", exc_info=True)
+
+        await progress_tracker.fail_job(job_id=job_id, error_message=str(e))
+
+        return JobResult(
+            success=False,
+            error=f"Planning failed: {str(e)}",
+            metadata={"job_id": job_id},
+        )
+
+
 # ARQ Worker Configuration
 
 
@@ -957,6 +1084,7 @@ class WorkerSettings:
         synthesis_job,
         export_job,
         transcription_job,
+        planner_job,
     ]
 
     # Retry settings

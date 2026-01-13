@@ -15,6 +15,7 @@ from app.jobs import (
     enqueue_export,
     enqueue_job,
     enqueue_perspective_gather,
+    enqueue_planner,
     enqueue_synthesis,
     get_job_status,
     get_queue_stats,
@@ -82,6 +83,27 @@ class TestEnqueueJob:
         job_id = await enqueue_export(
             workspace_id="workspace-123",
             export_format="json",
+        )
+
+        assert job_id is not None
+        assert isinstance(job_id, str)
+
+    async def test_enqueue_planner_job(self, redis_pool) -> None:
+        """Should enqueue a planner job successfully."""
+        job_id = await enqueue_planner(
+            goal="Build a new feature",
+            context="Working on project X",
+            user_id="test-user",
+        )
+
+        assert job_id is not None
+        assert isinstance(job_id, str)
+        assert len(job_id) > 0
+
+    async def test_enqueue_planner_job_without_context(self, redis_pool) -> None:
+        """Should enqueue a planner job without optional context."""
+        job_id = await enqueue_planner(
+            goal="Simple goal",
         )
 
         assert job_id is not None

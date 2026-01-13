@@ -17,6 +17,7 @@ from app.jobs.worker import (
     deep_research_job,
     export_job,
     perspective_gather_job,
+    planner_job,
     synthesis_job,
     transcription_job,
 )
@@ -31,6 +32,7 @@ JOB_FUNCTIONS = {
     JobType.SYNTHESIS: synthesis_job.__name__,
     JobType.EXPORT: export_job.__name__,
     JobType.TRANSCRIPTION: transcription_job.__name__,
+    JobType.PLANNER: planner_job.__name__,
 }
 
 
@@ -204,6 +206,31 @@ async def enqueue_transcription(
     return await enqueue_job(
         JobType.TRANSCRIPTION,
         {"audio_block_id": audio_block_id},
+        user_id=user_id,
+        workspace_id=workspace_id,
+    )
+
+
+async def enqueue_planner(
+    goal: str,
+    context: str = "",
+    user_id: str | None = None,
+    workspace_id: str | None = None,
+) -> str:
+    """Enqueue a planner job to generate a structured plan with task DAG.
+
+    Args:
+        goal: The user's goal or objective to plan for
+        context: Optional additional context (selected nodes, workspace state, etc.)
+        user_id: Optional user ID
+        workspace_id: Optional workspace ID
+
+    Returns:
+        Job ID
+    """
+    return await enqueue_job(
+        JobType.PLANNER,
+        {"goal": goal, "context": context},
         user_id=user_id,
         workspace_id=workspace_id,
     )

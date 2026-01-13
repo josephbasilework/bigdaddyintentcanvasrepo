@@ -203,6 +203,9 @@ class JobType(StrEnum):
     IMPORT = "import"
     TRANSCRIPTION = "transcription"
 
+    # Planning jobs (Phase 5)
+    PLANNER = "planner"
+
     # Placeholder for future job types
     CUSTOM = "custom"
 

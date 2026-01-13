@@ -15,6 +15,7 @@ from app.jobs.worker import (
     deep_research_job,
     export_job,
     perspective_gather_job,
+    planner_job,
     synthesis_job,
     transcription_job,
 )
@@ -489,3 +490,200 @@ class TestTranscriptionJob:
         assert result.success is True
         # Should have set status to TRANSCRIBING at least once
         assert AudioBlockStatus.TRANSCRIBING in status_updates
+
+
+@pytest.mark.asyncio
+class TestPlannerJob:
+    """Tests for planner_job function."""
+
+    async def test_planner_job_basic(self) -> None:
+        """Should generate a plan successfully with valid goal."""
+        from app.agents.planner_agent import PlanMetadata, PlannerResult, PlanTask, TaskDAG
+
+        ctx = {"job_id": "test-planner-123"}
+
+        mock_planner_result = PlannerResult(
+            plan_metadata=PlanMetadata(
+                goal="Test goal",
+                approach="Test approach",
+                assumptions=["Assumption 1"],
+                risks=["Risk 1"],
+            ),
+            task_dag=TaskDAG(
+                tasks=[
+                    PlanTask(
+                        id="task-1",
+                        title="Task 1",
+                        description="First task",
+                        priority="high",
+                    ),
+                    PlanTask(
+                        id="task-2",
+                        title="Task 2",
+                        description="Second task",
+                        priority="medium",
+                        dependencies=["task-1"],
+                    ),
+                ],
+                dependencies=[],
+            ),
+            reasoning="Test reasoning",
+            success=True,
+        )
+
+        mock_planner = MagicMock()
+        mock_planner.plan = AsyncMock(return_value=mock_planner_result)
+
+        with patch("app.agents.planner_agent.get_planner", return_value=mock_planner):
+            result = await planner_job(ctx, goal="Test goal")
+
+        assert result.success is True
+        assert result.data is not None
+        assert result.data["success"] is True
+        assert "plan_metadata" in result.data
+        assert result.data["plan_metadata"]["goal"] == "Test goal"
+        assert "task_dag" in result.data
+        assert len(result.data["task_dag"]["tasks"]) == 2
+        assert "execution_order" in result.data
+        assert "reasoning" in result.data
+
+    async def test_planner_job_with_context(self) -> None:
+        """Should pass context to the planner."""
+        from app.agents.planner_agent import PlanMetadata, PlannerResult, PlanTask, TaskDAG
+
+        ctx = {"job_id": "test-planner-ctx", "user_id": "user-123", "workspace_id": "ws-456"}
+
+        mock_planner_result = PlannerResult(
+            plan_metadata=PlanMetadata(
+                goal="Goal with context",
+                approach="Contextual approach",
+            ),
+            task_dag=TaskDAG(
+                tasks=[
+                    PlanTask(id="task-1", title="Task 1", description="Task desc"),
+                ],
+                dependencies=[],
+            ),
+            reasoning="Used context",
+            success=True,
+        )
+
+        mock_planner = MagicMock()
+        mock_planner.plan = AsyncMock(return_value=mock_planner_result)
+
+        with patch("app.agents.planner_agent.get_planner", return_value=mock_planner):
+            result = await planner_job(
+                ctx, goal="Goal with context", context="User is working on project X"
+            )
+
+        assert result.success is True
+        mock_planner.plan.assert_called_once_with("Goal with context", "User is working on project X")
+
+    async def test_planner_job_handles_cancellation(self) -> None:
+        """Should handle job cancellation gracefully."""
+        from app.jobs.worker import JobCancelledError
+
+        ctx = {"job_id": "test-planner-cancel"}
+
+        with patch(
+            "app.jobs.worker.check_job_cancelled",
+            side_effect=JobCancelledError("Job was cancelled"),
+        ):
+            result = await planner_job(ctx, goal="Test goal")
+
+        assert result.success is False
+        assert result.error == "Job was cancelled"
+        assert result.metadata.get("cancelled") is True
+
+    async def test_planner_job_handles_error(self) -> None:
+        """Should return JobResult with error on exception."""
+        ctx = {"job_id": "test-planner-error"}
+
+        mock_planner = MagicMock()
+        mock_planner.plan = AsyncMock(side_effect=Exception("Planner error"))
+
+        with patch("app.agents.planner_agent.get_planner", return_value=mock_planner):
+            result = await planner_job(ctx, goal="Test goal")
+
+        assert result.success is False
+        assert result.error is not None
+        assert "Planner error" in result.error
+
+    async def test_planner_job_includes_execution_order(self) -> None:
+        """Should include execution order from task DAG."""
+        from app.agents.planner_agent import (
+            PlanMetadata,
+            PlannerResult,
+            PlanTask,
+            TaskDAG,
+            TaskDependency,
+        )
+
+        ctx = {"job_id": "test-planner-order"}
+
+        mock_planner_result = PlannerResult(
+            plan_metadata=PlanMetadata(
+                goal="Multi-step goal",
+                approach="Sequential approach",
+            ),
+            task_dag=TaskDAG(
+                tasks=[
+                    PlanTask(id="task-1", title="Task 1", description="First"),
+                    PlanTask(id="task-2", title="Task 2", description="Second"),
+                    PlanTask(id="task-3", title="Task 3", description="Third"),
+                ],
+                dependencies=[
+                    TaskDependency(task_id="task-2", depends_on_task_id="task-1"),
+                    TaskDependency(task_id="task-3", depends_on_task_id="task-2"),
+                ],
+            ),
+            reasoning="Sequential",
+            success=True,
+        )
+
+        mock_planner = MagicMock()
+        mock_planner.plan = AsyncMock(return_value=mock_planner_result)
+
+        with patch("app.agents.planner_agent.get_planner", return_value=mock_planner):
+            result = await planner_job(ctx, goal="Multi-step goal")
+
+        assert result.success is True
+        assert result.data is not None
+        assert "execution_order" in result.data
+        execution_order = result.data["execution_order"]
+        assert len(execution_order) == 3
+        assert execution_order[0] == ["task-1"]
+        assert execution_order[1] == ["task-2"]
+        assert execution_order[2] == ["task-3"]
+
+    async def test_planner_job_returns_failed_plan(self) -> None:
+        """Should return success=False when planner returns failed plan."""
+        from app.agents.planner_agent import PlanMetadata, PlannerResult, PlanTask, TaskDAG
+
+        ctx = {"job_id": "test-planner-failed"}
+
+        mock_planner_result = PlannerResult(
+            plan_metadata=PlanMetadata(
+                goal="Failed goal",
+                approach="Fallback approach",
+                risks=["Planning error: Something went wrong"],
+            ),
+            task_dag=TaskDAG(
+                tasks=[
+                    PlanTask(id="task-1", title="Fallback task", description="Manual work"),
+                ],
+                dependencies=[],
+            ),
+            reasoning="Planning encountered an error",
+            success=False,
+        )
+
+        mock_planner = MagicMock()
+        mock_planner.plan = AsyncMock(return_value=mock_planner_result)
+
+        with patch("app.agents.planner_agent.get_planner", return_value=mock_planner):
+            result = await planner_job(ctx, goal="Failed goal")
+
+        assert result.success is False
+        assert result.data is not None
+        assert result.data["success"] is False
