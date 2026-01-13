@@ -16,6 +16,7 @@ from app.agents.judge_agent import JudgeSynthesis, get_judge_agent
 from app.agents.research_agent import ResearchReport, get_research_agent
 from app.gateway.client import GatewayClient, get_gateway_client
 from app.jobs.base import JobResult, JobType, get_redis_settings
+from app.jobs.doc_generation import get_doc_service
 from app.jobs.progress import progress_tracker
 from app.jobs.retry import (
     checkpoint_manager,
@@ -1065,6 +1066,212 @@ async def planner_job(
         )
 
 
+async def doc_generation_job(
+    ctx: dict[str, Any],
+    source_job_id: str,
+    doc_format: str = "markdown",
+    include_metadata: bool = True,
+) -> JobResult:
+    """Generate structured documentation from job artifacts.
+
+    This job processes completed job artifacts (especially plan and research jobs)
+    and generates well-formatted documentation that can be exported or reviewed.
+
+    Args:
+        ctx: ARQ execution context (contains job_id, user_id, workspace_id)
+        source_job_id: Job ID to generate documentation from
+        doc_format: Output format (markdown, html, text)
+        include_metadata: Whether to include timestamps and metadata
+
+    Returns:
+        JobResult with generated documentation or error.
+    """
+    job_id = ctx.get("job_id", str(uuid.uuid4()))
+    user_id = ctx.get("user_id")
+    workspace_id = ctx.get("workspace_id")
+
+    await progress_tracker.create_job(
+        job_id=job_id,
+        job_type=JobType.DOC_GENERATION,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        parameters={
+            "source_job_id": source_job_id,
+            "doc_format": doc_format,
+            "include_metadata": include_metadata,
+        },
+    )
+
+    logger.info(
+        f"[{job_id}] Starting doc generation job for source job {source_job_id}"
+    )
+
+    try:
+        await check_job_cancelled(job_id)
+
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=20,
+            current_step="Retrieving source job",
+            step_number=1,
+            steps_total=4,
+        )
+
+        # Get source job to retrieve its result data
+        source_job = await progress_tracker.get_job(source_job_id)
+        if not source_job:
+            raise ValueError(f"Source job {source_job_id} not found")
+
+        # Parse source job result data
+        source_result_data = {}
+        if source_job.result_data:
+            import json
+
+            try:
+                source_result_data = json.loads(source_job.result_data)
+            except json.JSONDecodeError:
+                logger.warning(
+                    f"[{job_id}] Failed to parse source job result data, using empty dict"
+                )
+
+        await check_job_cancelled(job_id)
+
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=50,
+            current_step="Generating documentation",
+            step_number=2,
+            steps_total=4,
+        )
+
+        # Generate documentation
+        doc_service = get_doc_service()
+
+        source_job_type = source_job.job_type
+        if source_job_type == JobType.PLANNER:
+            generated = await doc_service.generate_from_plan_result(
+                source_result_data,
+                doc_format=doc_format,
+                include_metadata=include_metadata,
+            )
+        elif source_job_type in (
+            JobType.DEEP_RESEARCH,
+            JobType.SYNTHESIS,
+            JobType.PERSPECTIVE_GATHER,
+        ):
+            generated = await doc_service.generate_from_research_result(
+                source_result_data,
+                doc_format=doc_format,
+                include_metadata=include_metadata,
+            )
+        else:
+            # Generic format for other job types
+            generated = await doc_service.generate_from_plan_result(
+                source_result_data,
+                doc_format=doc_format,
+                include_metadata=include_metadata,
+            )
+
+        await check_job_cancelled(job_id)
+
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=70,
+            current_step="Storing documentation artifact",
+            step_number=3,
+            steps_total=4,
+        )
+
+        # Store the generated doc as an artifact
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from app.config import get_settings
+
+        _settings = get_settings()
+        _db_url = _settings.database_url
+        if _db_url.startswith("sqlite://"):
+            _db_url = _db_url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+
+        _async_engine = create_async_engine(_db_url)
+        async_session_maker = async_sessionmaker(
+            bind=_async_engine, expire_on_commit=False
+        )
+
+        async with async_session_maker() as db:
+            from app.jobs.artifact_storage import (
+                ArtifactMetadata,
+                ArtifactType,
+                get_artifact_storage,
+            )
+
+            storage = get_artifact_storage()
+
+            metadata = ArtifactMetadata(
+                artifact_type=ArtifactType.MARKDOWN_DOCUMENT,
+                artifact_name=f"Documentation from job {source_job_id}",
+                description=f"Generated documentation from {source_job_type} job",
+                filename=f"doc_{source_job_id}.md",
+                mime_type="text/markdown",
+            )
+
+            stored = await storage.store_artifact(
+                db=db,
+                job_id=source_job_id,
+                metadata=metadata,
+                content=generated.content,
+                user_id=user_id,
+                workspace_id=workspace_id,
+            )
+
+            generated.artifact_id = stored.id
+
+        await check_job_cancelled(job_id)
+
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=90,
+            current_step="Documentation complete",
+            step_number=4,
+            steps_total=4,
+        )
+
+        result_data = {
+            "source_job_id": source_job_id,
+            "source_job_type": source_job_type,
+            "doc_format": doc_format,
+            "content": generated.content,
+            "artifact_id": generated.artifact_id,
+            "generated_at": generated.generated_at,
+            "job_id": job_id,
+        }
+
+        logger.info(
+            f"[{job_id}] Doc generation completed: artifact_id={generated.artifact_id}"
+        )
+
+        await progress_tracker.complete_job(job_id=job_id, result_data=result_data)
+
+        return JobResult(success=True, data=result_data)
+
+    except JobCancelledError:
+        logger.info(f"[{job_id}] Doc generation job was cancelled")
+        return JobResult(
+            success=False,
+            error="Job was cancelled",
+            metadata={"job_id": job_id, "cancelled": True},
+        )
+    except Exception as e:
+        logger.error(f"[{job_id}] Doc generation failed: {e}", exc_info=True)
+
+        await progress_tracker.fail_job(job_id=job_id, error_message=str(e))
+
+        return JobResult(
+            success=False,
+            error=f"Doc generation failed: {str(e)}",
+            metadata={"job_id": job_id},
+        )
+
+
 # ARQ Worker Configuration
 
 
@@ -1085,6 +1292,7 @@ class WorkerSettings:
         export_job,
         transcription_job,
         planner_job,
+        doc_generation_job,
     ]
 
     # Retry settings

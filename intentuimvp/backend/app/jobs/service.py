@@ -44,6 +44,7 @@ from app.jobs.client import (
 )
 from app.jobs.client import (
     enqueue_deep_research,
+    enqueue_doc_generation,
     enqueue_export,
     enqueue_job,
     enqueue_perspective_gather,
@@ -77,6 +78,7 @@ class JobService:
         - enqueue_export: Enqueue export job
         - enqueue_transcription: Enqueue transcription job
         - enqueue_planner: Enqueue planner job
+        - enqueue_doc_generation: Enqueue doc generation job
         - get_job: Get job details from database
         - get_job_status: Get job status from Redis queue
         - get_user_jobs: List jobs for a user
@@ -314,6 +316,44 @@ class JobService:
         """
         job_id = await enqueue_planner(goal, context, user_id, workspace_id)
         logger.info(f"JobService: Enqueued planner job {job_id}")
+        return job_id
+
+    async def enqueue_doc_generation(
+        self,
+        source_job_id: str,
+        doc_format: str = "markdown",
+        include_metadata: bool = True,
+        user_id: str | None = None,
+        workspace_id: str | None = None,
+    ) -> str:
+        """Enqueue a doc generation job.
+
+        Generates structured documentation from job artifacts.
+
+        Args:
+            source_job_id: Job ID to generate documentation from
+            doc_format: Output format (markdown, html, text)
+            include_metadata: Whether to include timestamps and metadata
+            user_id: Optional user ID
+            workspace_id: Optional workspace ID
+
+        Returns:
+            Job ID
+
+        Example:
+            ```python
+            service = JobService()
+            job_id = await service.enqueue_doc_generation(
+                source_job_id="abc-123-def",
+                doc_format="markdown",
+                user_id="user-123"
+            )
+            ```
+        """
+        job_id = await enqueue_doc_generation(
+            source_job_id, doc_format, include_metadata, user_id, workspace_id
+        )
+        logger.info(f"JobService: Enqueued doc generation job {job_id}")
         return job_id
 
     async def get_job(self, job_id: str):

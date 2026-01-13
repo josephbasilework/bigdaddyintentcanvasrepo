@@ -15,7 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
@@ -24,7 +24,7 @@ from app.jobs.artifact_storage import (
     StoredArtifact,
     get_artifact_storage,
 )
-from app.jobs.client import JobEnqueueError, retry_job
+from app.jobs.client import JobEnqueueError, enqueue_doc_generation, retry_job
 from app.jobs.progress import progress_tracker
 from app.models.artifact import ArtifactType
 
@@ -421,3 +421,83 @@ async def cleanup_artifacts(
     deleted = await storage.cleanup_expired_artifacts(db, dry_run=dry_run)
 
     return CleanupResponse(deleted_count=len(deleted), artifacts=deleted)
+
+
+# Doc generation endpoints
+
+
+class DocGenerationRequest(BaseModel):
+    """Request model for doc generation."""
+
+    source_job_id: str = Field(..., description="Job ID to generate documentation from")
+    doc_format: str = Field(default="markdown", description="Output format (markdown, html, text)")
+    include_metadata: bool = Field(default=True, description="Include timestamps and metadata")
+
+
+class DocGenerationResponse(BaseModel):
+    """Response model for doc generation."""
+
+    job_id: str = Field(description="Doc generation job ID")
+    source_job_id: str = Field(description="Source job ID")
+    status: str = Field(description="Status of the doc generation job")
+
+
+@router.post("/generate-doc", response_model=DocGenerationResponse)
+async def generate_doc(
+    request: DocGenerationRequest,
+    user_id: str = Query(..., description="User ID for the job"),
+    workspace_id: str | None = Query(None, description="Workspace ID for the job"),
+) -> DocGenerationResponse:
+    """Generate documentation from a job's artifacts.
+
+    Creates a background job that generates structured documentation
+    from the specified job's result artifacts.
+
+    Args:
+        request: Doc generation request parameters
+        user_id: User ID for the job context
+        workspace_id: Optional workspace ID for the job context
+
+    Returns:
+        Doc generation job ID for tracking
+
+    Raises:
+        HTTPException: If source job not found (404) or enqueue fails (400)
+    """
+    # Verify source job exists
+    source_job = await progress_tracker.get_job(request.source_job_id)
+    if not source_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Source job {request.source_job_id} not found",
+        )
+
+    # Verify source job is complete
+    if source_job.status != "complete":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Source job must be complete, current status: {source_job.status}",
+        )
+
+    try:
+        # Enqueue doc generation job
+        doc_job_id = await enqueue_doc_generation(
+            source_job_id=request.source_job_id,
+            doc_format=request.doc_format,
+            include_metadata=request.include_metadata,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
+
+        return DocGenerationResponse(
+            job_id=doc_job_id,
+            source_job_id=request.source_job_id,
+            status="queued",
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to enqueue doc generation job: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to enqueue doc generation job: {str(e)}",
+        )

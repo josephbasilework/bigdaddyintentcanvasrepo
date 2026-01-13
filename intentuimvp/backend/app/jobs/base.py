@@ -206,6 +206,9 @@ class JobType(StrEnum):
     # Planning jobs (Phase 5)
     PLANNER = "planner"
 
+    # Documentation jobs (Phase 8 - Advanced Features)
+    DOC_GENERATION = "doc_generation"
+
     # Placeholder for future job types
     CUSTOM = "custom"
 

@@ -15,6 +15,7 @@ from app.jobs.base import JobType, get_redis_settings
 from app.jobs.retry import get_job_retry_state, increment_job_retry_count
 from app.jobs.worker import (
     deep_research_job,
+    doc_generation_job,
     export_job,
     perspective_gather_job,
     planner_job,
@@ -33,6 +34,7 @@ JOB_FUNCTIONS = {
     JobType.EXPORT: export_job.__name__,
     JobType.TRANSCRIPTION: transcription_job.__name__,
     JobType.PLANNER: planner_job.__name__,
+    JobType.DOC_GENERATION: doc_generation_job.__name__,
 }
 
 
@@ -231,6 +233,37 @@ async def enqueue_planner(
     return await enqueue_job(
         JobType.PLANNER,
         {"goal": goal, "context": context},
+        user_id=user_id,
+        workspace_id=workspace_id,
+    )
+
+
+async def enqueue_doc_generation(
+    source_job_id: str,
+    doc_format: str = "markdown",
+    include_metadata: bool = True,
+    user_id: str | None = None,
+    workspace_id: str | None = None,
+) -> str:
+    """Enqueue a doc generation job to generate documentation from artifacts.
+
+    Args:
+        source_job_id: Job ID to generate documentation from
+        doc_format: Output format (markdown, html, text)
+        include_metadata: Whether to include timestamps and metadata
+        user_id: Optional user ID
+        workspace_id: Optional workspace ID
+
+    Returns:
+        Job ID
+    """
+    return await enqueue_job(
+        JobType.DOC_GENERATION,
+        {
+            "source_job_id": source_job_id,
+            "doc_format": doc_format,
+            "include_metadata": include_metadata,
+        },
         user_id=user_id,
         workspace_id=workspace_id,
     )
