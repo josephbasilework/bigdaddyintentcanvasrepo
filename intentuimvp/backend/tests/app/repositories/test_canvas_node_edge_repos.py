@@ -10,9 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 # Import models to register them with Base
 import app.models.canvas  # noqa: F401 - Side-effect import to register models
 from app.database import Base
+from app.models.dashboard_subscription import DashboardSubscriptionTarget
 from app.models.edge import RelationType
 from app.models.node import NodeType
 from app.repositories.canvas_repo import CanvasRepository
+from app.repositories.dashboard_subscription_repo import DashboardSubscriptionRepository
 from app.repositories.edge_repo import EdgeRepository
 from app.repositories.node_repo import NodeRepository
 
@@ -581,3 +583,119 @@ class TestIntegrationFullGraph:
         assert edge_with_nodes.relation_type == RelationType.DEPENDS_ON
         assert edge_with_nodes.from_node.label == "Task A"
         assert edge_with_nodes.to_node.label == "Task B"
+
+
+@pytest.mark.asyncio
+class TestDashboardSubscriptionRepository:
+    """Unit tests for DashboardSubscriptionRepository CRUD operations."""
+
+    async def test_create_and_fetch_by_dashboard(self, async_db: AsyncSession) -> None:
+        """Test creating a subscription and fetching by dashboard node."""
+        canvas_repo = CanvasRepository(async_db)
+        node_repo = NodeRepository(async_db)
+        subscription_repo = DashboardSubscriptionRepository(async_db)
+
+        canvas = await canvas_repo.create_canvas(user_id="user1", name="Dashboard Canvas")
+        dashboard_node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Dashboard",
+            type=NodeType.DASHBOARD,
+        )
+
+        subscription = await subscription_repo.create_subscription(
+            canvas_id=canvas.id,
+            dashboard_node_id=dashboard_node.id,
+            subscription_target=DashboardSubscriptionTarget.WORKSPACE_STATE,
+            config={"include": ["nodes", "edges"]},
+        )
+
+        assert subscription.id is not None
+        assert subscription.subscription_target == DashboardSubscriptionTarget.WORKSPACE_STATE
+        assert subscription.get_config() == {"include": ["nodes", "edges"]}
+
+        subscriptions = await subscription_repo.get_by_dashboard_node(dashboard_node.id)
+        assert len(subscriptions) == 1
+        assert subscriptions[0].id == subscription.id
+
+    async def test_get_by_canvas_filters_active(self, async_db: AsyncSession) -> None:
+        """Test filtering subscriptions by canvas and active status."""
+        canvas_repo = CanvasRepository(async_db)
+        node_repo = NodeRepository(async_db)
+        subscription_repo = DashboardSubscriptionRepository(async_db)
+
+        canvas = await canvas_repo.create_canvas(user_id="user2", name="Canvas")
+        dashboard_node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Dashboard",
+            type=NodeType.DASHBOARD,
+        )
+
+        active_subscription = await subscription_repo.create_subscription(
+            canvas_id=canvas.id,
+            dashboard_node_id=dashboard_node.id,
+            subscription_target=DashboardSubscriptionTarget.TOOL_OUTPUT,
+            source_id="job:123",
+        )
+        await subscription_repo.create_subscription(
+            canvas_id=canvas.id,
+            dashboard_node_id=dashboard_node.id,
+            subscription_target=DashboardSubscriptionTarget.TOOL_OUTPUT,
+            source_id="job:456",
+            is_active=False,
+        )
+
+        active_only = await subscription_repo.get_by_canvas(canvas.id, active_only=True)
+        assert len(active_only) == 1
+        assert active_only[0].id == active_subscription.id
+
+    async def test_update_config(self, async_db: AsyncSession) -> None:
+        """Test updating subscription config."""
+        canvas_repo = CanvasRepository(async_db)
+        node_repo = NodeRepository(async_db)
+        subscription_repo = DashboardSubscriptionRepository(async_db)
+
+        canvas = await canvas_repo.create_canvas(user_id="user3", name="Canvas")
+        dashboard_node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Dashboard",
+            type=NodeType.DASHBOARD,
+        )
+
+        subscription = await subscription_repo.create_subscription(
+            canvas_id=canvas.id,
+            dashboard_node_id=dashboard_node.id,
+            subscription_target=DashboardSubscriptionTarget.WORKSPACE_STATE,
+        )
+
+        updated = await subscription_repo.update_config(
+            subscription.id,
+            {"refresh": "on_change"},
+        )
+        assert updated is not None
+        assert updated.get_config() == {"refresh": "on_change"}
+
+    async def test_set_active(self, async_db: AsyncSession) -> None:
+        """Test activating and deactivating subscriptions."""
+        canvas_repo = CanvasRepository(async_db)
+        node_repo = NodeRepository(async_db)
+        subscription_repo = DashboardSubscriptionRepository(async_db)
+
+        canvas = await canvas_repo.create_canvas(user_id="user4", name="Canvas")
+        dashboard_node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Dashboard",
+            type=NodeType.DASHBOARD,
+        )
+
+        subscription = await subscription_repo.create_subscription(
+            canvas_id=canvas.id,
+            dashboard_node_id=dashboard_node.id,
+            subscription_target=DashboardSubscriptionTarget.NODE,
+        )
+
+        updated = await subscription_repo.set_active(subscription.id, False)
+        assert updated is not None
+        assert updated.is_active is False
+
+        active_only = await subscription_repo.get_by_canvas(canvas.id, active_only=True)
+        assert active_only == []

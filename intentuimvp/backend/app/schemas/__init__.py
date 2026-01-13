@@ -8,6 +8,12 @@ from app.schemas.backup import (
     ManualBackupRequest,
     RestoreResponse,
 )
+from app.schemas.dashboard_subscription import (
+    DashboardSubscriptionCreateRequest,
+    DashboardSubscriptionListResponse,
+    DashboardSubscriptionResponse,
+    DashboardSubscriptionUpdateRequest,
+)
 from app.schemas.edge import (
     EdgeCreateRequest,
     EdgeListResponse,
@@ -65,6 +71,10 @@ __all__ = [
     "RestoreResponse",
     "BackupCreatedResponse",
     "ErrorResponse",
+    "DashboardSubscriptionCreateRequest",
+    "DashboardSubscriptionUpdateRequest",
+    "DashboardSubscriptionResponse",
+    "DashboardSubscriptionListResponse",
     # MCP schemas
     "MCPServerRegisterRequest",
     "MCPServerResponse",

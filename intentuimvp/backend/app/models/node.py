@@ -14,6 +14,7 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.canvas import Canvas
+    from app.models.dashboard_subscription import DashboardSubscription
     from app.models.edge import Edge
 
 
@@ -53,6 +54,11 @@ class Node(Base):
     )
     incoming_edges: Mapped[list[Edge]] = relationship(
         "Edge", foreign_keys="Edge.to_node_id", back_populates="to_node"
+    )
+    dashboard_subscriptions: Mapped[list[DashboardSubscription]] = relationship(
+        "DashboardSubscription",
+        back_populates="dashboard_node",
+        foreign_keys="DashboardSubscription.dashboard_node_id",
     )
 
     def get_position(self) -> dict:

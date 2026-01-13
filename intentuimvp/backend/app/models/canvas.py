@@ -12,6 +12,7 @@ from app.database import Base
 
 if TYPE_CHECKING:
     from app.models.audio_block import AudioBlock
+    from app.models.dashboard_subscription import DashboardSubscription
     from app.models.edge import Edge
     from app.models.node import Node
 
@@ -40,6 +41,9 @@ class Canvas(Base):
     )
     audio_blocks: Mapped[list[AudioBlock]] = relationship(
         "AudioBlock", back_populates="canvas", cascade="all, delete-orphan"
+    )
+    dashboard_subscriptions: Mapped[list[DashboardSubscription]] = relationship(
+        "DashboardSubscription", back_populates="canvas", cascade="all, delete-orphan"
     )
 
     def to_dict(self) -> dict:
