@@ -15,6 +15,8 @@ from pydantic import BaseModel, Field
 
 from app.agents.base import BaseAgent
 from app.context.models import Assumption, AssumptionCategory
+from app.jobs.metrics_collection import MetricTimer, record_metric
+from app.logging_config import get_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -134,14 +136,23 @@ class IntentDeciphererAgent(BaseAgent):
             {"role": "user", "content": user_prompt},
         ]
 
+        correlation_id = get_correlation_id()
         try:
-            result = await self.generate_structured(
-                messages=messages,
-                response_model=IntentDecipheringResult,
-            )
+            with MetricTimer("intent_decipher", correlation_id, {"input_length": len(user_input)}):
+                result = await self.generate_structured(
+                    messages=messages,
+                    response_model=IntentDecipheringResult,
+                )
             return result
 
         except Exception as e:
+            # Record failed attempt metric
+            record_metric(
+                "intent_decipher",
+                correlation_id,
+                -1,  # Indicate failure
+                {"error": str(e), "input_length": len(user_input)},
+            )
             logger.error(f"Intent deciphering failed: {e}", exc_info=True)
             # Return safe fallback
             return self._fallback_result(user_input, str(e))

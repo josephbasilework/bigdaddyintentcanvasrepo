@@ -22,6 +22,8 @@ from app.agents.intent_decipherer import (
     get_intent_decipherer,
 )
 from app.context.models import Assumption, ContextPayload, RoutingDecision, parse_assumption
+from app.jobs.metrics_collection import MetricTimer
+from app.logging_config import get_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -277,10 +279,13 @@ class ContextRouter:
         Returns:
             RoutingDecision based on LLM classification with assumptions.
         """
+        correlation_id = get_correlation_id()
         if self._intent_decipherer is None:
             self._intent_decipherer = get_intent_decipherer()
 
-        result = await self._intent_decipherer.decipher(payload.text)
+        with MetricTimer("context_route_llm", correlation_id, {"input_length": len(payload.text)}):
+            result = await self._intent_decipherer.decipher(payload.text)
+
         if _is_llm_failure(result.reasoning):
             raise LLMRoutingError("LLM classification error")
 
