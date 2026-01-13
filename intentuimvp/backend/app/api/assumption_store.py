@@ -54,8 +54,16 @@ class AssumptionStore:
         self,
         session_id: str | None = None,
         assumptions: list[dict[str, Any]] | None = None,
+        original_text: str | None = None,
+        handler: str | None = None,
     ) -> str:
         """Create a new assumption resolution session.
+
+        Args:
+            session_id: Optional session ID. If None, generates a UUID.
+            assumptions: Optional list of assumptions for this session.
+            original_text: Optional original user text for Intent Index integration.
+            handler: Optional handler name for Intent Index integration.
 
         Returns:
             Session ID for tracking assumption resolutions.
@@ -71,12 +79,21 @@ class AssumptionStore:
                     if item.get("id")
                 ]
                 self._update_completion(resolved_session_id)
+            if original_text is not None:
+                session["original_text"] = original_text
+            if handler is not None:
+                session["handler"] = handler
             self._completion_events.setdefault(
                 resolved_session_id, asyncio.Event()
             )
             return resolved_session_id
 
-        self._init_session(resolved_session_id, assumptions=assumptions)
+        self._init_session(
+            resolved_session_id,
+            assumptions=assumptions,
+            original_text=original_text,
+            handler=handler,
+        )
         logger.info(f"Created assumption session: {resolved_session_id}")
         return resolved_session_id
 

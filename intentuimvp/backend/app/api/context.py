@@ -1,5 +1,6 @@
 """Context submission endpoint for routing user input and assumption reconciliation."""
 
+import asyncio
 import logging
 import uuid
 from typing import Any, Literal, NoReturn
@@ -12,8 +13,9 @@ from app.agents.intent_decipherer import IntentDeciphererAgent, get_intent_decip
 from app.api.assumption_store import get_assumption_store
 from app.context.models import ContextPayload, parse_assumption
 from app.context.router import ContextRouter, get_context_router
-from app.database import get_db
+from app.database import AsyncSessionLocal, get_db
 from app.models.intent import AssumptionResolutionDB
+from app.repositories.intent_repo import IntentRepository
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -189,7 +191,10 @@ async def submit_context(payload: ContextPayload) -> ContextResponse:
 
         if decision.assumptions:
             store = get_assumption_store()
-            session_id = store.create_session()
+            session_id = store.create_session(
+                original_text=payload.text,
+                handler=decision.handler,
+            )
 
         # Determine if auto-execute is appropriate using the confidence threshold.
         if (
@@ -280,7 +285,10 @@ async def generate_assumptions(
         session_id = None
         if assumptions_needing_confirmation:
             store = get_assumption_store()
-            session_id = store.create_session()
+            session_id = store.create_session(
+                original_text=payload.text,
+                handler=result.primary_intent.name,
+            )
 
         should_auto_execute = (
             bool(result.should_auto_execute)
@@ -471,11 +479,15 @@ async def get_session(session_id: str) -> dict[str, Any]:
 
 
 @router.post("/api/context/sessions/{session_id}/complete")
-async def complete_session(session_id: str) -> dict[str, str]:
-    """Mark a session as complete.
+async def complete_session(
+    session_id: str,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    """Mark a session as complete and save intent to index.
 
     This indicates the user has finished reviewing assumptions
     and the action can proceed with the resolved values.
+    Also saves the approved intent to the Intent Index per PRD §15.2.
 
     Args:
         session_id: The session ID.
@@ -488,10 +500,48 @@ async def complete_session(session_id: str) -> dict[str, str]:
     """
     store = get_assumption_store()
 
-    if not store.get_session(session_id):
+    session = store.get_session(session_id)
+    if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
     store.mark_complete(session_id)
+
+    # Save approved intent to Intent Index (PRD §15.2)
+    original_text = session.get("original_text")
+    handler = session.get("handler")
+    if original_text and handler:
+        try:
+            # Use async approach via asyncio.run
+            async def save_intent() -> None:
+                async with AsyncSessionLocal() as async_db:
+                    repo = IntentRepository(async_db)
+                    # Build resolution from approved assumptions
+                    resolution = {
+                        "action": handler,
+                        "assumptions": [
+                            {
+                                "id": r["assumption_id"],
+                                "action": r["action"],
+                                "original_text": r["original_text"],
+                                "final_text": r["final_text"],
+                            }
+                            for r in session.get("resolved_assumptions", [])
+                        ],
+                    }
+                    # Insert intent with auto-generated embedding
+                    await repo.insert_intent(
+                        user_id="default",  # TODO: Get from auth context
+                        intent_text=original_text,
+                        intent_type=handler,
+                        confidence=0.95,  # User approved assumptions = high confidence
+                        resolution=resolution,
+                        handler=handler,
+                    )
+
+            asyncio.run(save_intent())
+            logger.info(f"Saved intent to index for session {session_id}")
+        except Exception as e:
+            logger.warning(f"Failed to save intent to index: {e}", exc_info=True)
 
     return {
         "status": "completed",

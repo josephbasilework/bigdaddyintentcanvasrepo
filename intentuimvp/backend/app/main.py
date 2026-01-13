@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from logging import getLogger
@@ -26,6 +27,7 @@ from app.database import SessionLocal
 from app.logging_config import configure_logging
 from app.middleware import LoggingMiddleware
 from app.services.backup_service import BackupService
+from app.services.intent_index import IntentIndexStore
 from app.ws import router as ws_router
 
 logger = getLogger(__name__)
@@ -67,6 +69,29 @@ def _run_scheduled_backups() -> None:
     finally:
         if db:
             db.close()
+
+
+async def _run_scheduled_intent_pruning_async() -> None:
+    """Async function for intent index pruning.
+
+    This function runs the async IntentIndexStore.prune_failed method.
+    """
+    intent_store = IntentIndexStore()
+    # Prune failed intents older than 90 days per retention policy
+    pruned = await intent_store.prune_failed(cutoff_days=90)
+    logger.info(f"Scheduled intent pruning completed: {pruned} intents pruned")
+
+
+def _run_scheduled_intent_pruning() -> None:
+    """Run scheduled intent index pruning for retention policy (NFR-PRIV-001, §15.3).
+
+    This function is called by APScheduler on a daily schedule.
+    It prunes intent entries older than 90 days with outcome='failure'.
+    """
+    try:
+        asyncio.run(_run_scheduled_intent_pruning_async())
+    except Exception as e:
+        logger.error(f"Failed to run scheduled intent pruning: {e}", exc_info=True)
 
 
 @asynccontextmanager
@@ -117,12 +142,23 @@ async def lifespan(app: FastAPI):
             id="daily_backup",
             name="Daily backup job",
         )
+        # Add daily intent pruning job (runs at 2 AM daily)
+        scheduler.add_job(
+            _run_scheduled_intent_pruning,
+            "cron",
+            hour=2,
+            minute=0,
+            id="daily_intent_prune",
+            name="Daily intent pruning job",
+        )
         scheduler.start()
         _scheduler = scheduler
         logger.info(
             f"Backup scheduler started: daily at {settings.backup_schedule_hour:02d}:00"
         )
         print(f"Backup scheduler started: daily at {settings.backup_schedule_hour:02d}:00")
+        logger.info("Intent pruning scheduler started: daily at 02:00")
+        print("Intent pruning scheduler started: daily at 02:00")
     else:
         logger.info("Backup scheduler disabled")
         print("Backup scheduler disabled")
