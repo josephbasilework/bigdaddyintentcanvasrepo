@@ -501,3 +501,80 @@ async def generate_doc(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to enqueue doc generation job: {str(e)}",
         )
+
+
+# Perspective Analysis endpoints (FR-012: Multi-Judge Compute)
+
+
+class PerspectiveAnalysisRequest(BaseModel):
+    """Request model for triggering perspective analysis (FR-012: Multi-Judge Compute)."""
+
+    topic: str = Field(..., description="Topic to analyze from multiple perspectives")
+    perspectives: list[str] = Field(
+        default_factory=list,
+        description="List of perspectives to analyze (e.g., skeptic, advocate, synthesizer)",
+    )
+    input_refs: list[int] | None = Field(
+        default=None,
+        description="Optional list of node IDs to link critic nodes to",
+    )
+
+
+class PerspectiveAnalysisResponse(BaseModel):
+    """Response model for perspective analysis job."""
+
+    job_id: str = Field(description="Perspective analysis job ID")
+    topic: str = Field(description="Topic being analyzed")
+    perspectives: list[str] = Field(description="Perspectives being analyzed")
+    status: str = Field(description="Status of the perspective analysis job")
+
+
+@router.post("/perspective-analysis", response_model=PerspectiveAnalysisResponse)
+async def trigger_perspective_analysis(
+    request: PerspectiveAnalysisRequest,
+    user_id: str = Query(..., description="User ID for the job"),
+    workspace_id: str | None = Query(None, description="Workspace ID for the job"),
+) -> PerspectiveAnalysisResponse:
+    """Trigger a perspective analysis job (FR-012: Multi-Judge Compute).
+
+    This endpoint uses the PerspectiveAgent to analyze a topic from multiple perspectives
+    (skeptic, advocate, synthesizer) and creates critic + synthesis nodes on the canvas.
+    It supports rerunning with more compute by accepting custom perspective lists.
+
+    Args:
+        request: Perspective analysis request parameters
+        user_id: User ID for the job context
+        workspace_id: Optional workspace ID for the job context
+
+    Returns:
+        Perspective analysis job ID for tracking
+
+    Raises:
+        HTTPException: If enqueue fails (400) or server error (500)
+    """
+    from app.jobs.client import enqueue_perspective_gather
+
+    # Default perspectives if none provided
+    perspectives = request.perspectives or ["skeptic", "advocate", "synthesizer"]
+
+    try:
+        job_id = await enqueue_perspective_gather(
+            query=request.topic,
+            perspectives=perspectives,
+            user_id=user_id,
+            workspace_id=workspace_id,
+        )
+
+        return PerspectiveAnalysisResponse(
+            job_id=job_id,
+            topic=request.topic,
+            perspectives=perspectives,
+            status="queued",
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to enqueue perspective analysis job: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to enqueue perspective analysis job: {str(e)}",
+        )

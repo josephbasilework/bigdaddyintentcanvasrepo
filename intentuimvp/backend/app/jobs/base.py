@@ -196,6 +196,7 @@ class JobType(StrEnum):
     # Research jobs (Phase 1.5)
     DEEP_RESEARCH = "deep_research"
     PERSPECTIVE_GATHER = "perspective_gather"
+    PERSPECTIVE_ANALYSIS = "perspective_analysis"  # FR-012: Multi-Judge Compute
     SYNTHESIS = "synthesis"
 
     # General async jobs

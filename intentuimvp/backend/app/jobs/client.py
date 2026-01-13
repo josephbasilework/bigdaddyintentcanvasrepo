@@ -143,6 +143,7 @@ async def enqueue_perspective_gather(
     perspectives: list[str],
     user_id: str | None = None,
     workspace_id: str | None = None,
+    input_refs: list[int] | None = None,
 ) -> str:
     """Enqueue a perspective gathering job.
 
@@ -151,13 +152,17 @@ async def enqueue_perspective_gather(
         perspectives: List of perspectives to gather
         user_id: Optional user ID
         workspace_id: Optional workspace ID
+        input_refs: Optional list of node IDs used as inputs for linking
 
     Returns:
         Job ID
     """
+    job_data: dict[str, Any] = {"query": query, "perspectives": perspectives}
+    if input_refs is not None:
+        job_data["input_refs"] = input_refs
     return await enqueue_job(
         JobType.PERSPECTIVE_GATHER,
-        {"query": query, "perspectives": perspectives},
+        job_data,
         user_id=user_id,
         workspace_id=workspace_id,
     )

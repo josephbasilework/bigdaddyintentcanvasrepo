@@ -11,6 +11,8 @@ export interface JobNodeProps {
   isSelected: boolean;
   onSelect?: (event?: React.MouseEvent) => void;
   onDoubleClick?: () => void;
+  /** Callback when user wants to rerun with more compute (FR-012) */
+  onRerunWithMoreCompute?: () => void;
 }
 
 type DisplayData = JobData | JobProgressData;
@@ -71,6 +73,7 @@ function getJobId(data: DisplayData): string {
  * - Progress bar with percentage
  * - Current step description
  * - Step counter (e.g., "Step 3 of 5")
+ * - Rerun with more compute button for perspective_analysis jobs (FR-012)
  */
 export function JobNode({
   id,
@@ -79,6 +82,7 @@ export function JobNode({
   isSelected,
   onSelect,
   onDoubleClick,
+  onRerunWithMoreCompute,
 }: JobNodeProps) {
   const { jobData: progressData, isConnected } = useJobProgress(jobData.jobId);
 
@@ -143,6 +147,12 @@ export function JobNode({
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(" ");
   };
+
+  // Check if this is a completed perspective analysis job that can be rerun
+  const canRerun =
+    status === "complete" &&
+    jobType === "perspective_analysis" &&
+    Boolean(onRerunWithMoreCompute);
 
   return (
     <div
@@ -224,6 +234,34 @@ export function JobNode({
         <p className="text-xs text-gray-400 font-mono">
           ID: {getJobId(displayData).slice(0, 8)}...
         </p>
+
+        {/* Rerun with more compute button (FR-012: Multi-Judge Compute) */}
+        {canRerun && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRerunWithMoreCompute?.();
+            }}
+            className="w-full mt-2 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100 transition-colors"
+          >
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 12 12"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M6 1V11M1 6H11"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+            Rerun with more compute
+          </button>
+        )}
       </div>
     </div>
   );

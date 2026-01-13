@@ -46,6 +46,12 @@ REPORT_OFFSET_X = 240.0
 REPORT_OFFSET_Y = 140.0
 REPORT_OFFSET_Z = 1.0
 
+# Perspective node offsets for FR-012 Multi-Judge Compute
+PERSPECTIVE_OFFSET_X = 200.0
+PERSPECTIVE_OFFSET_Y = 100.0
+PERSPECTIVE_OFFSET_Z = 1.0
+SYNTHESIS_OFFSET_X = 400.0
+
 
 class JobCancelledError(Exception):
     """Exception raised when a job is cancelled during execution.
