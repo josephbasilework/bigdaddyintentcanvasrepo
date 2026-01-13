@@ -876,7 +876,6 @@ For actions not in the matrix:
 | ID | Invariant | Enforcement |
 |----|-----------|-------------|
 | CI-001 | Node position must be unique within Canvas | CanvasAggregate validates position |
-| CI-002 | Node's linkedDocumentId must reference Document in same Canvas | Aggregate validation |
 | SI-001 | Assumption must be resolved before executing dependent actions | Agent Context checks |
 | JI-001 | Only one deep_research Job per topic simultaneously | JobService checks duplicates |
 | JI-002 | Job cannot transition from completed/failed to running | State machine validation |
@@ -1075,7 +1074,7 @@ This appendix maps every requirement from PRD v1.0.0 to its location in v2.0.0.
 | v1.0.0 ID | v2.0.0 Location | Status |
 |-----------|-----------------|--------|
 | CI-001 | §14 | Preserved verbatim |
-| CI-002 | §14 | Preserved verbatim |
+| CI-002 | REMOVED (vestigial - no Document model, no linkedDocumentId field on Node) |
 | SI-001 | §14 | Preserved verbatim |
 | JI-001 | §14 | Preserved verbatim |
 | JI-002 | §14 | Preserved verbatim |

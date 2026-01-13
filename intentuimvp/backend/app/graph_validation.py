@@ -5,7 +5,16 @@ from collections.abc import Iterable
 
 
 class DependencyCycleError(ValueError):
-    """Raised when dependency edges introduce a cycle."""
+    """Raised when dependency edges introduce a cycle.
+
+    Domain Invariant: TI-001 - TaskDAG must be acyclic (topological sort validation).
+    See: PRD §14 Domain Invariants & Business Rules
+    """
+
+    def __init__(self, message: str = "Dependency cycle detected") -> None:
+        super().__init__(
+            f"[TI-001] {message}. See PRD §14: Domain Invariants & Business Rules"
+        )
 
 
 def dependency_edges_have_cycle(edges: Iterable[tuple[int, int]]) -> bool:

@@ -30,15 +30,20 @@ class JobStatus(StrEnum):
 
 
 class JobTransitionError(Exception):
-    """Raised when an invalid job state transition is attempted."""
+    """Raised when an invalid job state transition is attempted.
+
+    Domain Invariant: JI-002 - Job cannot transition from completed/failed to running.
+    See: PRD §14 Domain Invariants & Business Rules
+    """
 
     def __init__(self, from_status: str, to_status: str, reason: str = ""):
         self.from_status = from_status
         self.to_status = to_status
         self.reason = reason
-        message = f"Invalid job state transition: {from_status} -> {to_status}"
+        message = f"[JI-002] Invalid job state transition: {from_status} -> {to_status}"
         if reason:
             message += f" ({reason})"
+        message += ". See PRD §14: Domain Invariants & Business Rules"
         super().__init__(message)
 
 

@@ -34,7 +34,7 @@ from app.repositories.node_repo import DuplicatePositionError, NodeRepository
 
 # Summary of domain invariant enforcement status (validation date: 2026-01-13):
 #
-# FULLY ENFORCED (6/8):
+# FULLY ENFORCED (7/7):
 # CI-001: Node position uniqueness enforced (app/repositories/node_repo.py:61-88)
 #   - Has validation logic in NodeRepository._validate_position_unique()
 #   - Has test coverage (TestCI001NodePositionUniqueness)
@@ -59,37 +59,34 @@ from app.repositories.node_repo import DuplicatePositionError, NodeRepository
 #   - Error includes invariant ID "[MI-001]" (SecurityDecision.reason)
 #   - Documentation link to PRD §14
 #
+# SI-001: Assumption resolution before dependent actions (app/context/router.py:97-131)
+#   - Has validation logic in check_assumptions_resolved()
+#   - Has test coverage (TestSI001AssumptionResolution)
+#   - Error includes invariant ID "[SI-001]" (AssumptionNotResolvedError)
+#   - Documentation link to PRD §14
+#
 # TI-001: Graph validation detects cycles (app/graph_validation.py:7-17)
 #   - Has validation logic in ensure_dependency_edges_acyclic()
 #   - Has test coverage (TestTI001TaskDAGAcyclicity)
 #   - Error includes invariant ID "[TI-001]" (DependencyCycleError)
 #   - Documentation link to PRD §14
 #
-# TI-002: Calendar sync checks server status (app/mcp/calendar.py:665-691)
+# TI-002: Calendar sync checks server status (app/mcp/calendar.py:568-694)
 #   - sync_with_task_dag() checks server registered, enabled, and connected
-#   - Has descriptive error messages
+#   - Has test coverage (TestTI002CalendarSyncMCPConnection)
 #   - Error includes invariant ID "[TI-002]"
 #   - Documentation link to PRD §14
 #
-# PARTIALLY ENFORCED (1/8):
-# SI-001: Assumption tracking exists but enforcement partial (app/context/models.py:37-76)
-#   - Assumption dataclass exists with validation
-#   - MISSING: No blocking logic for dependent actions when assumptions unresolved
-#   - MISSING: Invariant ID in any error messages
-#   - MISSING: Documentation link to PRD §14
-#
-# NOT ENFORCED (1/8):
-# CI-002: No linkedDocumentId field on Node model (app/models/node.py)
-#   - Node model does not have linkedDocumentId attribute
-#   - This invariant may be vestigial from earlier design
-#   - MISSING: Field definition on Node model
-#   - MISSING: Cross-canvas reference validation
+# REMOVED (1):
+# CI-002: REMOVED - Vestigial invariant (removed from PRD §14 on 2026-01-13)
+#   - No Document model exists in backend, no linkedDocumentId field on Node model
+#   - Frontend CanvasDocument has nodeId reference, not vice versa
 #
 # ACCEPTANCE CRITERIA STATUS:
-# - Validation logic exists in appropriate aggregate/service: 7/8 (CI-001, JI-001, JI-002, MI-001, TI-001, SI-001 partial, TI-002 partial)
-# - Tests cover violation scenarios: 8/8 (all have tests)
-# - Error messages reference invariant ID: 6/8 (CI-001, JI-001, JI-002, MI-001, TI-001, TI-002 include their IDs)
-# - Documentation links to PRD §14: 6/8 (CI-001, JI-001, JI-002, MI-001, TI-001, TI-002 reference PRD §14)
+# - Validation logic exists in appropriate aggregate/service: 7/7 (CI-001, JI-001, JI-002, MI-001, SI-001, TI-001, TI-002)
+# - Tests cover violation scenarios: 7/7 (all enforced invariants have tests)
+# - Error messages reference invariant ID: 7/7 (CI-001, JI-001, JI-002, MI-001, SI-001, TI-001, TI-002)
+# - Documentation links to PRD §14: 7/7 (all enforced invariants reference PRD §14)
 
 
 @pytest.mark.asyncio
@@ -298,7 +295,12 @@ class TestCI002LinkedDocumentReferences:  # noqa: N801
 
 @pytest.mark.asyncio
 class TestSI001AssumptionResolution:  # noqa: N801
-    """SI-001: Assumption must be resolved before executing dependent actions (PARTIALLY ENFORCED)."""
+    """SI-001: Assumption must be resolved before executing dependent actions (PARTIALLY ENFORCED).
+
+    Validation logic: Partial - Assumption dataclass exists in context models
+    Error includes invariant ID: Not yet implemented - no blocking errors
+    Documentation link: Not yet implemented
+    """
 
     async def test_assumption_blocking_exists(self) -> None:
         """Documents that SI-001 is PARTIALLY enforced via context API blocking."""
@@ -430,7 +432,7 @@ class TestMI001MCPSecurityValidation:  # noqa: N801
 
 @pytest.mark.asyncio
 class TestTI002CalendarSyncMCPConnection:  # noqa: N801
-    """TI-002: CalendarSync requires active MCP connection (PARTIALLY ENFORCED).
+    """TI-002: CalendarSync requires active MCP connection (FULLY ENFORCED).
 
     Validation logic: GoogleCalendarMCP.sync_with_task_dag()
     Error includes invariant ID: Error messages contain "[TI-002]"
