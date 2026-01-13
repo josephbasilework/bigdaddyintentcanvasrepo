@@ -768,6 +768,37 @@ Use CopilotKit for AG-UI client plumbing:
 | NFR-PRIV-003 | LLM Prompts | May contain user data; transmitted to Gateway; users informed |
 | NFR-PRIV-004 | Logging | Structured logging excludes secrets, PII where possible |
 
+#### 12.4.1 Gateway Data Disclosure Specification
+
+**Purpose**: Fulfill NFR-PRIV-003 by informing users when their data is transmitted to the Pydantic AI Gateway.
+
+##### Disclosure Copy
+
+| Context | Copy Text |
+|---------|-----------|
+| **Primary Disclosure** (command input) | "Commands are processed by AI via Pydantic Gateway. Your input may be sent externally." |
+| **Tooltip/Help** | "To enable AI capabilities, commands are sent to Pydantic AI Gateway. Learn more in Settings > Data & Privacy." |
+| **Settings Panel** (Data & Privacy) | "## AI Processing & Data Sharing\n\nIntentUI uses Pydantic AI Gateway to process your commands and enable AI features.\n\n**What is sent:**\n- Command text you type in the input box\n- Selected canvas content when referenced in commands\n- Context needed for agent operations (node labels, document excerpts)\n\n**What is NOT sent:**\n- Full canvas state is stored locally\n- Document contents are only sent when explicitly referenced\n- Your intent index remains local\n\n**Gateway Privacy:**\nPydantic AI Gateway processes requests and may route to underlying AI providers. See [Pydantic AI privacy policy](https://ai.pydantic.dev/) for details on Gateway data handling." |
+
+##### UI Placement
+
+| Location | Implementation |
+|----------|----------------|
+| **Floating Command Input** | Small, muted text link below input: "Sent via Gateway". Opens tooltip with primary disclosure copy. |
+| **Settings > Data & Privacy** | Dedicated section with full disclosure (Settings Panel copy above). Include toggle for "Show Gateway notice in command input" (default: on). |
+| **First Run / Onboarding** | One-time disclosure card during initial setup requiring explicit acknowledgment before proceeding. |
+
+##### PII Warning Enhancement (NFR-PRIV-004 integration)
+
+When PII is detected in command input (via client-side pattern matching), show additional warning:
+
+```
+⚠️ "This command may contain sensitive information (email, phone, ID). This will be sent to the AI Gateway. Proceed?"
+```
+
+User must explicitly confirm before sending PII-detected commands.
+
+
 ### 12.5 Observability (NFR-OBS)
 
 | ID | Component | Observability |
