@@ -350,6 +350,11 @@ class ContextRouter:
             a for a in assumptions if a.confidence < assumption_threshold
         ]
 
+        # SI-001: Enforce assumption resolution before executing dependent actions
+        # Per PRD §14: Assumption must be resolved before executing dependent actions
+        # This blocks routing if there are unresolved assumptions (user must confirm first)
+        check_assumptions_resolved(assumptions_needing_confirmation)
+
         intents = [result.primary_intent, *result.alternative_intents]
         candidates: list[_RoutingCandidate] = []
         for intent in intents:
