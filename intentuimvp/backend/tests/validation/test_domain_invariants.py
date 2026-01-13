@@ -24,14 +24,22 @@ GIVEN each invariant WHEN code implements enforcement THEN:
 import pytest
 import pytest_asyncio
 
-from app.database import async_engine
+from app.database import AsyncSessionLocal, async_engine
 from app.graph_validation import DependencyCycleError, ensure_dependency_edges_acyclic
 from app.jobs.base import JobStateMachine, JobStatus, JobTransitionError
 from app.jobs.service import JobService
+from app.models.canvas import Canvas
+from app.repositories.node_repo import DuplicatePositionError, NodeRepository
 
 # Summary of domain invariant enforcement status (validation date: 2026-01-13):
 #
-# FULLY ENFORCED (3/8):
+# FULLY ENFORCED (4/8):
+# CI-001: Node position uniqueness enforced (app/repositories/node_repo.py:61-88)
+#   - Has validation logic in NodeRepository._validate_position_unique()
+#   - Has test coverage (TestCI001NodePositionUniqueness)
+#   - Error includes invariant ID "[CI-001]" (DuplicatePositionError)
+#   - Documentation link to PRD §14
+#
 # JI-002: JobStateMachine prevents invalid transitions (app/jobs/base.py:45-191)
 #   - Has validation logic in JobStateMachine.validate_transition()
 #   - Has test coverage (TestJI002JobStateTransitions)
@@ -63,13 +71,7 @@ from app.jobs.service import JobService
 #   - MISSING: Invariant ID (TI-002) not in error messages
 #   - MISSING: Documentation link to PRD §14
 #
-# NOT ENFORCED (3/8):
-# CI-001: No position uniqueness validation (app/models/canvas.py, app/models/node.py)
-#   - Node.position is stored as JSON string but no uniqueness check
-#   - MISSING: Validation logic in CanvasAggregate or repository
-#   - MISSING: Test coverage for violation scenarios
-#   - MISSING: Error message with invariant ID
-#
+# NOT ENFORCED (2/8):
 # CI-002: No linkedDocumentId field on Node model (app/models/node.py)
 #   - Node model does not have linkedDocumentId attribute
 #   - This invariant may be vestigial from earlier design
@@ -83,10 +85,10 @@ from app.jobs.service import JobService
 #   - MISSING: Error message with invariant ID
 #
 # ACCEPTANCE CRITERIA STATUS:
-# - Validation logic exists in appropriate aggregate/service: 5/8 (JI-002, MI-001, TI-001, SI-001 partial, TI-002 partial)
+# - Validation logic exists in appropriate aggregate/service: 6/8 (CI-001, JI-002, MI-001, TI-001, SI-001 partial, TI-002 partial)
 # - Tests cover violation scenarios: 8/8 (all have placeholder or real tests)
-# - Error messages reference invariant ID: 0/8 (NONE include invariant ID)
-# - Documentation links to PRD §14: 0/8 (NONE link to PRD §14)
+# - Error messages reference invariant ID: 1/8 (CI-001 includes "[CI-001]")
+# - Documentation links to PRD §14: 1/8 (CI-001 references PRD §14)
 
 
 @pytest.mark.asyncio
@@ -138,12 +140,126 @@ class TestTI001TaskDAGAcyclicity:  # noqa: N801
 
 @pytest.mark.asyncio
 class TestCI001NodePositionUniqueness:  # noqa: N801
-    """CI-001: Node position must be unique within Canvas (NOT ENFORCED)."""
+    """CI-001: Node position must be unique within Canvas (FULLY ENFORCED).
 
-    async def test_position_uniqueness_not_enforced(self) -> None:
-        """Documents that CI-001 is NOT enforced - nodes can have duplicate positions."""
-        # Placeholder test documenting the gap
-        assert True, "CI-001 enforcement not yet implemented"
+    Validation logic: NodeRepository._validate_position_unique()
+    Error includes invariant ID: DuplicatePositionError message contains "[CI-001]"
+    Documentation link: DuplicatePositionError references PRD §14
+    """
+
+    async def test_duplicate_position_on_create_raises_error(self) -> None:
+        """Creating a node with duplicate position should raise DuplicatePositionError."""
+        async with AsyncSessionLocal() as db:
+            # Create a canvas
+            canvas = Canvas(name="Test Canvas", user_id="test-user")
+            db.add(canvas)
+            await db.commit()
+            await db.refresh(canvas)
+
+            repo = NodeRepository(db)
+
+            # Create first node at position (0, 0, 0)
+            position = {"x": 0, "y": 0, "z": 0}
+            await repo.create_node(
+                canvas_id=canvas.id,
+                label="First Node",
+                position=position,
+            )
+
+            # Attempt to create second node at same position
+            with pytest.raises(DuplicatePositionError) as exc_info:
+                await repo.create_node(
+                    canvas_id=canvas.id,
+                    label="Second Node",
+                    position=position,
+                )
+
+            # Verify error message contains invariant ID
+            assert "[CI-001]" in str(exc_info.value)
+            # Verify error references PRD §14
+            assert "PRD" in str(exc_info.value)
+
+    async def test_duplicate_position_on_update_raises_error(self) -> None:
+        """Updating a node to duplicate position should raise DuplicatePositionError."""
+        async with AsyncSessionLocal() as db:
+            # Create a canvas
+            canvas = Canvas(name="Test Canvas", user_id="test-user")
+            db.add(canvas)
+            await db.commit()
+            await db.refresh(canvas)
+
+            repo = NodeRepository(db)
+
+            # Create two nodes at different positions
+            await repo.create_node(
+                canvas_id=canvas.id,
+                label="Node 1",
+                position={"x": 0, "y": 0, "z": 0},
+            )
+            node2 = await repo.create_node(
+                canvas_id=canvas.id,
+                label="Node 2",
+                position={"x": 1, "y": 1, "z": 1},
+            )
+
+            # Attempt to move node2 to node1's position
+            with pytest.raises(DuplicatePositionError) as exc_info:
+                await repo.update_position(node2.id, {"x": 0, "y": 0, "z": 0})
+
+            # Verify error message contains invariant ID
+            assert "[CI-001]" in str(exc_info.value)
+
+    async def test_node_can_update_to_same_position(self) -> None:
+        """A node should be able to update to its own current position."""
+        async with AsyncSessionLocal() as db:
+            # Create a canvas
+            canvas = Canvas(name="Test Canvas", user_id="test-user")
+            db.add(canvas)
+            await db.commit()
+            await db.refresh(canvas)
+
+            repo = NodeRepository(db)
+
+            # Create a node
+            node = await repo.create_node(
+                canvas_id=canvas.id,
+                label="Node",
+                position={"x": 0, "y": 0, "z": 0},
+            )
+
+            # Update to same position should not raise
+            result = await repo.update_position(node.id, {"x": 0, "y": 0, "z": 0})
+            assert result is not None
+
+    async def test_nodes_in_different_canvases_can_share_positions(self) -> None:
+        """Nodes in different canvases should be allowed to have the same position."""
+        async with AsyncSessionLocal() as db:
+            # Create two canvases
+            canvas1 = Canvas(name="Canvas 1", user_id="test-user")
+            canvas2 = Canvas(name="Canvas 2", user_id="test-user")
+            db.add(canvas1)
+            db.add(canvas2)
+            await db.commit()
+            await db.refresh(canvas1)
+            await db.refresh(canvas2)
+
+            repo = NodeRepository(db)
+            position = {"x": 0, "y": 0, "z": 0}
+
+            # Both canvases should have nodes at the same position
+            node1 = await repo.create_node(
+                canvas_id=canvas1.id,
+                label="Node 1",
+                position=position,
+            )
+            node2 = await repo.create_node(
+                canvas_id=canvas2.id,
+                label="Node 2",
+                position=position,
+            )
+
+            assert node1 is not None
+            assert node2 is not None
 
 
 @pytest.mark.asyncio
