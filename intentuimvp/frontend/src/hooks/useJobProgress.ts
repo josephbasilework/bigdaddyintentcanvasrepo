@@ -35,7 +35,6 @@ export function useJobProgress(jobId: string | null) {
   useEffect(() => {
     if (!jobId) {
       // Reset state when jobId is null
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setJobData(null);
       setIsConnected(false);
       return;
