@@ -23,7 +23,7 @@ import uuid
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from logging import Formatter
-from typing import Any
+from typing import Any, cast
 
 from pythonjsonlogger import jsonlogger
 
@@ -85,25 +85,26 @@ class JsonFormatter(jsonlogger.JsonFormatter):
     """
 
     # Regex patterns for secret redaction
+    # Order matters: more specific patterns must come before generic ones
     REDACT_PATTERNS: list[str] = [
+        # GitHub personal access tokens (must come before generic secret pattern)
+        r"ghp_[a-zA-Z0-9]{36,}",
+        r"gho_[a-zA-Z0-9]{36,}",
+        r"ghu_[a-zA-Z0-9]{36,}",
+        r"ghs_[a-zA-Z0-9]{36,}",
+        r"ghr_[a-zA-Z0-9]{36,}",
+        # Slack tokens (must come before generic secret pattern)
+        r"xox[baprs]-[a-zA-Z0-9-]{10,}",
         # OpenAI-style API keys
         r"sk-[a-zA-Z0-9]{20,}",
         # Anthropic API keys
         r"sk-ant-[a-zA-Z0-9_-]{20,}",
         # Pydantic Gateway API keys
         r"pydantic[-_]?gateway[-_]?(api[_-]?key|key)\s*[:=]\s*[\"']?[a-zA-Z0-9_-]{20,}",
-        # Generic secret/token/password patterns (common env var patterns)
-        r"(api[_-]?key|secret|token|password|auth)\s*[:=]\s*[\"']?[a-zA-Z0-9_-]{15,}",
         # AWS Access Keys
         r"(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}",
-        # GitHub personal access tokens
-        r"ghp_[a-zA-Z0-9]{36}",
-        r"gho_[a-zA-Z0-9]{36}",
-        r"ghu_[a-zA-Z0-9]{36}",
-        r"ghs_[a-zA-Z0-9]{36}",
-        r"ghr_[a-zA-Z0-9]{36}",
-        # Slack tokens
-        r"xox[baprs]-[a-zA-Z0-9-]{10,}",
+        # Generic secret/token/password patterns (must come AFTER specific token patterns)
+        r"(api[_-]?key|secret|password|auth)\s*[:=]\s*[\"']?[a-zA-Z0-9_-]{15,}",
         # Email addresses
         r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
         # Phone numbers (US format)
@@ -197,7 +198,7 @@ class JsonFormatter(jsonlogger.JsonFormatter):
 
         # Add exception info if present (redact secrets from stack traces)
         if record.exc_info:
-            exc_str = self.formatException(record.exc_info)  # type: ignore[arg-type]
+            exc_str = cast(str, self.formatException(record.exc_info))
             log_record["exception"] = self._redact_secrets(exc_str)
 
 
@@ -208,26 +209,27 @@ class RedactingFormatter(Formatter):
     Redacts the same patterns as JsonFormatter for consistency.
     """
 
-    # Same redaction patterns as JsonFormatter
+    # Same redaction patterns as JsonFormatter (order matters)
     REDACT_PATTERNS: list[str] = [
+        # GitHub personal access tokens (must come before generic secret pattern)
+        r"ghp_[a-zA-Z0-9]{36,}",
+        r"gho_[a-zA-Z0-9]{36,}",
+        r"ghu_[a-zA-Z0-9]{36,}",
+        r"ghs_[a-zA-Z0-9]{36,}",
+        r"ghr_[a-zA-Z0-9]{36,}",
+        # Slack tokens (must come before generic secret pattern)
+        r"xox[baprs]-[a-zA-Z0-9-]{10,}",
         # OpenAI-style API keys
         r"sk-[a-zA-Z0-9]{20,}",
         # Anthropic API keys
         r"sk-ant-[a-zA-Z0-9_-]{20,}",
         # Pydantic Gateway API keys
         r"pydantic[-_]?gateway[-_]?(api[_-]?key|key)\s*[:=]\s*[\"']?[a-zA-Z0-9_-]{20,}",
-        # Generic secret/token/password patterns (common env var patterns)
-        r"(api[_-]?key|secret|token|password|auth)\s*[:=]\s*[\"']?[a-zA-Z0-9_-]{15,}",
         # AWS Access Keys
         r"(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}",
-        # GitHub personal access tokens
-        r"ghp_[a-zA-Z0-9]{36}",
-        r"gho_[a-zA-Z0-9]{36}",
-        r"ghu_[a-zA-Z0-9]{36}",
-        r"ghs_[a-zA-Z0-9]{36}",
-        r"ghr_[a-zA-Z0-9]{36}",
-        # Slack tokens
-        r"xox[baprs]-[a-zA-Z0-9-]{10,}",
+        # Generic secret/password patterns (must come AFTER specific token patterns)
+        # Note: "token" excluded to avoid matching Slack/GitHub token labels
+        r"(api[_-]?key|secret|password|auth)\s*[:=]\s*[\"']?[a-zA-Z0-9_-]{15,}",
         # Email addresses
         r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
         # Phone numbers (US format)

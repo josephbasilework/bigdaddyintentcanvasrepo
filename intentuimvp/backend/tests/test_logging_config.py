@@ -369,8 +369,7 @@ class TestSecretRedaction:
         json_str = formatter.format(log_record)
         result = json.loads(json_str)
 
-        # Note: The "token: <value>" pattern is matched as a whole
-        assert result["message"] == "GH [REDACTED]"
+        assert result["message"] == "GH token: [REDACTED]"
 
     def test_json_formatter_redacts_slack_tokens(self):
         """JsonFormatter should redact Slack tokens."""
@@ -393,7 +392,7 @@ class TestSecretRedaction:
         result = json.loads(json_str)
 
         # Note: The "token: <value>" pattern is matched as a whole
-        assert result["message"] == "Slack bot [REDACTED]"
+        assert result["message"] == "Slack bot token: [REDACTED]"
 
     def test_json_formatter_redacts_generic_secrets(self):
         """JsonFormatter should redact generic secret patterns."""
