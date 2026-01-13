@@ -61,7 +61,7 @@ def _update_progress_sync(
     current_step: str | None,
     step_number: int | None,
     steps_total: int | None,
-) -> None:
+) -> tuple[Job | None, bool]:
     """Synchronous helper to update job progress in the database.
 
     Validates state transitions using JobStateMachine before updating status.
@@ -69,6 +69,7 @@ def _update_progress_sync(
     db = SessionLocal()
     try:
         job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
+        started = False
         if job:
             job.progress_percent = progress_percent
             job.current_step = current_step
@@ -79,7 +80,14 @@ def _update_progress_sync(
                 JobStateMachine.validate_transition(job.status, "in_progress")
                 job.status = "in_progress"
                 job.started_at = datetime.now()
+                started = True
+            elif job.status == "in_progress" and job.started_at is None:
+                job.started_at = datetime.now()
+                started = True
             db.commit()
+            db.refresh(job)
+            return job, started
+        return None, False
     finally:
         db.close()
 
@@ -317,13 +325,44 @@ class JobProgressTracker:
 
         Implements NFR-OBS-003: Logs job lifecycle event (progress).
         """
-        await asyncio.to_thread(
-            _update_progress_sync, job_id, progress_percent, current_step, step_number, steps_total
+        job, started = await asyncio.to_thread(
+            _update_progress_sync,
+            job_id,
+            progress_percent,
+            current_step,
+            step_number,
+            steps_total,
         )
 
-        # Get job for event emission
-        job = await asyncio.to_thread(_get_job_sync, job_id)
         if job:
+            if started:
+                await self.emit_event(
+                    ProgressEvent(
+                        event_type=ProgressEventType.STARTED,
+                        job_id=job_id,
+                        job_type=job.job_type,
+                        status=job.status,
+                        progress_percent=progress_percent,
+                        current_step=current_step,
+                        step_number=step_number,
+                        steps_total=steps_total,
+                    )
+                )
+
+                # Log job start (NFR-OBS-003)
+                logger.info(
+                    "Job started",
+                    extra={
+                        "event": "job_lifecycle",
+                        "job_id": job_id,
+                        "job_type": job.job_type,
+                        "status": job.status,
+                        "user_id": job.user_id,
+                        "workspace_id": job.workspace_id,
+                        "correlation_id": get_correlation_id(),
+                    },
+                )
+
             await self.emit_event(
                 ProgressEvent(
                     event_type=ProgressEventType.PROGRESS,

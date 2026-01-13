@@ -9,6 +9,7 @@ import {
   CanvasEdgeRelationType,
   DAGData,
   DAGTask,
+  JobData,
   PlanData,
 } from "../../state/canvasStore";
 import { Node } from "./Node";
@@ -31,6 +32,7 @@ const NODE_TYPES: Set<CanvasNode["type"]> = new Set([
   "plan",
   "dag",
   "dashboard",
+  "job",
 ]);
 const EDGE_STYLE_TYPES: Set<CanvasEdge["type"]> = new Set(["solid", "dashed", "dotted"]);
 const EDGE_RELATION_TYPES: Set<CanvasEdgeRelationType> = new Set(
@@ -97,6 +99,27 @@ const normalizeTextArray = (value: unknown): string[] | undefined => {
     .filter((item): item is string => Boolean(item));
   return items.length > 0 ? items : [];
 };
+
+const normalizeJobStatus = (value: unknown): string => {
+  const raw = normalizeText(value);
+  if (!raw) return "queued";
+  return raw.toLowerCase().replace(/\s+/g, "_");
+};
+
+const normalizeJobType = (value: unknown): string => {
+  const raw = normalizeText(value);
+  if (!raw) return "unknown";
+  if (raw.includes("_")) {
+    return raw.toLowerCase();
+  }
+  const withUnderscores = raw
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/\s+/g, "_");
+  return withUnderscores.toLowerCase();
+};
+
+const clampPercent = (value: number): number =>
+  Math.min(100, Math.max(0, value));
 
 const normalizeDagStatus = (value: unknown): DAGTask["status"] => {
   const raw = normalizeText(value);
@@ -240,6 +263,38 @@ const normalizeDagData = (value: unknown): DAGData | undefined => {
   return dag;
 };
 
+const normalizeJobData = (value: unknown): JobData | undefined => {
+  if (!isRecord(value)) return undefined;
+
+  const jobId = normalizeText(value.jobId ?? value.job_id ?? value.jobID ?? value.id);
+  if (!jobId) return undefined;
+
+  const jobType = normalizeJobType(value.jobType ?? value.job_type);
+  const status = normalizeJobStatus(value.status);
+  const progressRaw = getOptionalNumber(
+    value.progressPercent ?? value.progress_percent
+  );
+  const progressPercent = clampPercent(progressRaw ?? 0);
+  const currentStep = normalizeText(value.currentStep ?? value.current_step);
+  const stepNumber = getOptionalNumber(value.stepNumber ?? value.step_number);
+  const stepsTotal = getOptionalNumber(value.stepsTotal ?? value.steps_total);
+  const data = isRecord(value.data) ? value.data : undefined;
+
+  const jobData: JobData = {
+    jobId,
+    jobType,
+    status,
+    progressPercent,
+  };
+
+  if (currentStep) jobData.currentStep = currentStep;
+  if (stepNumber !== null) jobData.stepNumber = stepNumber;
+  if (stepsTotal !== null) jobData.stepsTotal = stepsTotal;
+  if (data) jobData.data = data;
+
+  return jobData;
+};
+
 export const normalizeNode = (value: unknown): CanvasNode | null => {
   if (!isRecord(value)) return null;
 
@@ -248,7 +303,7 @@ export const normalizeNode = (value: unknown): CanvasNode | null => {
   const id = typeof idValue === "string" ? idValue : String(idValue);
 
   const typeValue = getString(value.type);
-  const type = typeValue && NODE_TYPES.has(typeValue as CanvasNode["type"])
+  const resolvedType = typeValue && NODE_TYPES.has(typeValue as CanvasNode["type"])
     ? (typeValue as CanvasNode["type"])
     : "text";
 
@@ -294,11 +349,31 @@ export const normalizeNode = (value: unknown): CanvasNode | null => {
     .map(normalizeDagData)
     .find(Boolean);
 
+  const jobData = [
+    value.jobData,
+    value.job_data,
+    value.job_metadata,
+    value.jobMetadata,
+    value.job,
+    metadata?.jobData,
+    metadata?.job_data,
+    metadata?.job_metadata,
+    metadata?.jobMetadata,
+    metadata?.job,
+  ]
+    .map(normalizeJobData)
+    .find(Boolean);
+
+  const type: CanvasNode["type"] = jobData && resolvedType === "text"
+    ? "job"
+    : resolvedType;
+
   const node: CanvasNode = { id, type, x, y, z, title };
   if (content) node.content = content;
   if (metadata) node.metadata = metadata;
   if (planData) node.planData = planData;
   if (dagData) node.dagData = dagData;
+  if (jobData) node.jobData = jobData;
   return node;
 };
 

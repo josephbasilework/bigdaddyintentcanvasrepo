@@ -126,14 +126,16 @@ export function Node({
     updateNodePosition(node.id, data.x, data.y);
   };
 
-  const handleClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleClick = (e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
     focusFromPointerRef.current = false;
     if (connectSourceNodeId && onConnectTarget && connectSourceNodeId !== node.id) {
       onConnectTarget(node.id);
     }
-    const toggleSelection = e.metaKey || e.ctrlKey;
-    const additiveSelection = !toggleSelection && e.shiftKey;
+    const toggleSelection = e?.metaKey || e?.ctrlKey;
+    const additiveSelection = !toggleSelection && e?.shiftKey;
     if (toggleSelection) {
       selectNode(node.id, { toggle: true });
       return;

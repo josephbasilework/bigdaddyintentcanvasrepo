@@ -89,6 +89,42 @@ class TestJobLifecycleLogging:
         assert log_entry.steps_total == 4
         assert log_entry.correlation_id is not None
 
+    async def test_job_started_emits_lifecycle_event(self, caplog):
+        """Test that the first progress update emits a job_lifecycle start event."""
+        caplog.set_level(logging.INFO, logger="app.jobs.progress")
+
+        await progress_tracker.create_job(
+            job_id="test-job-started",
+            job_type=JobType.EXPORT,
+            user_id="test-user",
+            workspace_id="test-workspace",
+        )
+
+        caplog.clear()
+
+        await progress_tracker.update_progress(
+            job_id="test-job-started",
+            progress_percent=5.0,
+            current_step="Starting export",
+            step_number=1,
+            steps_total=3,
+        )
+
+        lifecycle_logs = [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "job_lifecycle"
+            and "started" in record.getMessage().lower()
+        ]
+        assert len(lifecycle_logs) == 1
+        log_entry = lifecycle_logs[0]
+        assert log_entry.job_id == "test-job-started"
+        assert log_entry.job_type == JobType.EXPORT
+        assert log_entry.status == "in_progress"
+        assert log_entry.user_id == "test-user"
+        assert log_entry.workspace_id == "test-workspace"
+        assert log_entry.correlation_id is not None
+
     async def test_job_complete_emits_lifecycle_event_with_duration(self, caplog):
         """Test that job completion emits structured job_lifecycle event with duration."""
         caplog.set_level(logging.INFO, logger="app.jobs.progress")

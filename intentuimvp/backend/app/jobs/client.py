@@ -12,6 +12,7 @@ from typing import Any
 from arq import create_pool
 
 from app.jobs.base import JobType, get_redis_settings
+from app.jobs.progress import progress_tracker
 from app.jobs.retry import get_job_retry_state, increment_job_retry_count
 from app.jobs.worker import (
     deep_research_job,
@@ -84,6 +85,21 @@ async def enqueue_job(
         )
 
         await redis.close()
+        try:
+            await progress_tracker.create_job(
+                job_id=job_id,
+                job_type=job_type,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                parameters=job_data,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to record queued job %s: %s",
+                job_id,
+                exc,
+                exc_info=True,
+            )
         logger.info(f"Job {job_id} enqueued successfully as {job}")
         return job_id
 

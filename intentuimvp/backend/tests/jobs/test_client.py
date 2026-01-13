@@ -1,7 +1,7 @@
 """Tests for job client (enqueue, status, cancellation)."""
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -141,6 +141,35 @@ class TestEnqueueJob:
 
         assert job_id is not None
         assert isinstance(job_id, str)
+
+    async def test_enqueue_job_records_queued_event(self) -> None:
+        """Should record a queued job in the progress tracker."""
+        mock_redis = MagicMock()
+        mock_redis.enqueue_job = AsyncMock(return_value="redis-job")
+        mock_redis.close = AsyncMock()
+
+        with patch("app.jobs.client.create_pool", new_callable=AsyncMock) as mock_create_pool:
+            mock_create_pool.return_value = mock_redis
+            with patch(
+                "app.jobs.client.progress_tracker.create_job",
+                new_callable=AsyncMock,
+            ) as mock_create_job:
+                job_id = await enqueue_job(
+                    job_type=JobType.DEEP_RESEARCH,
+                    job_data={"query": "Test", "depth": 1},
+                    user_id="test-user",
+                    workspace_id="test-workspace",
+                )
+
+        assert isinstance(job_id, str)
+        mock_redis.enqueue_job.assert_awaited_once()
+        mock_create_job.assert_awaited_once_with(
+            job_id=job_id,
+            job_type=JobType.DEEP_RESEARCH,
+            user_id="test-user",
+            workspace_id="test-workspace",
+            parameters={"query": "Test", "depth": 1},
+        )
 
 
 @pytest.mark.asyncio
