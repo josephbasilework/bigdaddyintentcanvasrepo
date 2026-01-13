@@ -369,6 +369,7 @@ class TestDeepResearchJob:
             assert metadata["artifactId"] == report_artifact_id
             assert metadata["jobId"] == ctx["job_id"]
             assert metadata["jobType"] == JobType.DEEP_RESEARCH.value
+            assert metadata["sourceNodeIds"] == input_ids
 
             edge_repo = EdgeRepository(session)
             edges = await edge_repo.get_by_node(report_node_id)

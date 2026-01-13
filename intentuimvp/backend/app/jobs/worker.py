@@ -183,7 +183,9 @@ async def _load_input_nodes(
 
     stmt = select(Node).where(Node.id.in_(unique_ids), Node.canvas_id == canvas_id)
     result = await session.execute(stmt)
-    return list(result.scalars().all())
+    nodes = list(result.scalars().all())
+    nodes_by_id = {node.id: node for node in nodes}
+    return [nodes_by_id[node_id] for node_id in unique_ids if node_id in nodes_by_id]
 
 
 def _compute_report_position(input_nodes: list[Node]) -> dict[str, float]:
