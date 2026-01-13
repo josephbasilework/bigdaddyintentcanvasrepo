@@ -34,10 +34,15 @@ Example:
     await service.cancel_job(job_id)
 """
 
+import asyncio
+import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
+
+from app.database import SessionLocal
 from app.jobs.base import JobType
 from app.jobs.client import (
     cancel_job as client_cancel_job,
@@ -64,7 +69,73 @@ from app.jobs.progress import progress_tracker
 logger = logging.getLogger(__name__)
 
 
-class JobService:
+class DuplicateJobError(ValueError):
+    """Raised when attempting to enqueue a duplicate job.
+
+    Domain Invariant: JI-001 - Only one deep_research Job per topic simultaneously.
+    See: PRD §14 Domain Invariants & Business Rules
+    """
+
+    def __init__(self, job_type: str, query: str, existing_job_id: str) -> None:
+        """Initialize error with job context.
+
+        Args:
+            job_type: Type of job that duplicates an existing one
+            query: The query/topic that caused the duplicate
+            existing_job_id: ID of the existing job
+        """
+        self.job_type = job_type
+        self.query = query
+        self.existing_job_id = existing_job_id
+        super().__init__(
+            f"[JI-001] A {job_type} job for query '{query}' is already "
+            f"in progress (job_id: {existing_job_id}). Only one {job_type} job "
+            f"per topic is allowed simultaneously. See PRD §14: Domain Invariants & Business Rules"
+        )
+
+
+def _check_duplicate_sync(query: str, user_id: str | None) -> None:
+    """Synchronous helper to check for duplicate deep_research jobs.
+
+    Uses sync DB session to ensure consistency with job persistence.
+    """
+    from app.models.job import Job
+
+    db = SessionLocal()
+    try:
+        # Query for existing deep_research jobs with same query
+        # that are queued or in_progress
+        stmt = select(Job).where(
+            Job.job_type == "deep_research",
+            Job.status.in_(["queued", "in_progress"]),
+        )
+
+        # Check if the query exists in parameters (stored as JSON)
+        # We need to filter manually since we can't do JSON query easily in SQLite
+        result = db.execute(stmt)
+        existing_jobs = result.scalars().all()
+
+        for job in existing_jobs:
+            try:
+                params = json.loads(job.parameters) if job.parameters else {}
+                existing_query = params.get("query", "")
+                # Normalize queries for comparison (case-insensitive, stripped)
+                if existing_query.strip().lower() == query.strip().lower():
+                    # Optionally also check user_id match if provided
+                    if user_id is None or job.user_id == user_id:
+                        raise DuplicateJobError(
+                            job_type="deep_research",
+                            query=query,
+                            existing_job_id=job.job_id,
+                        )
+            except (json.JSONDecodeError, TypeError):
+                # Skip jobs with invalid parameters
+                continue
+    finally:
+        db.close()
+
+
+class JobService:  # noqa: F811
     """Unified service for job queue operations.
 
     Provides a high-level interface for managing background jobs processed
@@ -125,6 +196,25 @@ class JobService:
         logger.info(f"JobService: Enqueued job {job_id} of type {job_type}")
         return job_id
 
+    async def _check_for_duplicate_deep_research(
+        self, query: str, user_id: str | None = None
+    ) -> None:
+        """Check for existing in_progress/queued deep_research jobs with same query.
+
+        Enforces JI-001: Only one deep_research Job per topic simultaneously.
+
+        Args:
+            query: Research query to check for duplicates
+            user_id: Optional user ID to filter by
+
+        Raises:
+            DuplicateJobError: If a duplicate job exists
+        """
+        # Use sync DB session on thread pool for consistency with progress_tracker
+        await asyncio.to_thread(
+            _check_duplicate_sync, query, user_id
+        )
+
     async def enqueue_deep_research(
         self,
         query: str,
@@ -147,6 +237,9 @@ class JobService:
         Returns:
             Job ID
 
+        Raises:
+            DuplicateJobError: If a deep_research job for this query already exists (JI-001)
+
         Example:
             ```python
             service = JobService()
@@ -157,6 +250,9 @@ class JobService:
             )
             ```
         """
+        # Enforce JI-001: Check for duplicate deep_research jobs
+        await self._check_for_duplicate_deep_research(query, user_id)
+
         job_id = await enqueue_deep_research(
             query,
             depth,
