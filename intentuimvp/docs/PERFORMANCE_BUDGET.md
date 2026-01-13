@@ -116,7 +116,7 @@ cd intentuimvp/backend
 .venv/bin/pytest tests/app/api/test_jobs.py -v -k "intent_decipher"
 
 # Job execution duration
-.venv/bin/pytest tests/app/jobs/test_worker.py -v -k "execution_time"
+.venv/bin/pytest tests/jobs/test_worker.py -v -k "execution_time"
 ```
 
 ## 5. Continuous Monitoring
