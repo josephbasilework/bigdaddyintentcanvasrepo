@@ -11,6 +11,8 @@ from app.mcp.client import MCPClient
 from app.mcp.manager import ToolExecutionResult
 from app.mcp.registry import MCPServerRegistry
 from app.schemas.mcp import (
+    CalendarSyncRequest,
+    CalendarSyncResponse,
     GoogleCalendarEventRequest,
     GoogleCalendarEventResponse,
     MCPSecurityCheckRequest,
@@ -302,6 +304,32 @@ async def create_calendar_event(
         end=payload.end,
         description=payload.description,
         calendar_id=payload.calendar_id,
+    )
+    return result
+
+
+@router.post("/api/mcp/calendar/sync", response_model=CalendarSyncResponse)
+async def sync_calendar_task_dag(
+    payload: CalendarSyncRequest,
+    db: AsyncSession = Depends(get_async_db),
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Sync Task DAG tasks to Google Calendar events.
+
+    Args:
+        payload: Task DAG sync request
+        db: Database session
+        user_id: Authenticated user ID
+
+    Returns:
+        Sync results including created and failed events
+    """
+    calendar = GoogleCalendarMCP(db)
+    result = await calendar.sync_with_task_dag(
+        task_dag=payload.task_dag.model_dump(),
+        calendar_id=payload.calendar_id,
+        user_confirmed=payload.user_confirmed,
+        initiated_by=user_id,
     )
     return result
 

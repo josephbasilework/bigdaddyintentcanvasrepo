@@ -12,6 +12,16 @@ import { DependencyEditor, DependencyDisplay } from "./DependencyEditor";
 import { PlanNode } from "./PlanNode";
 import { DAGNode } from "./DAGNode";
 import { DashboardNode } from "./DashboardNode";
+import { CalendarSyncDialog } from "./CalendarSyncDialog";
+import {
+  applyCalendarSyncUpdates,
+  buildCalendarSyncPayload,
+  mergeDagMetadata,
+  type CalendarSyncApiResponse,
+  type CalendarSyncCandidate,
+} from "../../utils/calendarSync";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface NodeProps {
   node: CanvasNode;
@@ -41,6 +51,16 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
     ? selectedNodeIds.includes(node.id)
     : selectedNodeId === node.id;
   const showConnectButton = Boolean(onStartConnect) && isSelected && !connectSourceNodeId;
+  const hasCalendarSuggestions = Boolean(
+    node.type === "dag" &&
+      node.dagData?.tasks.some(
+        (task) =>
+          task.calendarSuggestion &&
+          !task.calendarEventId &&
+          !task.calendarEventUrl
+      )
+  );
+  const showCalendarSyncButton = isSelected && hasCalendarSuggestions;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState<{
@@ -58,6 +78,7 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
   const [isEditingAnnotation, setIsEditingAnnotation] = useState(false);
   // Dependency editor state
   const [isEditingDependencies, setIsEditingDependencies] = useState(false);
+  const [isCalendarSyncOpen, setIsCalendarSyncOpen] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
   const focusFromPointerRef = useRef(false);
   const scale = useTransformComponent(({ state }) => state.scale);
@@ -203,6 +224,86 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
     event.preventDefault();
     handleConnect();
   };
+
+  const handleCalendarSyncOpen = () => {
+    if (!hasCalendarSuggestions) return;
+    setIsCalendarSyncOpen(true);
+  };
+
+  const handleCalendarSyncClose = () => {
+    setIsCalendarSyncOpen(false);
+  };
+
+  const handleCalendarSyncClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    event.preventDefault();
+    handleCalendarSyncOpen();
+  };
+
+  const handleCalendarSyncConfirm = useCallback(
+    async (selectedCandidates: CalendarSyncCandidate[]) => {
+      if (!node.dagData) {
+        return { success: false, error: "No task DAG available for calendar sync." };
+      }
+
+      const payload = buildCalendarSyncPayload(selectedCandidates, {
+        calendarId: "primary",
+        userConfirmed: true,
+      });
+
+      let response: Response;
+      try {
+        response = await fetch(`${API_BASE_URL}/api/mcp/calendar/sync`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Network error";
+        return { success: false, error: `Calendar sync failed: ${message}` };
+      }
+
+      let result: CalendarSyncApiResponse | null = null;
+      try {
+        result = (await response.json()) as CalendarSyncApiResponse;
+      } catch {
+        result = null;
+      }
+
+      if (!response.ok) {
+        const message =
+          result?.error ??
+          result?.message ??
+          `Calendar sync failed (${response.status}).`;
+        return { success: false, error: message };
+      }
+
+      if (result?.created_events) {
+        const updatedDag = applyCalendarSyncUpdates(node.dagData, result.created_events);
+        if (updatedDag !== node.dagData) {
+          const updatedMetadata = mergeDagMetadata(node.metadata, updatedDag);
+          updateNode(node.id, { dagData: updatedDag, metadata: updatedMetadata });
+        }
+      }
+
+      if (result?.requires_confirmation) {
+        return {
+          success: false,
+          error: result.message ?? "Calendar sync requires confirmation.",
+        };
+      }
+
+      if (result?.success) {
+        return { success: true, message: result.message ?? undefined };
+      }
+
+      return {
+        success: false,
+        error: result?.error ?? result?.message ?? "Calendar sync failed.",
+      };
+    },
+    [node.dagData, node.id, node.metadata, updateNode]
+  );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Enter") {
@@ -401,6 +502,27 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
             }}>
               {node.title}
             </span>
+            {showCalendarSyncButton && (
+              <button
+                type="button"
+                onClick={handleCalendarSyncClick}
+                onMouseDown={(event) => event.stopPropagation()}
+                onTouchStart={(event) => event.stopPropagation()}
+                aria-label={`Sync ${node.title} tasks to calendar`}
+                style={{
+                  border: "1px solid rgba(56, 189, 248, 0.6)",
+                  backgroundColor: "rgba(14, 116, 144, 0.2)",
+                  color: "#e2e8f0",
+                  borderRadius: "999px",
+                  padding: "4px 10px",
+                  fontSize: "11px",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Sync calendar
+              </button>
+            )}
             {showConnectButton && (
               <button
                 type="button"
@@ -506,6 +628,15 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
           onConnect={onStartConnect ? handleConnect : undefined}
           onAnnotate={node.type === "graph" ? handleEditAnnotation : undefined}
           onEditDependencies={handleEditDependencies}
+        />
+      )}
+
+      {node.type === "dag" && node.dagData && (
+        <CalendarSyncDialog
+          isOpen={isCalendarSyncOpen}
+          dag={node.dagData}
+          onCancel={handleCalendarSyncClose}
+          onConfirm={handleCalendarSyncConfirm}
         />
       )}
 

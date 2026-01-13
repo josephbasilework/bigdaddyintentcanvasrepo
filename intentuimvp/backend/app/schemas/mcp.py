@@ -1,6 +1,8 @@
 """Pydantic schemas for MCP API."""
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class MCPServerRegisterRequest(BaseModel):
@@ -112,3 +114,69 @@ class GoogleCalendarEventResponse(BaseModel):
     success: bool
     event: dict | None = None
     error: str | None = None
+
+
+class CalendarSyncTask(BaseModel):
+    """Task payload for calendar sync."""
+
+    id: str = Field(..., description="Task identifier")
+    title: str | None = Field(default=None, description="Task title")
+    calendar_suggestion: dict[str, Any] | None = Field(
+        default=None, description="Calendar suggestion payload"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_calendar_suggestion(cls, values: dict) -> dict:
+        if not isinstance(values, dict):
+            return values
+        if "calendar_suggestion" in values:
+            return values
+        if "calendarSuggestion" in values:
+            return {**values, "calendar_suggestion": values.get("calendarSuggestion")}
+        return values
+
+
+class CalendarSyncDAG(BaseModel):
+    """Task DAG payload for calendar sync."""
+
+    tasks: list[CalendarSyncTask] = Field(default_factory=list, description="Tasks to sync")
+    dependencies: list[dict[str, Any]] | None = Field(
+        default=None, description="Optional dependency metadata"
+    )
+
+
+class CalendarSyncRequest(BaseModel):
+    """Request body for syncing Task DAG to calendar."""
+
+    task_dag: CalendarSyncDAG = Field(..., description="Task DAG payload")
+    calendar_id: str = Field(default="primary", description="Calendar ID")
+    user_confirmed: bool = Field(default=False, description="Whether user confirmed sync")
+
+
+class CalendarSyncCreatedEvent(BaseModel):
+    """Created calendar event mapping for a task."""
+
+    task_id: str | None = None
+    event_id: str | None = None
+    event_url: str | None = None
+    event: dict | None = None
+
+
+class CalendarSyncFailedEvent(BaseModel):
+    """Failed calendar event mapping for a task."""
+
+    task_id: str | None = None
+    error: str | None = None
+
+
+class CalendarSyncResponse(BaseModel):
+    """Response body for calendar sync operations."""
+
+    success: bool
+    requires_confirmation: bool = Field(default=False)
+    message: str | None = None
+    error: str | None = None
+    created_events: list[CalendarSyncCreatedEvent] = Field(default_factory=list)
+    failed_events: list[CalendarSyncFailedEvent] = Field(default_factory=list)
+    pending_actions: list[dict[str, Any]] | None = None

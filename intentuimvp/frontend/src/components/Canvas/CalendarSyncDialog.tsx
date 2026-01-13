@@ -3,16 +3,7 @@
 import { useEffect, useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import type { DAGData } from "../../state/canvasStore";
-
-export type CalendarSyncCandidate = {
-  taskId: string;
-  taskTitle: string;
-  summary: string;
-  start: string;
-  end: string;
-  description?: string;
-  calendarId: string;
-};
+import type { CalendarSyncCandidate } from "../../utils/calendarSync";
 
 export type CalendarSyncResult = {
   success: boolean;

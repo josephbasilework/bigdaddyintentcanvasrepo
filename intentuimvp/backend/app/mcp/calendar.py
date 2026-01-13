@@ -17,6 +17,26 @@ from app.mcp.manager import MCPManager
 from app.mcp.registry import DEFAULT_SECURITY_RULES, MCPServerRegistry
 
 
+def _normalize_text(value: Any) -> str | None:
+    if isinstance(value, str):
+        text = value.strip()
+        return text if text else None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return str(value)
+    return None
+
+
+def _pick_text(suggestion: dict[str, Any], keys: tuple[str, ...]) -> str | None:
+    for key in keys:
+        if key in suggestion:
+            value = _normalize_text(suggestion.get(key))
+            if value:
+                return value
+    return None
+
+
 class GoogleCalendarMCP:
     """Google Calendar MCP integration.
 
@@ -377,7 +397,11 @@ class GoogleCalendarMCP:
         }
 
     async def sync_with_task_dag(
-        self, task_dag_id: str, calendar_id: str = "primary"
+        self,
+        task_dag: dict[str, Any],
+        calendar_id: str = "primary",
+        user_confirmed: bool = False,
+        initiated_by: str = "agent",
     ) -> dict[str, Any]:
         """Synchronize calendar events with Task DAG.
 
@@ -385,15 +409,171 @@ class GoogleCalendarMCP:
         task completion back to calendar.
 
         Args:
-            task_dag_id: Task DAG identifier
+            task_dag: Task DAG payload containing tasks
             calendar_id: Calendar ID to sync with
+            user_confirmed: Whether user has confirmed calendar writes
+            initiated_by: Agent or user ID that initiated this call
 
         Returns:
             Dict with sync status
         """
+        tasks_payload = []
+        raw_tasks: list[Any] | None = None
+        if isinstance(task_dag, list):
+            raw_tasks = task_dag
+        elif isinstance(task_dag, dict):
+            tasks_value = task_dag.get("tasks")
+            if isinstance(tasks_value, list):
+                raw_tasks = tasks_value
+
+        if not raw_tasks:
+            return {
+                "success": False,
+                "error": "No tasks provided for calendar sync.",
+                "message": "Calendar sync requires at least one task.",
+                "created_events": [],
+                "failed_events": [],
+            }
+
+        failed_events: list[dict[str, Any]] = []
+        for task in raw_tasks:
+            if not isinstance(task, dict):
+                failed_events.append({"task_id": None, "error": "Invalid task payload."})
+                continue
+
+            task_id = _normalize_text(task.get("id")) or None
+            task_title = _normalize_text(task.get("title"))
+            suggestion = task.get("calendar_suggestion") or task.get("calendarSuggestion")
+            if not isinstance(suggestion, dict):
+                failed_events.append(
+                    {"task_id": task_id, "error": "Missing calendar suggestion."}
+                )
+                continue
+
+            summary = (
+                _pick_text(suggestion, ("summary", "title")) or task_title
+            )
+            start = _pick_text(suggestion, ("start", "start_time", "startTime"))
+            end = _pick_text(suggestion, ("end", "end_time", "endTime"))
+            description = _pick_text(suggestion, ("description", "details", "notes"))
+            calendar_id_value = (
+                _pick_text(suggestion, ("calendar_id", "calendarId")) or calendar_id
+            )
+
+            missing_fields = [
+                name
+                for name, value in (("summary", summary), ("start", start), ("end", end))
+                if not value
+            ]
+            if missing_fields:
+                failed_events.append(
+                    {
+                        "task_id": task_id,
+                        "error": f"Missing calendar fields: {', '.join(missing_fields)}.",
+                    }
+                )
+                continue
+
+            # Type narrowing: required fields are guaranteed non-None after validation above
+            assert summary is not None  # noqa: S101
+            assert start is not None  # noqa: S101
+            assert end is not None  # noqa: S101
+            assert calendar_id_value is not None  # noqa: S101
+
+            tasks_payload.append(
+                {
+                    "task_id": task_id,
+                    "summary": summary,
+                    "start": start,
+                    "end": end,
+                    "description": description,
+                    "calendar_id": calendar_id_value,
+                }
+            )
+
+        if not tasks_payload:
+            return {
+                "success": False,
+                "error": "No valid calendar suggestions to sync.",
+                "message": "Calendar sync skipped all tasks.",
+                "created_events": [],
+                "failed_events": failed_events,
+            }
+
+        if not user_confirmed:
+            return {
+                "success": False,
+                "requires_confirmation": True,
+                "message": f"User confirmation required to sync {len(tasks_payload)} calendar task(s).",
+                "created_events": [],
+                "failed_events": failed_events,
+                "pending_actions": tasks_payload,
+            }
+
+        created_events: list[dict[str, Any]] = []
+        for payload in tasks_payload:
+            # Type narrowing: required fields are guaranteed non-None after validation above
+            summary_val: str = payload["summary"]  # type: ignore[assignment]
+            start_val: str = payload["start"]  # type: ignore[assignment]
+            end_val: str = payload["end"]  # type: ignore[assignment]
+            calendar_id_val: str = payload["calendar_id"]  # type: ignore[assignment]
+
+            result = await self.create_event(
+                summary=summary_val,
+                start=start_val,
+                end=end_val,
+                description=payload.get("description"),
+                calendar_id=calendar_id_val,
+                user_confirmed=user_confirmed,
+                initiated_by=initiated_by,
+            )
+
+            if result.get("requires_confirmation"):
+                return {
+                    "success": False,
+                    "requires_confirmation": True,
+                    "message": result.get("message")
+                    or "User confirmation required to create calendar events.",
+                    "created_events": created_events,
+                    "failed_events": failed_events,
+                    "pending_actions": [result.get("pending_action", payload)],
+                }
+
+            if not result.get("success"):
+                failed_events.append(
+                    {
+                        "task_id": payload.get("task_id"),
+                        "error": result.get("error") or result.get("message") or "Calendar event creation failed.",
+                    }
+                )
+                continue
+
+            event_payload = result.get("event")
+            event_data = event_payload if isinstance(event_payload, dict) else None
+            event_id = _normalize_text(event_data.get("id") if event_data else None)
+            event_url = _normalize_text(
+                event_data.get("htmlLink") if event_data else None
+            )
+            created_events.append(
+                {
+                    "task_id": payload.get("task_id"),
+                    "event_id": event_id,
+                    "event_url": event_url,
+                    "event": event_data,
+                }
+            )
+
+        success = len(failed_events) == 0
+        message = (
+            f"Calendar sync completed for {len(created_events)} task(s)."
+            if success
+            else f"Calendar sync completed with {len(failed_events)} failure(s)."
+        )
         return {
-            "success": True,
-            "message": "Task DAG sync ready - awaiting MCP server connection",
+            "success": success,
+            "message": message,
+            "created_events": created_events,
+            "failed_events": failed_events,
         }
 
 

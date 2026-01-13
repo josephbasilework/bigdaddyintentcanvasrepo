@@ -15,6 +15,8 @@ from app.schemas.edge import (
     EdgeUpdateRequest,
 )
 from app.schemas.mcp import (
+    CalendarSyncRequest,
+    CalendarSyncResponse,
     GoogleCalendarEventRequest,
     GoogleCalendarEventResponse,
     MCPSecurityCheckRequest,
@@ -75,4 +77,6 @@ __all__ = [
     "MCPSecurityCheckResponse",
     "GoogleCalendarEventRequest",
     "GoogleCalendarEventResponse",
+    "CalendarSyncRequest",
+    "CalendarSyncResponse",
 ]

@@ -19,7 +19,7 @@ if "mcp" in sys.modules and "tests" in getattr(sys.modules["mcp"], "__file__", "
 
 import json
 from collections.abc import AsyncGenerator, Generator
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -365,16 +365,109 @@ class TestGoogleCalendarMCPOperations:
             assert result["pending_action"]["summary"] == "Test Event"
             assert "confirmation required" in result["message"].lower()
 
-    async def test_sync_with_task_dag_returns_placeholder(
+    async def test_sync_with_task_dag_requires_confirmation(
         self, db_session: AsyncSession
     ) -> None:
-        """Test sync_with_task_dag returns placeholder."""
+        """Test sync_with_task_dag requires confirmation by default."""
         calendar_mcp = GoogleCalendarMCP(db_session)
 
-        result = await calendar_mcp.sync_with_task_dag("task-dag-123")
+        task_dag = {
+            "tasks": [
+                {
+                    "id": "task-1",
+                    "title": "Task 1",
+                    "calendar_suggestion": {
+                        "summary": "Task 1",
+                        "start": "2026-01-13T10:00:00Z",
+                        "end": "2026-01-13T11:00:00Z",
+                    },
+                }
+            ]
+        }
+
+        result = await calendar_mcp.sync_with_task_dag(task_dag=task_dag)
+
+        assert result["success"] is False
+        assert result.get("requires_confirmation") is True
+        assert result.get("pending_actions")
+
+    async def test_sync_with_task_dag_creates_events(
+        self, db_session: AsyncSession
+    ) -> None:
+        """Test sync_with_task_dag creates calendar events when confirmed."""
+        calendar_mcp = GoogleCalendarMCP(db_session)
+
+        task_dag = {
+            "tasks": [
+                {
+                    "id": "task-1",
+                    "title": "Task 1",
+                    "calendar_suggestion": {
+                        "summary": "Plan kickoff",
+                        "start": "2026-01-14T09:00:00Z",
+                        "end": "2026-01-14T10:00:00Z",
+                        "description": "Prep the kickoff agenda.",
+                        "calendar_id": "primary",
+                    },
+                },
+                {
+                    "id": "task-2",
+                    "title": "Task 2",
+                    "calendar_suggestion": {
+                        "title": "Design review",
+                        "start_time": "2026-01-15T14:00:00Z",
+                        "end_time": "2026-01-15T15:00:00Z",
+                        "calendarId": "work",
+                    },
+                },
+            ]
+        }
+
+        with patch.object(
+            calendar_mcp,
+            "create_event",
+            new_callable=AsyncMock,
+        ) as mock_create:
+            mock_create.side_effect = [
+                {
+                    "success": True,
+                    "event": {"id": "event-1", "htmlLink": "https://example.com/event-1"},
+                },
+                {"success": True, "event": {"id": "event-2"}},
+            ]
+
+            result = await calendar_mcp.sync_with_task_dag(
+                task_dag=task_dag,
+                calendar_id="primary",
+                user_confirmed=True,
+                initiated_by="tester",
+            )
 
         assert result["success"] is True
-        assert "Task DAG sync ready" in result["message"]
+        assert len(result["created_events"]) == 2
+        assert result["failed_events"] == []
+        assert result["created_events"][0]["event_id"] == "event-1"
+        assert result["created_events"][0]["event_url"] == "https://example.com/event-1"
+        assert result["created_events"][1]["event_id"] == "event-2"
+
+        mock_create.assert_any_call(
+            summary="Plan kickoff",
+            start="2026-01-14T09:00:00Z",
+            end="2026-01-14T10:00:00Z",
+            description="Prep the kickoff agenda.",
+            calendar_id="primary",
+            user_confirmed=True,
+            initiated_by="tester",
+        )
+        mock_create.assert_any_call(
+            summary="Design review",
+            start="2026-01-15T14:00:00Z",
+            end="2026-01-15T15:00:00Z",
+            description=None,
+            calendar_id="work",
+            user_confirmed=True,
+            initiated_by="tester",
+        )
 
 
 @pytest.mark.asyncio
@@ -497,10 +590,24 @@ class TestFR020Compliance:
         assert hasattr(calendar_mcp, "sync_with_task_dag")
 
         # Call it
-        result = await calendar_mcp.sync_with_task_dag("test-task-dag")
+        result = await calendar_mcp.sync_with_task_dag(
+            task_dag={
+                "tasks": [
+                    {
+                        "id": "task-1",
+                        "title": "Task 1",
+                        "calendar_suggestion": {
+                            "summary": "Task 1",
+                            "start": "2026-01-20T10:00:00Z",
+                            "end": "2026-01-20T11:00:00Z",
+                        },
+                    }
+                ]
+            }
+        )
 
-        # Should return success (even if placeholder)
-        assert result["success"] is True
+        assert result["success"] is False
+        assert result.get("requires_confirmation") is True
 
 
 @pytest.mark.asyncio
