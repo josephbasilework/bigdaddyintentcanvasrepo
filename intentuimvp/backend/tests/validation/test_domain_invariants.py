@@ -29,15 +29,64 @@ from app.graph_validation import DependencyCycleError, ensure_dependency_edges_a
 from app.jobs.base import JobStateMachine, JobStatus, JobTransitionError
 from app.jobs.service import JobService
 
-# Summary of domain invariant enforcement status:
-# CI-001: NOT ENFORCED - No position uniqueness validation
-# CI-002: NOT ENFORCED - No cross-canvas document reference validation
-# SI-001: PARTIALLY ENFORCED - Assumption tracking exists but enforcement partial
-# JI-001: NOT ENFORCED - No duplicate job detection per topic
-# JI-002: FULLY ENFORCED - JobStateMachine prevents invalid transitions
-# MI-001: FULLY ENFORCED - MCPSecurityValidator validates before activation
-# TI-001: FULLY ENFORCED - Graph validation detects cycles
-# TI-002: PARTIALLY ENFORCED - Calendar sync utilities exist
+# Summary of domain invariant enforcement status (validation date: 2026-01-13):
+#
+# FULLY ENFORCED (3/8):
+# JI-002: JobStateMachine prevents invalid transitions (app/jobs/base.py:45-191)
+#   - Has validation logic in JobStateMachine.validate_transition()
+#   - Has test coverage (TestJI002JobStateTransitions)
+#   - MISSING: Invariant ID (JI-002) not in error message (JobTransitionError)
+#   - MISSING: Documentation link to PRD §14
+#
+# MI-001: MCPSecurityValidator validates before activation (app/mcp/security.py:48-541)
+#   - Has validation logic in MCPSecurityValidator.validate_manifest() and check_permission()
+#   - Has test coverage (TestMI001MCPSecurityValidation)
+#   - MISSING: Invariant ID (MI-001) not in SecurityDecision reason messages
+#   - MISSING: Documentation link to PRD §14
+#
+# TI-001: Graph validation detects cycles (app/graph_validation.py:1-44)
+#   - Has validation logic in ensure_dependency_edges_acyclic()
+#   - Has test coverage (TestTI001TaskDAGAcyclicity)
+#   - MISSING: Invariant ID (TI-001) not in DependencyCycleError message
+#   - MISSING: Documentation link to PRD §14
+#
+# PARTIALLY ENFORCED (2/8):
+# SI-001: Assumption tracking exists but enforcement partial (app/context/models.py:37-76)
+#   - Assumption dataclass exists with validation
+#   - MISSING: No blocking logic for dependent actions when assumptions unresolved
+#   - MISSING: Invariant ID in any error messages
+#   - MISSING: Documentation link to PRD §14
+#
+# TI-002: Calendar sync checks server status (app/mcp/calendar.py:665-691)
+#   - sync_with_task_dag() checks server registered, enabled, and connected
+#   - Has descriptive error messages
+#   - MISSING: Invariant ID (TI-002) not in error messages
+#   - MISSING: Documentation link to PRD §14
+#
+# NOT ENFORCED (3/8):
+# CI-001: No position uniqueness validation (app/models/canvas.py, app/models/node.py)
+#   - Node.position is stored as JSON string but no uniqueness check
+#   - MISSING: Validation logic in CanvasAggregate or repository
+#   - MISSING: Test coverage for violation scenarios
+#   - MISSING: Error message with invariant ID
+#
+# CI-002: No linkedDocumentId field on Node model (app/models/node.py)
+#   - Node model does not have linkedDocumentId attribute
+#   - This invariant may be vestigial from earlier design
+#   - MISSING: Field definition on Node model
+#   - MISSING: Cross-canvas reference validation
+#
+# JI-001: No duplicate job detection per topic (app/jobs/service.py)
+#   - JobService.enqueue_deep_research() creates jobs without checking duplicates
+#   - MISSING: Duplicate detection logic in JobService
+#   - MISSING: Test coverage for duplicate prevention
+#   - MISSING: Error message with invariant ID
+#
+# ACCEPTANCE CRITERIA STATUS:
+# - Validation logic exists in appropriate aggregate/service: 5/8 (JI-002, MI-001, TI-001, SI-001 partial, TI-002 partial)
+# - Tests cover violation scenarios: 8/8 (all have placeholder or real tests)
+# - Error messages reference invariant ID: 0/8 (NONE include invariant ID)
+# - Documentation links to PRD §14: 0/8 (NONE link to PRD §14)
 
 
 @pytest.mark.asyncio

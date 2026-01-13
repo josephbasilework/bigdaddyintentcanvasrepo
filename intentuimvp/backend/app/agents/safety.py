@@ -756,18 +756,17 @@ class SafetyGuardrails:
         action_lower = action.lower()
         tool_lower = tool_name.lower()
 
-        # Extract verb (first word before underscore or the whole action)
-        verb = action_lower.split("_")[0] if "_" in action_lower else action_lower
-
-        # PRD §13.2 Rule 1: If verb in dangerous set → Needs Confirm
-        if verb in self._dangerous_verbs:
-            return ToolActionClassification(
-                domain=domain,
-                approval=ActionApproval.NEEDS_CONFIRM,
-                reason=f"Novel action '{tool_name}': verb '{verb}' requires confirmation",
-                requires_approval=True,
-                is_blocked=False,
-            )
+        # PRD §13.2 Rule 1: If ANY dangerous verb appears anywhere in the tool/action → Needs Confirm
+        # This handles cases like "custom_delete_user" where the dangerous verb is not the first word
+        for verb in self._dangerous_verbs:
+            if verb in tool_lower or verb in action_lower:
+                return ToolActionClassification(
+                    domain=domain,
+                    approval=ActionApproval.NEEDS_CONFIRM,
+                    reason=f"Novel action '{tool_name}': verb '{verb}' requires confirmation",
+                    requires_approval=True,
+                    is_blocked=False,
+                )
 
         # PRD §13.2 Rule 2: If target in dangerous set → Needs Confirm
         for target in self._dangerous_targets:

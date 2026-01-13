@@ -30,6 +30,8 @@ class AssumptionStore:
         self,
         session_id: str,
         assumptions: list[dict[str, Any]] | None = None,
+        original_text: str | None = None,
+        handler: str | None = None,
     ) -> dict[str, Any]:
         """Initialize a new session record."""
         normalized_assumptions = assumptions or []
@@ -46,6 +48,10 @@ class AssumptionStore:
             "assumptions": normalized_assumptions,
             "expected_assumption_ids": expected_ids,
         }
+        if original_text is not None:
+            session["original_text"] = original_text
+        if handler is not None:
+            session["handler"] = handler
         self._sessions[session_id] = session
         self._completion_events[session_id] = asyncio.Event()
         return session
