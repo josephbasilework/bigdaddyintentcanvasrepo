@@ -1,0 +1,17 @@
+[run]
+source = app
+omit =
+    */tests/*
+    */conftest.py
+    */__pycache__/*
+    */migrations/*
+    */test_*.py
+
+[report]
+precision = 2
+show_missing = true
+skip_empty = true
+sort = Cover
+
+[html]
+directory = htmlcov

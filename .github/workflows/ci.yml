@@ -57,8 +57,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install --no-deps -r requirements.txt
-      - name: Pytest
-        run: pytest
+      - name: Pytest with coverage
+        run: pytest --cov=app --cov-report=xml --cov-report=term --cov-report=html
+      - name: Check coverage thresholds
+        run: coverage report --fail-under=80
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: intentuimvp/backend/htmlcov/
+          retention-days: 7
 
   lint-frontend:
     runs-on: ubuntu-latest
@@ -116,8 +124,22 @@ jobs:
           cache-dependency-path: intentuimvp/frontend/package-lock.json
       - name: Install frontend dependencies
         run: npm ci
-      - name: Vitest
-        run: npm run test -- --run
+      - name: Vitest with coverage
+        run: npm run test -- --run --coverage
+      - name: Check coverage thresholds
+        run: |
+          COVERAGE=$(cat coverage/coverage-summary.json | jq '.total.lines.pct')
+          echo "Line coverage: ${COVERAGE}%"
+          if (( $(echo "$COVERAGE < 75" | bc -l) )); then
+            echo "Coverage $COVERAGE% is below 75% threshold"
+            exit 1
+          fi
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: intentuimvp/frontend/coverage/
+          retention-days: 7
 
   secret-scan:
     runs-on: ubuntu-latest
