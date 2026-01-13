@@ -2,6 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { AGUIClient } from './client';
 import { AGUI_PROTOCOL_VERSION, computeChecksum } from './protocol';
 
+vi.mock('@/lib/performance', () => ({
+  recordWsReconnect: vi.fn(),
+}));
+
 class MockWebSocket {
   static CONNECTING = 0;
   static OPEN = 1;
@@ -198,6 +202,52 @@ describe('AGUIClient reconnection', () => {
   });
 });
 
+describe('AGUIClient outbound queue', () => {
+  beforeEach(() => {
+    global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+    MockWebSocket.reset();
+  });
+
+  afterEach(() => {
+    MockWebSocket.reset();
+    global.WebSocket = OriginalWebSocket;
+  });
+
+  it('queues outbound messages until the socket opens', async () => {
+    MockWebSocket.autoOpen = false;
+
+    const client = new AGUIClient({
+      gatewayUrl: 'http://localhost:8000',
+    });
+
+    client.connect();
+    await flushMicrotasks();
+
+    const ws = MockWebSocket.instances[0];
+
+    const commandMessage = {
+      version: AGUI_PROTOCOL_VERSION,
+      messageId: 'msg-1',
+      timestamp: new Date().toISOString(),
+      source: 'ui',
+      target: 'agent',
+      type: 'command',
+      payload: {
+        command: 'ping',
+      },
+    };
+
+    expect(() => client.send(commandMessage)).not.toThrow();
+    expect(hasMessageType(ws.sentMessages, 'command')).toBe(false);
+
+    ws.readyState = MockWebSocket.OPEN;
+    ws.triggerOpen();
+    await flushMicrotasks();
+
+    expect(hasMessageType(ws.sentMessages, 'command')).toBe(true);
+  });
+});
+
 describe('AGUIClient state sync', () => {
   beforeEach(() => {
     global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
@@ -338,6 +388,69 @@ describe('AGUIClient state sync', () => {
 
     // Verify that state sync request was sent
     expect(hasStateSyncRequest(ws.sentMessages)).toBe(true);
+  });
+
+  it('requests REST snapshot when a sequence gap is detected', async () => {
+    const snapshotState = { canvas: { nodes: { n1: { id: 'n1' } } } };
+    const snapshotChecksum = await computeChecksum(snapshotState);
+    const snapshotRequest = vi.fn().mockResolvedValue({
+      sequence: 2,
+      state: snapshotState,
+      checksum: snapshotChecksum,
+    });
+
+    const client = new AGUIClient({
+      gatewayUrl: 'http://localhost:8000',
+      snapshotRequest,
+    });
+
+    client.connect();
+    await flushMicrotasks();
+
+    const checksum = await computeChecksum({
+      patch: [{ op: 'add', path: '/test', value: 'data' }],
+    });
+
+    // Send sequence 1
+    const update1 = {
+      version: AGUI_PROTOCOL_VERSION,
+      messageId: 'msg-1',
+      timestamp: new Date().toISOString(),
+      source: 'agent',
+      target: 'ui',
+      type: 'state.update',
+      payload: {
+        sequence: 1,
+        patch: [{ op: 'add', path: '/test', value: 'data' }],
+        checksum,
+      },
+    };
+
+    const ws = MockWebSocket.instances[0];
+    ws.triggerMessage(JSON.stringify(update1));
+    await flushMicrotasks();
+
+    // Send sequence 3 (gap)
+    const update3 = {
+      version: AGUI_PROTOCOL_VERSION,
+      messageId: 'msg-3',
+      timestamp: new Date().toISOString(),
+      source: 'agent',
+      target: 'ui',
+      type: 'state.update',
+      payload: {
+        sequence: 3,
+        patch: [{ op: 'add', path: '/test2', value: 'data2' }],
+        checksum,
+      },
+    };
+
+    ws.triggerMessage(JSON.stringify(update3));
+    await flushMicrotasks();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(snapshotRequest).toHaveBeenCalledWith({ lastSequence: 1 });
+    expect(client.getState().stateSync.lastSequence).toBe(2);
   });
 
   it('applies sequential state updates in order', async () => {

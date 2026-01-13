@@ -137,11 +137,17 @@ export class AGUIClient {
     Set<(payload: DashboardSubscribedPayload) => void>
   > = new Map();
   private activeDashboardSubscriptions: Set<number> = new Set();
+  private outboundQueue: QueuedOutboundMessage[] = [];
+  private isFlushingQueue = false;
+  private snapshotSyncPending = false;
+  private snapshotSyncInFlight = false;
+  private disconnectTime: number | null = null;
 
   constructor(config: AGUIClientConfig) {
     this.config = {
       reconnectInterval: 1000,
       maxReconnectAttempts: 10,
+      maxQueuedMessages: 100,
       ...config,
     };
     this.agent = new CopilotKitWebSocketAgent(this);
@@ -184,6 +190,11 @@ export class AGUIClient {
     this.isManualDisconnect = true;
     this.reconnectAttempts = 0;
     this.clearReconnectTimer();
+    this.outboundQueue = [];
+    this.isFlushingQueue = false;
+    this.snapshotSyncPending = false;
+    this.snapshotSyncInFlight = false;
+    this.disconnectTime = null;
 
     void this.agent.detachActiveRun();
 
@@ -598,6 +609,8 @@ export class AGUIClient {
           `Sequence gap detected: expected ${lastSeq + 1}, got ${sequence}`
         );
 
+        this.snapshotSyncPending = true;
+
         // Update state sync status
         this.setState({
           stateSync: {
@@ -609,11 +622,10 @@ export class AGUIClient {
 
         // Request full state sync
         this.requestStateSync();
+        void this.requestRestSnapshot();
 
         // Notify listeners about the gap
-        for (const listener of this.stateSyncListeners) {
-          listener(this.state.stateSync);
-        }
+        this.notifyStateSyncListeners();
 
         return null;
       }
@@ -632,11 +644,11 @@ export class AGUIClient {
         needsSync: false,
       },
     });
+    this.snapshotSyncPending = false;
 
     // Notify state sync listeners
-    for (const listener of this.stateSyncListeners) {
-      listener(this.state.stateSync);
-    }
+    this.notifyStateSyncListeners();
+    this.flushQueuedMessages();
 
     const event: StateDeltaEvent = {
       type: EventType.STATE_DELTA,
@@ -659,6 +671,7 @@ export class AGUIClient {
     });
 
     // Update last sequence
+    this.snapshotSyncPending = false;
     this.setState({
       stateSync: {
         lastSequence: sequence,
@@ -668,9 +681,8 @@ export class AGUIClient {
     });
 
     // Notify state sync listeners
-    for (const listener of this.stateSyncListeners) {
-      listener(this.state.stateSync);
-    }
+    this.notifyStateSyncListeners();
+    this.flushQueuedMessages();
 
     const event: StateSnapshotEvent = {
       type: EventType.STATE_SNAPSHOT,
@@ -720,10 +732,8 @@ export class AGUIClient {
     };
 
     try {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify(syncRequest));
-        console.info("Requested state sync");
-      }
+      this.sendPayload(JSON.stringify(syncRequest), { allowDuringSync: true });
+      console.info("Requested state sync");
     } catch (error) {
       console.error("Failed to request state sync:", error);
     }

@@ -199,6 +199,7 @@ export function useWebSocket(
   const reconnectAttemptsRef = useRef(0);
   const isManualCloseRef = useRef(false);
   const disconnectTimeRef = useRef<number | null>(null);
+  const connectRef = useRef<(() => void) | null>(null);
 
   // Event queue for messages sent during disconnection
   const eventQueueRef = useRef<QueuedEvent[]>([]);
@@ -260,6 +261,10 @@ export function useWebSocket(
    * Flush all queued events after reconnect.
    */
   const flushQueuedEvents = useCallback(async () => {
+    if (hasSequenceGapRef.current || isSyncingSnapshotRef.current) {
+      return;
+    }
+
     const queuedEvents = [...eventQueueRef.current];
     eventQueueRef.current = [];
     setQueuedEventCount(0);
@@ -304,17 +309,24 @@ export function useWebSocket(
     isSyncingSnapshotRef.current = true;
     setHasSequenceGap(true);
     hasSequenceGapRef.current = true;
+    let snapshotApplied = false;
 
     try {
       console.info("WebSocket: Requesting REST snapshot sync due to sequence gap");
       await onSyncSnapshot();
       console.info("WebSocket: Snapshot sync completed");
+      snapshotApplied = true;
     } catch (error) {
       console.error("WebSocket: Snapshot sync failed", error);
     } finally {
       isSyncingSnapshotRef.current = false;
+      if (snapshotApplied) {
+        hasSequenceGapRef.current = false;
+        setHasSequenceGap(false);
+        void flushQueuedEvents();
+      }
     }
-  }, [onSyncSnapshot]);
+  }, [flushQueuedEvents, onSyncSnapshot]);
 
   /**
    * Process incoming message and check for sequence gaps.
@@ -393,7 +405,7 @@ export function useWebSocket(
 
     reconnectTimeoutRef.current = setTimeout(() => {
       reconnectAttemptsRef.current++;
-      connect();
+      connectRef.current?.();
     }, delay);
   }, [
     shouldReconnect,
@@ -433,6 +445,10 @@ export function useWebSocket(
 
         setConnectionState("open");
         onOpen?.(event);
+
+        if (hasSequenceGapRef.current) {
+          void requestSnapshotSync();
+        }
 
         // Flush queued events after reconnect
         void flushQueuedEvents();
@@ -478,7 +494,7 @@ export function useWebSocket(
       setConnectionState("error");
       scheduleReconnect();
     }
-  }, [urlProp, onOpen, onClose, onError, flushQueuedEvents, processMessage, scheduleReconnect, clearReconnectTimeout]);
+  }, [urlProp, onOpen, onClose, onError, flushQueuedEvents, processMessage, requestSnapshotSync, scheduleReconnect, clearReconnectTimeout]);
 
   /**
    * Send data through the WebSocket connection.
@@ -489,6 +505,12 @@ export function useWebSocket(
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) {
         console.warn("WebSocket: Cannot send message, connection not open. Queuing for reconnect.");
+        queueEvent(data);
+        return;
+      }
+
+      if (hasSequenceGapRef.current || isSyncingSnapshotRef.current) {
+        console.warn("WebSocket: Queueing message until snapshot sync completes.");
         queueEvent(data);
         return;
       }
@@ -537,6 +559,10 @@ export function useWebSocket(
     clearReconnectTimeout();
     connect();
   }, [connect, clearReconnectTimeout]);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   // Establish connection on mount
   useEffect(() => {
