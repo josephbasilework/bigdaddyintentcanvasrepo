@@ -173,7 +173,7 @@ async def enqueue_perspective_analysis(
     perspectives: list[str] | None = None,
     user_id: str | None = None,
     workspace_id: str | None = None,
-    input_refs: list[int] | None = None,
+    input_refs: list[int | str | float] | None = None,
 ) -> str:
     """Enqueue a perspective analysis job (FR-012: Multi-Judge Compute).
 

@@ -26,6 +26,7 @@ from app.jobs.artifact_storage import (
 )
 from app.jobs.base import JobResult, JobType, get_redis_settings
 from app.jobs.doc_generation import get_doc_service
+from app.jobs.metrics import track_job_execution
 from app.jobs.progress import progress_tracker
 from app.jobs.retry import (
     checkpoint_manager,
@@ -659,6 +660,7 @@ Focus on the USER from an experiential standpoint.""",
 # These are the actual async functions that the worker will execute
 
 
+@track_job_execution(JobType.DEEP_RESEARCH)
 async def deep_research_job(
     ctx: dict[str, Any],
     query: str,
@@ -666,6 +668,8 @@ async def deep_research_job(
     input_refs: list[int | str | float] | None = None,
 ) -> JobResult:
     """Execute a deep research job across multiple perspectives.
+
+    Implements NFR-PERF-004: Command execution timing with Logfire spans.
 
     This job orchestrates multi-perspective research by:
     1. Gathering information from different analytical perspectives
@@ -961,10 +965,13 @@ async def deep_research_job(
         )
 
 
+@track_job_execution(JobType.PERSPECTIVE_GATHER)
 async def perspective_gather_job(
     ctx: dict[str, Any], query: str, perspectives: list[str]
 ) -> JobResult:
     """Gather information from multiple perspectives.
+
+    Implements NFR-PERF-004: Command execution timing with Logfire spans.
 
     This job conducts focused analysis from specified analytical perspectives
     using specialized agent personas for each viewpoint.
@@ -1074,6 +1081,7 @@ async def perspective_gather_job(
         )
 
 
+@track_job_execution(JobType.PERSPECTIVE_ANALYSIS)
 async def perspective_analysis_job(
     ctx: dict[str, Any],
     topic: str,
@@ -1081,6 +1089,8 @@ async def perspective_analysis_job(
     input_refs: list[int | str | float] | None = None,
 ) -> JobResult:
     """Run perspective analysis using LLM-as-judge patterns (FR-012).
+
+    Implements NFR-PERF-004: Command execution timing with Logfire spans.
 
     This job analyzes a topic from multiple perspectives (skeptic, advocate, synthesizer)
     using the PerspectiveAgent and creates critic + synthesis nodes on the canvas.
@@ -1195,10 +1205,13 @@ async def perspective_analysis_job(
         )
 
 
+@track_job_execution(JobType.SYNTHESIS)
 async def synthesis_job(
     ctx: dict[str, Any], query: str, perspective_results: list[dict[str, Any]]
 ) -> JobResult:
     """Synthesize results from multiple perspectives using LLM-as-Judge workflow.
+
+    Implements NFR-PERF-004: Command execution timing with Logfire spans.
 
     This job uses the Judge Agent to evaluate, score, and synthesize results
     from multiple perspective analyses into a comprehensive, actionable report.
@@ -1300,12 +1313,15 @@ async def synthesis_job(
         )
 
 
+@track_job_execution(JobType.EXPORT)
 async def export_job(
     ctx: dict[str, Any],
     workspace_id: str,
     export_format: str = "json",
 ) -> JobResult:
     """Export a workspace to a file.
+
+    Implements NFR-PERF-004: Command execution timing with Logfire spans.
 
     Args:
         ctx: ARQ execution context
@@ -1378,11 +1394,14 @@ async def export_job(
         return JobResult(success=False, error=str(e))
 
 
+@track_job_execution(JobType.TRANSCRIPTION)
 async def transcription_job(
     ctx: dict[str, Any],
     audio_block_id: int,
 ) -> JobResult:
     """Transcribe audio content from an audio block.
+
+    Implements NFR-PERF-004: Command execution timing with Logfire spans.
 
     This job processes an audio block and generates a transcription.
     For the MVP, this uses a mock transcription service via the Gateway.
@@ -1540,12 +1559,15 @@ async def transcription_job(
         )
 
 
+@track_job_execution(JobType.PLANNER)
 async def planner_job(
     ctx: dict[str, Any],
     goal: str,
     context: str = "",
 ) -> JobResult:
     """Execute a planning job to generate a structured plan with task DAG.
+
+    Implements NFR-PERF-004: Command execution timing with Logfire spans.
 
     This job uses the PlannerAgent to decompose a user goal into:
     - Structured plan with objectives and approach
@@ -1667,6 +1689,7 @@ async def planner_job(
         )
 
 
+@track_job_execution(JobType.DOC_GENERATION)
 async def doc_generation_job(
     ctx: dict[str, Any],
     source_job_id: str,
@@ -1674,6 +1697,8 @@ async def doc_generation_job(
     include_metadata: bool = True,
 ) -> JobResult:
     """Generate structured documentation from job artifacts.
+
+    Implements NFR-PERF-004: Command execution timing with Logfire spans.
 
     This job processes completed job artifacts (especially plan and research jobs)
     and generates well-formatted documentation that can be exported or reviewed.

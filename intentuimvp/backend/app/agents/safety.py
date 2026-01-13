@@ -112,6 +112,28 @@ class SecurityEvent(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class InjectionSeverity(str, Enum):
+    """Severity levels for injection detection."""
+
+    SAFE = "safe"
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+
+@dataclass
+class InjectionCheckResult:
+    """Result of prompt injection check with severity and threshold info."""
+
+    is_suspicious: bool
+    severity: InjectionSeverity
+    matched_patterns: list[str]
+    requires_hitl: bool
+    warning_message: str | None
+    confidence: float
+
+
 class PromptInjectionDetector:
     """Detects potential prompt injection attempts."""
 
@@ -139,10 +161,62 @@ class PromptInjectionDetector:
         r"forget\s+everything",
         r"disregard\s+(all|everything)\s+above",
         r"ignore\s+(all|everything)\s+above",
+        # Command execution patterns
+        r"(?:exec|eval|executes|run|execute)\s+(?:this\s+)?(?:command|code|script)",
+        r"system\s*\(",
+        r"os\.system",
+        r"subprocess",
+        # Context manipulation patterns
+        r"new\s+system\s+prompt",
+        r"replace\s+(?:your\s+)?(?:system\s+)?instructions",
+        r"from\s+now\s+on.*(?:you\s+)?(?:are|will|do)",
     ]
 
-    def __init__(self) -> None:
-        """Initialize the detector."""
+    # Severity mapping: pattern -> severity level
+    PATTERN_SEVERITY = {
+        r"ignore\s+(all\s+)?(previous|above|earlier)\s+instructions": InjectionSeverity.HIGH,
+        r"disregard\s+(all\s+)?(previous|above|earlier)\s+instructions": InjectionSeverity.HIGH,
+        r"forget\s+(all\s+)?(previous|above|earlier)\s+instructions": InjectionSeverity.HIGH,
+        r"override\s+(your\s+)?(programming|instructions|training)": InjectionSeverity.HIGH,
+        r"jailbreak": InjectionSeverity.CRITICAL,
+        r"act\s+as\s+(if\s+you\s+)?(a\s+)?(unrestricted|uncensored)": InjectionSeverity.CRITICAL,
+        r"developer\s+mode": InjectionSeverity.HIGH,
+        r"admin\s+mode": InjectionSeverity.HIGH,
+        r"print\s+(your\s+)?(system\s+)?prompt": InjectionSeverity.HIGH,
+        r"show\s+(your\s+)?(system\s+)?instructions": InjectionSeverity.HIGH,
+        r"repeat\s+(the\s+)?(above|everything)": InjectionSeverity.MEDIUM,
+        r"translate\s+.*\s+to\s+(base64|hex|binary)": InjectionSeverity.MEDIUM,
+        r"<\|.*\|>": InjectionSeverity.MEDIUM,
+        r"<<.*>>": InjectionSeverity.MEDIUM,
+        r"\[SYSTEM\]": InjectionSeverity.MEDIUM,
+        r"\[ADMIN\]": InjectionSeverity.MEDIUM,
+        r"disregard\s+everything": InjectionSeverity.HIGH,
+        r"ignore\s+everything": InjectionSeverity.HIGH,
+        r"forget\s+everything": InjectionSeverity.HIGH,
+        r"disregard\s+(all|everything)\s+above": InjectionSeverity.HIGH,
+        r"ignore\s+(all|everything)\s+above": InjectionSeverity.HIGH,
+        r"(?:exec|eval|executes|run|execute)\s+(?:this\s+)?(?:command|code|script)": InjectionSeverity.CRITICAL,
+        r"system\s*\(": InjectionSeverity.CRITICAL,
+        r"os\.system": InjectionSeverity.CRITICAL,
+        r"subprocess": InjectionSeverity.HIGH,
+        r"new\s+system\s+prompt": InjectionSeverity.HIGH,
+        r"replace\s+(?:your\s+)?(?:system\s+)?instructions": InjectionSeverity.HIGH,
+        r"from\s+now\s+on.*(?:you\s+)?(?:are|will|do)": InjectionSeverity.MEDIUM,
+    }
+
+    def __init__(
+        self,
+        hitl_threshold: InjectionSeverity = InjectionSeverity.HIGH,
+        max_patterns: int = 3,
+    ) -> None:
+        """Initialize the detector.
+
+        Args:
+            hitl_threshold: Severity level at which to trigger HITL gate.
+            max_patterns: Maximum number of matched patterns before triggering HITL.
+        """
+        self.hitl_threshold = hitl_threshold
+        self.max_patterns = max_patterns
         self.patterns = [
             re.compile(pattern, re.IGNORECASE | re.MULTILINE)
             for pattern in self.INJECTION_PATTERNS
@@ -163,6 +237,74 @@ class PromptInjectionDetector:
                 matched.append(pattern.pattern)
 
         return len(matched) > 0, matched
+
+    def check_with_threshold(self, text: str) -> InjectionCheckResult:
+        """Check for injection with threshold-based HITL triggering.
+
+        Args:
+            text: Text to analyze.
+
+        Returns:
+            InjectionCheckResult with severity and HITL decision.
+        """
+        matched: list[tuple[str, InjectionSeverity]] = []
+        for pattern in self.patterns:
+            if pattern.search(text):
+                severity = self.PATTERN_SEVERITY.get(pattern.pattern, InjectionSeverity.MEDIUM)
+                matched.append((pattern.pattern, severity))
+
+        if not matched:
+            return InjectionCheckResult(
+                is_suspicious=False,
+                severity=InjectionSeverity.SAFE,
+                matched_patterns=[],
+                requires_hitl=False,
+                warning_message=None,
+                confidence=1.0,
+            )
+
+        # Determine overall severity (highest severity wins)
+        max_severity = max(severity for _, severity in matched)
+
+        # Determine if HITL is required
+        highest_severity = InjectionSeverity(max_severity)
+        threshold_order = [
+            InjectionSeverity.SAFE,
+            InjectionSeverity.LOW,
+            InjectionSeverity.MEDIUM,
+            InjectionSeverity.HIGH,
+            InjectionSeverity.CRITICAL,
+        ]
+        threshold_idx = threshold_order.index(self.hitl_threshold)
+        highest_idx = threshold_order.index(highest_severity)
+
+        requires_hitl = highest_idx >= threshold_idx or len(matched) >= self.max_patterns
+
+        # Build warning message
+        warning_message: str | None = None
+        if requires_hitl:
+            pattern_strs = [p[0] for p in matched[:5]]  # Show first 5 patterns
+            warning_message = (
+                f"Potential prompt injection detected: {len(matched)} pattern(s) matched. "
+                f"Severity: {highest_severity.value}. HITL gate triggered."
+            )
+            logger.warning(
+                "Prompt injection detected",
+                extra={
+                    "severity": highest_severity.value,
+                    "matched_patterns": pattern_strs,
+                    "requires_hitl": True,
+                },
+            )
+
+        return InjectionCheckResult(
+            is_suspicious=True,
+            severity=highest_severity,
+            matched_patterns=[p[0] for p in matched],
+            requires_hitl=requires_hitl,
+            warning_message=warning_message,
+            confidence=min(0.5 + (len(matched) * 0.1), 0.95),  # Confidence increases with more matches
+        )
 
     def sanitize(self, text: str, max_length: int = 10000) -> str:
         """Sanitize text by limiting length and removing null bytes.
@@ -393,19 +535,28 @@ class SafetyGuardrails:
         # Get base risk level
         risk_level = self._action_rules.get(category, ActionRiskLevel.LOW_RISK)
 
-        # Check for prompt injection
+        # Check for prompt injection with threshold-based HITL
         text_input = str(input_data.get("text", ""))
-        is_injection, patterns = self.injection_detector.detect(text_input)
+        injection_result = self.injection_detector.check_with_threshold(text_input)
 
-        if is_injection:
-            risk_level = ActionRiskLevel.BLOCKED
+        if injection_result.is_suspicious:
+            # Map injection severity to risk level
+            severity_to_risk = {
+                InjectionSeverity.LOW: ActionRiskLevel.LOW_RISK,
+                InjectionSeverity.MEDIUM: ActionRiskLevel.MEDIUM_RISK,
+                InjectionSeverity.HIGH: ActionRiskLevel.BLOCKED,
+                InjectionSeverity.CRITICAL: ActionRiskLevel.BLOCKED,
+            }
+            risk_level = severity_to_risk.get(
+                injection_result.severity, ActionRiskLevel.MEDIUM_RISK
+            )
             return ActionClassification(
                 risk_level=risk_level,
                 category=category,
-                reason="Potential prompt injection detected",
-                requires_approval=False,
-                confidence=0.9,
-                patterns_matched=patterns,
+                reason=injection_result.warning_message or "Potential prompt injection detected",
+                requires_approval=injection_result.requires_hitl,
+                confidence=injection_result.confidence,
+                patterns_matched=injection_result.matched_patterns,
             )
 
         # Check for suspicious patterns in input
