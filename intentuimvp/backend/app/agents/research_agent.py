@@ -10,7 +10,7 @@ This agent performs:
 import logging
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel, Field
 
@@ -104,6 +104,29 @@ class ResearchConfig:
     include_verification: bool = True
 
 
+# Progress callback type for research streaming
+# Called as: await callback(step_number, steps_total, current_step, data)
+
+
+class ResearchProgressCallback(Protocol):
+    """Protocol for research progress callback.
+
+    The callback is invoked with keyword arguments during research:
+    - step_number: Current step number
+    - steps_total: Total number of steps
+    - current_step: Description of current step
+    - data: Optional metadata (sources found, query info, etc.)
+    """
+
+    async def __call__(
+        self,
+        step_number: int,
+        steps_total: int,
+        current_step: str,
+        data: dict[str, Any] | None = None,
+    ) -> Any: ...
+
+
 class ResearchAgent(BaseAgent):
     """Agent for conducting deep research on topics.
 
@@ -157,13 +180,18 @@ class ResearchAgent(BaseAgent):
         return report.model_dump()
 
     async def research(
-        self, query: str, max_steps: int | None = None
+        self,
+        query: str,
+        max_steps: int | None = None,
+        progress_callback: ResearchProgressCallback | None = None,
     ) -> ResearchReport:
         """Conduct research on a given topic.
 
         Args:
             query: Research question or topic.
             max_steps: Maximum number of research steps.
+            progress_callback: Optional async callback for streaming progress.
+                Called as: await callback(step_number, steps_total, current_step, data)
 
         Returns:
             ResearchReport with findings.
@@ -174,10 +202,25 @@ class ResearchAgent(BaseAgent):
 
         # Step 1: Decompose the query
         sub_queries = await self._decompose_query(query)
+        steps_total = len(sub_queries[:max_steps]) + 1  # research steps + synthesis
+
+        # Notify decomposition complete
+        if progress_callback:
+            await progress_callback(
+                step_number=0,
+                steps_total=steps_total,
+                current_step=f"Decomposed query into {len(sub_queries)} sub-queries",
+                data={"sub_queries": sub_queries[:max_steps]},
+            )
 
         # Step 2: Execute searches for each sub-query
-        for sub_query in sub_queries[:max_steps]:
-            step_result = await self._execute_research_step(sub_query)
+        for idx, sub_query in enumerate(sub_queries[:max_steps], start=1):
+            step_result = await self._execute_research_step(
+                sub_query,
+                progress_callback=progress_callback,
+                step_number=idx,
+                steps_total=steps_total,
+            )
             steps.append(step_result)
             all_sources.extend(step_result.sources)
 
@@ -190,6 +233,18 @@ class ResearchAgent(BaseAgent):
                 unique_sources.append(source)
 
         all_sources = unique_sources[: self.config.max_sources]
+
+        # Notify synthesis starting
+        if progress_callback:
+            await progress_callback(
+                step_number=steps_total,
+                steps_total=steps_total,
+                current_step="Synthesizing findings",
+                data={
+                    "total_sources": len(all_sources),
+                    "steps_completed": len(steps),
+                },
+            )
 
         # Step 3: Synthesize findings
         report = await self._synthesize_report(query, steps, all_sources)
@@ -233,15 +288,33 @@ Return your response as a JSON object with a "sub_queries" array containing stri
             logger.warning(f"Query decomposition failed: {e}")
             return [query]
 
-    async def _execute_research_step(self, query: str) -> ResearchStep:
+    async def _execute_research_step(
+        self,
+        query: str,
+        progress_callback: ResearchProgressCallback | None = None,
+        step_number: int = 1,
+        steps_total: int = 5,
+    ) -> ResearchStep:
         """Execute a single research step.
 
         Args:
             query: Search query for this step.
+            progress_callback: Optional async callback for streaming progress.
+            step_number: Current step number for progress reporting.
+            steps_total: Total number of steps for progress reporting.
 
         Returns:
             ResearchStep with findings.
         """
+        # Notify starting this step
+        if progress_callback:
+            await progress_callback(
+                step_number=step_number,
+                steps_total=steps_total,
+                current_step=f"Searching: {query[:50]}{'...' if len(query) > 50 else ''}",
+                data={"query": query},
+            )
+
         # Use the web_search tool
         try:
             result = await self.tool_manager.execute_tool(
@@ -254,15 +327,29 @@ Return your response as a JSON object with a "sub_queries" array containing stri
                 key_findings: list[str] = []
 
                 for item in search_results.get("results", []):
-                    sources.append(
-                        ResearchSource(
-                            url=item.get("url", ""),
-                            title=item.get("title", ""),
-                            snippet=item.get("snippet", ""),
-                            credibility_score=0.7,  # Default score
-                        )
+                    source = ResearchSource(
+                        url=item.get("url", ""),
+                        title=item.get("title", ""),
+                        snippet=item.get("snippet", ""),
+                        credibility_score=0.7,  # Default score
                     )
+                    sources.append(source)
                     key_findings.append(item.get("title", ""))
+
+                # Notify sources found
+                if progress_callback and sources:
+                    await progress_callback(
+                        step_number=step_number,
+                        steps_total=steps_total,
+                        current_step=f"Found {len(sources)} sources for: {query[:40]}{'...' if len(query) > 40 else ''}",
+                        data={
+                            "query": query,
+                            "sources_count": len(sources),
+                            "sources": [
+                                {"url": s.url, "title": s.title} for s in sources
+                            ],
+                        },
+                    )
 
                 return ResearchStep(
                     query=query,

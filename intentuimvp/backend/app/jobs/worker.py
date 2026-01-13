@@ -372,6 +372,33 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
         logger.info(f"[{job_id}] Conducting web research")
         research_agent = get_research_agent()
 
+        # Create a progress callback that streams research progress to the UI
+        async def research_progress_callback(
+            step_number: int,
+            steps_total: int,
+            current_step: str,
+            data: dict[str, Any] | None = None,
+        ) -> None:
+            """Callback for streaming research progress to the UI.
+
+            This is called by ResearchAgent during each research step to provide
+            granular progress updates (sub-queries, sources found, etc.) to the UI.
+            """
+            # Calculate overall progress percent including research steps
+            base_percent = (web_research_step - 1) / total_steps * 100
+            step_size = 1 / total_steps * 100
+            research_percent = (step_number - 1) / steps_total * step_size
+            overall_percent = base_percent + research_percent
+
+            await progress_tracker.update_progress(
+                job_id=job_id,
+                progress_percent=overall_percent,
+                current_step=current_step,
+                step_number=web_research_step,
+                steps_total=total_steps,
+                data=data or {},
+            )
+
         # Start periodic progress streaming for web research (FR-011: 10s interval)
         progress_task = await _stream_periodic_progress(
             job_id=job_id,
@@ -382,7 +409,9 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
         )
         try:
             research_report: ResearchReport = await research_agent.research(
-                query, max_steps=depth
+                query,
+                max_steps=depth,
+                progress_callback=research_progress_callback,
             )
         finally:
             # Always cancel the periodic progress task
