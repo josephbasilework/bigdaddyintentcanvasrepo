@@ -14,6 +14,11 @@ import { DAGNode } from "./DAGNode";
 import { DashboardNode } from "./DashboardNode";
 import { CalendarSyncDialog } from "./CalendarSyncDialog";
 import {
+  CalendarApprovalDialog,
+  type PendingCalendarAction,
+  type CalendarApprovalResult,
+} from "./CalendarApprovalDialog";
+import {
   applyCalendarSyncUpdates,
   buildCalendarSyncPayload,
   mergeDagMetadata,
@@ -79,6 +84,11 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
   // Dependency editor state
   const [isEditingDependencies, setIsEditingDependencies] = useState(false);
   const [isCalendarSyncOpen, setIsCalendarSyncOpen] = useState(false);
+  const [pendingCalendarApproval, setPendingCalendarApproval] = useState<{
+    selectedCandidates: CalendarSyncCandidate[];
+    pendingAction: PendingCalendarAction | null;
+    isFirstAction: boolean;
+  } | null>(null);
   const nodeRef = useRef<HTMLDivElement>(null);
   const focusFromPointerRef = useRef(false);
   const scale = useTransformComponent(({ state }) => state.scale);
@@ -287,6 +297,20 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
       }
 
       if (result?.requires_confirmation) {
+        // Extract pending actions from the response for approval dialog
+        const pendingActions = (result as unknown as { pending_actions?: PendingCalendarAction[] }).pending_actions ?? [];
+        const firstPendingAction = pendingActions.length > 0 ? pendingActions[0] : null;
+
+        if (firstPendingAction) {
+          // Store the pending approval state and show approval dialog
+          setPendingCalendarApproval({
+            selectedCandidates,
+            pendingAction: firstPendingAction,
+            isFirstAction: true,
+          });
+          return { success: false, error: "" }; // Empty error to avoid showing alert
+        }
+
         return {
           success: false,
           error: result.message ?? "Calendar sync requires confirmation.",
@@ -303,6 +327,68 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
       };
     },
     [node.dagData, node.id, node.metadata, updateNode]
+  );
+
+  const handleCalendarApprovalClose = useCallback(() => {
+    setPendingCalendarApproval(null);
+    setIsCalendarSyncOpen(false);
+  }, []);
+
+  const handleCalendarApprovalConfirm = useCallback(
+    async (action: PendingCalendarAction): Promise<CalendarApprovalResult> => {
+      if (!pendingCalendarApproval || !node.dagData) {
+        return { success: false, approved: false, error: "Missing approval context or DAG data." };
+      }
+
+      const { selectedCandidates } = pendingCalendarApproval;
+
+      // Retry sync with user_confirmed=true
+      const payload = buildCalendarSyncPayload(selectedCandidates, {
+        calendarId: action.calendar_id ?? "primary",
+        userConfirmed: true,
+      });
+
+      let response: Response;
+      try {
+        response = await fetch(`${API_BASE_URL}/api/mcp/calendar/sync`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Network error";
+        return { success: false, approved: false, error: `Calendar sync failed: ${message}` };
+      }
+
+      let result: CalendarSyncApiResponse | null = null;
+      try {
+        result = (await response.json()) as CalendarSyncApiResponse;
+      } catch {
+        result = null;
+      }
+
+      if (!response.ok || !result?.success) {
+        const message =
+          result?.error ?? result?.message ?? `Calendar sync failed (${response.status}).`;
+        return { success: false, approved: true, error: message };
+      }
+
+      // Apply successful calendar updates to the DAG
+      if (result.created_events) {
+        const updatedDag = applyCalendarSyncUpdates(node.dagData, result.created_events);
+        if (updatedDag !== node.dagData) {
+          const updatedMetadata = mergeDagMetadata(node.metadata, updatedDag);
+          updateNode(node.id, { dagData: updatedDag, metadata: updatedMetadata });
+        }
+      }
+
+      return {
+        success: true,
+        approved: true,
+        message: result.message ?? "Calendar event(s) created successfully.",
+      };
+    },
+    [node.dagData, node.id, node.metadata, pendingCalendarApproval, updateNode]
   );
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
@@ -639,6 +725,13 @@ export function Node({ node, onStartConnect, connectSourceNodeId, onConnectTarge
           onConfirm={handleCalendarSyncConfirm}
         />
       )}
+
+      <CalendarApprovalDialog
+        isOpen={pendingCalendarApproval !== null}
+        pendingAction={pendingCalendarApproval?.pendingAction ?? null}
+        onCancel={handleCalendarApprovalClose}
+        onConfirm={handleCalendarApprovalConfirm}
+      />
 
       {/* Edit modal */}
       {isEditing && (
