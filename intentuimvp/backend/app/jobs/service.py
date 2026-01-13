@@ -131,6 +131,7 @@ class JobService:
         depth: int = 3,
         user_id: str | None = None,
         workspace_id: str | None = None,
+        input_refs: list[int] | None = None,
     ) -> str:
         """Enqueue a deep research job.
 
@@ -141,6 +142,7 @@ class JobService:
             depth: Research depth (1-5, default 3)
             user_id: Optional user ID
             workspace_id: Optional workspace ID
+            input_refs: Optional list of node IDs used as inputs for linking
 
         Returns:
             Job ID
@@ -155,7 +157,13 @@ class JobService:
             )
             ```
         """
-        job_id = await enqueue_deep_research(query, depth, user_id, workspace_id)
+        job_id = await enqueue_deep_research(
+            query,
+            depth,
+            user_id,
+            workspace_id,
+            input_refs=input_refs,
+        )
         logger.info(f"JobService: Enqueued deep research job {job_id}")
         return job_id
 

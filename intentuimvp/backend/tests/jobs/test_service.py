@@ -8,7 +8,7 @@ Tests the JobService class which provides the main interface for:
 """
 
 import asyncio
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -61,6 +61,31 @@ class TestJobServiceEnqueue:
         assert job_id is not None
         assert isinstance(job_id, str)
         assert len(job_id) > 0
+
+    async def test_enqueue_deep_research_with_input_refs(self, job_service) -> None:
+        """Should forward input refs when enqueuing deep research jobs."""
+        with patch(
+            "app.jobs.service.enqueue_deep_research",
+            new_callable=AsyncMock,
+        ) as mock_enqueue:
+            mock_enqueue.return_value = "job-refs"
+
+            job_id = await job_service.enqueue_deep_research(
+                query="Research task",
+                depth=2,
+                user_id="user-1",
+                workspace_id="workspace-2",
+                input_refs=[10, 20],
+            )
+
+            assert job_id == "job-refs"
+            mock_enqueue.assert_awaited_once_with(
+                "Research task",
+                2,
+                "user-1",
+                "workspace-2",
+                input_refs=[10, 20],
+            )
 
     async def test_enqueue_perspective_gather(self, job_service, redis_pool) -> None:
         """Should enqueue a perspective gather job successfully."""

@@ -1,6 +1,7 @@
 """Tests for job client (enqueue, status, cancellation)."""
 
 import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -57,6 +58,28 @@ class TestEnqueueJob:
         assert job_id is not None
         assert isinstance(job_id, str)
         assert len(job_id) > 0
+
+    async def test_enqueue_deep_research_with_input_refs(self) -> None:
+        """Should pass input_refs through to enqueue_job."""
+        with patch("app.jobs.client.enqueue_job", new_callable=AsyncMock) as mock_enqueue:
+            mock_enqueue.return_value = "job-123"
+
+            job_id = await enqueue_deep_research(
+                query="Test query",
+                depth=2,
+                user_id="test-user",
+                workspace_id="workspace-1",
+                input_refs=[1, 2],
+            )
+
+            assert job_id == "job-123"
+            called_job_type, called_job_data = mock_enqueue.call_args.args[:2]
+            assert called_job_type == JobType.DEEP_RESEARCH
+            assert called_job_data["query"] == "Test query"
+            assert called_job_data["depth"] == 2
+            assert called_job_data["input_refs"] == [1, 2]
+            assert mock_enqueue.call_args.kwargs["user_id"] == "test-user"
+            assert mock_enqueue.call_args.kwargs["workspace_id"] == "workspace-1"
 
     async def test_enqueue_perspective_gather_job(self, redis_pool) -> None:
         """Should enqueue a perspective gather job successfully."""

@@ -97,6 +97,7 @@ async def enqueue_deep_research(
     depth: int = 3,
     user_id: str | None = None,
     workspace_id: str | None = None,
+    input_refs: list[int] | None = None,
 ) -> str:
     """Enqueue a deep research job.
 
@@ -105,13 +106,17 @@ async def enqueue_deep_research(
         depth: Research depth (1-5)
         user_id: Optional user ID
         workspace_id: Optional workspace ID
+        input_refs: Optional list of node IDs used as inputs for linking
 
     Returns:
         Job ID
     """
+    job_data: dict[str, Any] = {"query": query, "depth": depth}
+    if input_refs is not None:
+        job_data["input_refs"] = input_refs
     return await enqueue_job(
         JobType.DEEP_RESEARCH,
-        {"query": query, "depth": depth},
+        job_data,
         user_id=user_id,
         workspace_id=workspace_id,
     )
