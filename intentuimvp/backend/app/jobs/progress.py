@@ -4,6 +4,8 @@ This module provides:
 - Progress event types for real-time job updates
 - Job progress tracker for database updates with state machine validation
 - Integration with WebSocket manager for streaming
+
+Implements NFR-OBS-003: Job system lifecycle events, duration, outcomes
 """
 
 import asyncio
@@ -19,6 +21,7 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.database import SessionLocal
 from app.jobs.base import JobStateMachine
+from app.logging_config import get_correlation_id
 from app.models.job import Job
 from app.ws.websocket import manager as ws_manager
 
@@ -265,7 +268,10 @@ class JobProgressTracker:
         workspace_id: str | None = None,
         parameters: dict[str, Any] | None = None,
     ) -> Job:
-        """Create a new job in the database and emit queued event."""
+        """Create a new job in the database and emit queued event.
+
+        Implements NFR-OBS-003: Logs job lifecycle event (queued).
+        """
         parameters_json = json.dumps(parameters) if parameters else None
         job = await asyncio.to_thread(
             _create_job_sync, job_id, job_type, user_id, workspace_id, parameters_json
@@ -282,7 +288,20 @@ class JobProgressTracker:
             )
         )
 
-        logger.info(f"Job {job_id} created and queued")
+        # Log job lifecycle event (NFR-OBS-003)
+        logger.info(
+            "Job queued",
+            extra={
+                "event": "job_lifecycle",
+                "job_id": job_id,
+                "job_type": job_type,
+                "status": "queued",
+                "user_id": user_id,
+                "workspace_id": workspace_id,
+                "correlation_id": get_correlation_id(),
+            },
+        )
+
         return job
 
     async def update_progress(
@@ -294,7 +313,10 @@ class JobProgressTracker:
         steps_total: int | None = None,
         data: dict[str, Any] | None = None,
     ) -> None:
-        """Update job progress and emit progress event."""
+        """Update job progress and emit progress event.
+
+        Implements NFR-OBS-003: Logs job lifecycle event (progress).
+        """
         await asyncio.to_thread(
             _update_progress_sync, job_id, progress_percent, current_step, step_number, steps_total
         )
@@ -316,12 +338,31 @@ class JobProgressTracker:
                 )
             )
 
+            # Log job progress (NFR-OBS-003)
+            logger.info(
+                "Job progress updated",
+                extra={
+                    "event": "job_lifecycle",
+                    "job_id": job_id,
+                    "job_type": job.job_type,
+                    "status": job.status,
+                    "progress_percent": progress_percent,
+                    "current_step": current_step,
+                    "step_number": step_number,
+                    "steps_total": steps_total,
+                    "correlation_id": get_correlation_id(),
+                },
+            )
+
     async def complete_job(
         self,
         job_id: str,
         result_data: dict[str, Any] | None = None,
     ) -> None:
-        """Mark job as complete and emit completion event."""
+        """Mark job as complete and emit completion event.
+
+        Implements NFR-OBS-003: Logs job lifecycle event (complete) with duration.
+        """
         result_data_json = json.dumps(result_data) if result_data else None
         await asyncio.to_thread(_complete_job_sync, job_id, result_data_json)
 
@@ -337,14 +378,35 @@ class JobProgressTracker:
                     data={"result": result_data} if result_data else {},
                 )
             )
-            logger.info(f"Job {job_id} completed successfully")
+
+            # Calculate job duration
+            duration_ms = 0
+            if job.started_at and job.completed_at:
+                duration_ms = (job.completed_at - job.started_at).total_seconds() * 1000
+
+            # Log job completion with duration (NFR-OBS-003)
+            logger.info(
+                "Job completed",
+                extra={
+                    "event": "job_lifecycle",
+                    "job_id": job_id,
+                    "job_type": job.job_type,
+                    "status": "complete",
+                    "duration_ms": round(duration_ms, 2) if duration_ms else None,
+                    "outcome": "success",
+                    "correlation_id": get_correlation_id(),
+                },
+            )
 
     async def fail_job(
         self,
         job_id: str,
         error_message: str,
     ) -> None:
-        """Mark job as failed and emit failure event."""
+        """Mark job as failed and emit failure event.
+
+        Implements NFR-OBS-003: Logs job lifecycle event (failed) with duration.
+        """
         await asyncio.to_thread(_fail_job_sync, job_id, error_message)
 
         job = await asyncio.to_thread(_get_job_sync, job_id)
@@ -358,10 +420,32 @@ class JobProgressTracker:
                     data={"error": error_message},
                 )
             )
-            logger.error(f"Job {job_id} failed: {error_message}")
+
+            # Calculate job duration
+            duration_ms = 0
+            if job.started_at and job.completed_at:
+                duration_ms = (job.completed_at - job.started_at).total_seconds() * 1000
+
+            # Log job failure with duration (NFR-OBS-003, NFR-OBS-005)
+            logger.error(
+                "Job failed",
+                extra={
+                    "event": "job_lifecycle",
+                    "job_id": job_id,
+                    "job_type": job.job_type,
+                    "status": "failed",
+                    "duration_ms": round(duration_ms, 2) if duration_ms else None,
+                    "outcome": "failure",
+                    "error_message": error_message,
+                    "correlation_id": get_correlation_id(),
+                },
+            )
 
     async def cancel_job(self, job_id: str) -> None:
-        """Mark job as cancelled and emit cancellation event."""
+        """Mark job as cancelled and emit cancellation event.
+
+        Implements NFR-OBS-003: Logs job lifecycle event (cancelled).
+        """
         await asyncio.to_thread(_cancel_job_sync, job_id)
 
         job = await asyncio.to_thread(_get_job_sync, job_id)
@@ -374,7 +458,25 @@ class JobProgressTracker:
                     status="cancelled",
                 )
             )
-            logger.info(f"Job {job_id} cancelled")
+
+            # Calculate job duration
+            duration_ms = 0
+            if job.started_at and job.completed_at:
+                duration_ms = (job.completed_at - job.started_at).total_seconds() * 1000
+
+            # Log job cancellation (NFR-OBS-003)
+            logger.info(
+                "Job cancelled",
+                extra={
+                    "event": "job_lifecycle",
+                    "job_id": job_id,
+                    "job_type": job.job_type,
+                    "status": "cancelled",
+                    "duration_ms": round(duration_ms, 2) if duration_ms else None,
+                    "outcome": "cancelled",
+                    "correlation_id": get_correlation_id(),
+                },
+            )
 
     async def emit_event(self, event: ProgressEvent) -> None:
         """Emit a progress event to subscribed WebSocket connections."""

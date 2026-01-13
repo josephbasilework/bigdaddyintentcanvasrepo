@@ -17,6 +17,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.base import BaseAgent
+from app.logging_config import get_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -228,6 +229,8 @@ class AgentOrchestrator:
     ) -> AgentExecutionResult:
         """Execute a single agent.
 
+        Implements NFR-OBS-002: Logs agent invocations with latency and success/failure.
+
         Args:
             name: Agent name to execute.
             input_data: Input data for the agent.
@@ -240,6 +243,15 @@ class AgentOrchestrator:
 
         metadata = self.registry.get(name)
         if not metadata:
+            logger.error(
+                "Agent not registered",
+                extra={
+                    "event": "agent_execution_failed",
+                    "agent_name": name,
+                    "correlation_id": get_correlation_id(),
+                    "reason": "not_registered",
+                },
+            )
             return AgentExecutionResult(
                 agent_name=name,
                 success=False,
@@ -254,8 +266,15 @@ class AgentOrchestrator:
         for hook in self._pre_hooks:
             try:
                 await hook(name, input_data)
-            except Exception as e:
-                logger.warning(f"Pre-hook failed for {name}: {e}")
+            except Exception:
+                logger.warning(
+                    "Pre-hook failed",
+                    extra={
+                        "event": "pre_hook_failed",
+                        "agent_name": name,
+                        "correlation_id": get_correlation_id(),
+                    },
+                )
 
         start_time = time.time()
         semaphore = self.registry.get_semaphore(name)
@@ -280,6 +299,18 @@ class AgentOrchestrator:
                     duration_ms=duration_ms,
                 )
 
+                # Log successful execution (NFR-OBS-002)
+                logger.info(
+                    "Agent execution completed",
+                    extra={
+                        "event": "agent_execution",
+                        "agent_name": name,
+                        "duration_ms": round(duration_ms, 2),
+                        "correlation_id": get_correlation_id(),
+                        "success": True,
+                    },
+                )
+
         except TimeoutError:
             duration_ms = (time.time() - start_time) * 1000
             exec_result = AgentExecutionResult(
@@ -288,7 +319,19 @@ class AgentOrchestrator:
                 error=f"Execution timed out after {timeout}s",
                 duration_ms=duration_ms,
             )
-            logger.error(f"Agent {name} timed out", extra={"timeout": timeout})
+            # Log timeout (NFR-OBS-002, NFR-OBS-005)
+            logger.error(
+                "Agent execution timed out",
+                extra={
+                    "event": "agent_execution",
+                    "agent_name": name,
+                    "duration_ms": round(duration_ms, 2),
+                    "timeout": timeout,
+                    "correlation_id": get_correlation_id(),
+                    "success": False,
+                    "error_type": "TimeoutError",
+                },
+            )
 
         except Exception as e:
             duration_ms = (time.time() - start_time) * 1000
@@ -298,14 +341,33 @@ class AgentOrchestrator:
                 error=str(e),
                 duration_ms=duration_ms,
             )
-            logger.error(f"Agent {name} failed", exc_info=True)
+            # Log execution failure (NFR-OBS-002, NFR-OBS-005)
+            logger.error(
+                "Agent execution failed",
+                extra={
+                    "event": "agent_execution",
+                    "agent_name": name,
+                    "duration_ms": round(duration_ms, 2),
+                    "correlation_id": get_correlation_id(),
+                    "success": False,
+                    "error_type": type(e).__name__,
+                },
+                exc_info=True,
+            )
 
         # Run post-hooks
         for hook in self._post_hooks:
             try:
                 await hook(name, {"input": input_data, "result": exec_result})
-            except Exception as e:
-                logger.warning(f"Post-hook failed for {name}: {e}")
+            except Exception:
+                logger.warning(
+                    "Post-hook failed",
+                    extra={
+                        "event": "post_hook_failed",
+                        "agent_name": name,
+                        "correlation_id": get_correlation_id(),
+                    },
+                )
 
         return exec_result
 

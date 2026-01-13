@@ -1,8 +1,12 @@
-"""WebSocket endpoint for real-time updates using AG-UI protocol."""
+"""WebSocket endpoint for real-time updates using AG-UI protocol.
+
+Implements NFR-OBS-004: WebSocket connection events, message counts
+"""
 
 import asyncio
 import json
 import logging
+from collections import defaultdict
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from pydantic import ValidationError
@@ -17,6 +21,7 @@ from app.agui import (
     StateSyncRequestMessage,
 )
 from app.config import get_settings
+from app.logging_config import get_correlation_id
 from app.ws.state_manager import get_state_manager
 
 logger = logging.getLogger(__name__)
@@ -33,35 +38,77 @@ class ConnectionManager:
 
     Tracks connected clients and provides broadcast functionality
     for sending messages to all connected clients.
+
+    Implements NFR-OBS-004: Logs WebSocket connection events and message counts.
     """
 
     def __init__(self) -> None:
         """Initialize the connection manager."""
         self.active_connections: set[WebSocket] = set()
         self._heartbeat_task: asyncio.Task[None] | None = None
+        # Track message counts per connection (NFR-OBS-004)
+        self._message_counts: dict[int, dict[str, int]] = defaultdict(
+            lambda: {"sent": 0, "received": 0}
+        )
+
+    def _get_connection_id(self, websocket: WebSocket) -> int:
+        """Get a unique ID for a WebSocket connection."""
+        return id(websocket)
 
     async def connect(self, websocket: WebSocket) -> None:
         """Accept and register a new WebSocket connection.
+
+        Implements NFR-OBS-004: Logs WebSocket connection event.
 
         Args:
             websocket: The WebSocket connection to accept.
         """
         await websocket.accept()
         self.active_connections.add(websocket)
+        conn_id = self._get_connection_id(websocket)
+
+        # Log connection event (NFR-OBS-004)
         logger.info(
-            f"WebSocket connected. Total active connections: {len(self.active_connections)}"
+            "WebSocket connected",
+            extra={
+                "event": "websocket_connection",
+                "action": "connected",
+                "connection_id": conn_id,
+                "active_connections": len(self.active_connections),
+                "client_host": websocket.client.host if websocket.client else None,
+                "correlation_id": get_correlation_id(),
+            },
         )
 
     def disconnect(self, websocket: WebSocket) -> None:
         """Remove a WebSocket connection from active connections.
 
+        Implements NFR-OBS-004: Logs WebSocket disconnection event with message counts.
+
         Args:
             websocket: The WebSocket connection to remove.
         """
+        conn_id = self._get_connection_id(websocket)
+        message_counts = self._message_counts.get(conn_id, {})
+
         self.active_connections.discard(websocket)
+
+        # Log disconnection event with message counts (NFR-OBS-004)
         logger.info(
-            f"WebSocket disconnected. Total active connections: {len(self.active_connections)}"
+            "WebSocket disconnected",
+            extra={
+                "event": "websocket_connection",
+                "action": "disconnected",
+                "connection_id": conn_id,
+                "active_connections": len(self.active_connections),
+                "messages_sent": message_counts.get("sent", 0),
+                "messages_received": message_counts.get("received", 0),
+                "correlation_id": get_correlation_id(),
+            },
         )
+
+        # Clean up message counts
+        self._message_counts.pop(conn_id, None)
 
     async def send_personal_message(self, message: str, websocket: WebSocket) -> None:
         """Send a plain text message to a specific WebSocket connection.
@@ -70,10 +117,20 @@ class ConnectionManager:
             message: The message to send.
             websocket: The WebSocket connection to send the message to.
         """
+        conn_id = self._get_connection_id(websocket)
         try:
             await websocket.send_text(message)
+            self._message_counts[conn_id]["sent"] += 1
         except Exception as e:
-            logger.error(f"Error sending personal message: {e}")
+            logger.error(
+                "Error sending personal message",
+                extra={
+                    "event": "websocket_error",
+                    "connection_id": conn_id,
+                    "error_type": type(e).__name__,
+                    "correlation_id": get_correlation_id(),
+                },
+            )
             self.disconnect(websocket)
 
     async def send_agui_message(
@@ -85,10 +142,20 @@ class ConnectionManager:
             message: The AG-UI message to send.
             websocket: The WebSocket connection to send the message to.
         """
+        conn_id = self._get_connection_id(websocket)
         try:
             await websocket.send_text(message.model_dump_json())
+            self._message_counts[conn_id]["sent"] += 1
         except Exception as e:
-            logger.error(f"Error sending AG-UI message: {e}")
+            logger.error(
+                "Error sending AG-UI message",
+                extra={
+                    "event": "websocket_error",
+                    "connection_id": conn_id,
+                    "error_type": type(e).__name__,
+                    "correlation_id": get_correlation_id(),
+                },
+            )
             self.disconnect(websocket)
 
     async def broadcast(self, message: str) -> None:
@@ -102,12 +169,35 @@ class ConnectionManager:
 
         # Create a list of connected websockets to avoid modification during iteration
         connections = list(self.active_connections)
+        sent_count = 0
         for connection in connections:
+            conn_id = self._get_connection_id(connection)
             try:
                 await connection.send_text(message)
+                self._message_counts[conn_id]["sent"] += 1
+                sent_count += 1
             except Exception as e:
-                logger.error(f"Error broadcasting to connection: {e}")
+                logger.error(
+                    "Error broadcasting to connection",
+                    extra={
+                        "event": "websocket_error",
+                        "connection_id": conn_id,
+                        "error_type": type(e).__name__,
+                        "correlation_id": get_correlation_id(),
+                    },
+                )
                 self.disconnect(connection)
+
+        # Log broadcast metrics (NFR-OBS-004)
+        logger.debug(
+            "Broadcast completed",
+            extra={
+                "event": "websocket_broadcast",
+                "recipients": sent_count,
+                "active_connections": len(self.active_connections),
+                "correlation_id": get_correlation_id(),
+            },
+        )
 
     async def broadcast_agui(self, message: AgentToUIMessageType) -> None:
         """Broadcast an AG-UI protocol message to all active WebSocket connections.
@@ -120,12 +210,36 @@ class ConnectionManager:
 
         message_json = message.model_dump_json()
         connections = list(self.active_connections)
+        sent_count = 0
         for connection in connections:
+            conn_id = self._get_connection_id(connection)
             try:
                 await connection.send_text(message_json)
+                self._message_counts[conn_id]["sent"] += 1
+                sent_count += 1
             except Exception as e:
-                logger.error(f"Error broadcasting AG-UI message: {e}")
+                logger.error(
+                    "Error broadcasting AG-UI message",
+                    extra={
+                        "event": "websocket_error",
+                        "connection_id": conn_id,
+                        "error_type": type(e).__name__,
+                        "correlation_id": get_correlation_id(),
+                    },
+                )
                 self.disconnect(connection)
+
+        # Log broadcast metrics (NFR-OBS-004)
+        logger.debug(
+            "Broadcast AG-UI completed",
+            extra={
+                "event": "websocket_broadcast",
+                "message_type": type(message).__name__,
+                "recipients": sent_count,
+                "active_connections": len(self.active_connections),
+                "correlation_id": get_correlation_id(),
+            },
+        )
 
     async def start_heartbeat(self) -> None:
         """Start the heartbeat task that sends ping messages every 30 seconds."""
@@ -147,7 +261,16 @@ class ConnectionManager:
                 )
                 heartbeat_msg = AgentNotificationMessage(payload=payload)
                 await self.broadcast_agui(heartbeat_msg)
-                logger.debug("Heartbeat sent to all connections")
+
+                # Log heartbeat metrics (NFR-OBS-004)
+                logger.debug(
+                    "Heartbeat sent",
+                    extra={
+                        "event": "websocket_heartbeat",
+                        "active_connections": len(self.active_connections),
+                        "correlation_id": get_correlation_id(),
+                    },
+                )
 
     async def stop_heartbeat(self) -> None:
         """Stop the heartbeat task."""
@@ -202,15 +325,29 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     - Broadcasting agent messages to connected clients
     - Heartbeat every 30 seconds using AG-UI notification messages
 
+    Implements NFR-OBS-004: Logs WebSocket message receives.
+
     Args:
         websocket: The WebSocket connection.
     """
+    conn_id = id(websocket)
+
     # Verify authentication before accepting
     if not await verify_websocket_auth(websocket):
         await websocket.close(
             code=status.WS_1008_POLICY_VIOLATION, reason="Authentication failed"
         )
-        logger.warning("WebSocket connection rejected: authentication failed")
+        # Log authentication failure (NFR-OBS-004, NFR-OBS-005)
+        logger.warning(
+            "WebSocket authentication failed",
+            extra={
+                "event": "websocket_connection",
+                "action": "auth_failed",
+                "connection_id": conn_id,
+                "client_host": websocket.client.host if websocket.client else None,
+                "correlation_id": get_correlation_id(),
+            },
+        )
         return
 
     await manager.connect(websocket)
@@ -232,6 +369,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         while True:
             # Receive messages from client
             data = await websocket.receive_text()
+
+            # Track received message count (NFR-OBS-004)
+            manager._message_counts[conn_id]["received"] += 1
+
             logger.debug(f"Received raw message: {data}")
 
             # Parse and validate as AG-UI message

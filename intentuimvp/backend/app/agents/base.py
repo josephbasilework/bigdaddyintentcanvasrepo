@@ -6,12 +6,14 @@ Direct provider SDK imports (OpenAI, Anthropic, etc.) are PROHIBITED.
 
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
 from app.gateway.client import GatewayClient, GatewayClientError
+from app.logging_config import get_correlation_id
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +88,8 @@ class BaseAgent(ABC):
 
         Convenience method for subclasses to call the Gateway.
 
+        Implements NFR-OBS-002: Logs agent invocation with latency and success/failure.
+
         Args:
             messages: Chat messages in OpenAI format.
             model: Override model. Defaults to self.model.
@@ -98,17 +102,51 @@ class BaseAgent(ABC):
         Raises:
             AgentError: If Gateway request fails.
         """
+        start_time = time.time()
+        actual_model = model or self.model
+
         try:
             response = await self.gateway.generate(
-                model=model or self.model,
+                model=actual_model,
                 messages=messages,
                 temperature=temperature or self.temperature,
                 **kwargs,
             )
+
+            duration_ms = (time.time() - start_time) * 1000
+
+            # Log successful agent invocation (NFR-OBS-002)
+            logger.info(
+                "Agent invocation successful",
+                extra={
+                    "event": "agent_invocation",
+                    "model": actual_model,
+                    "duration_ms": round(duration_ms, 2),
+                    "correlation_id": get_correlation_id(),
+                    "agent_class": self.__class__.__name__,
+                    "success": True,
+                },
+            )
+
             return response
 
         except GatewayClientError as e:
-            logger.error("Gateway request failed", exc_info=True)
+            duration_ms = (time.time() - start_time) * 1000
+
+            # Log failed agent invocation (NFR-OBS-002, NFR-OBS-005)
+            logger.error(
+                "Agent invocation failed",
+                extra={
+                    "event": "agent_invocation",
+                    "model": actual_model,
+                    "duration_ms": round(duration_ms, 2),
+                    "correlation_id": get_correlation_id(),
+                    "agent_class": self.__class__.__name__,
+                    "success": False,
+                    "error_type": type(e).__name__,
+                },
+                exc_info=True,
+            )
             raise AgentError(f"Agent execution failed: {e}") from e
 
     async def generate_structured(

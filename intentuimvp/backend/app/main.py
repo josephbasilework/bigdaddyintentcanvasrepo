@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import logging
 from contextlib import asynccontextmanager
 from logging import getLogger
 
@@ -21,6 +22,8 @@ from app.api.runs import router as runs_router
 from app.api.workspace import router as workspace_router
 from app.config import get_settings
 from app.database import SessionLocal
+from app.logging_config import configure_logging
+from app.middleware import LoggingMiddleware
 from app.services.backup_service import BackupService
 from app.ws import router as ws_router
 
@@ -73,6 +76,8 @@ async def lifespan(app: FastAPI):
     on startup and cleaned up on shutdown.
 
     On startup:
+    - Configures structured logging
+    - Validates required environment variables
     - Initializes APScheduler for daily backups (if enabled)
 
     On shutdown:
@@ -83,6 +88,16 @@ async def lifespan(app: FastAPI):
     # Startup
     print(f"Starting {settings.app_name} v{settings.app_version}")
     print(f"Environment: {settings.environment}")
+
+    # Configure structured logging (FR-022, NFR-OBS-005)
+    configure_logging(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        json_format=settings.environment == "production",
+    )
+    logger.info(
+        "Application starting",
+        extra={"event": "startup", "version": settings.app_version},
+    )
 
     # Validate required Gateway API key
     if not settings.pydantic_gateway_api_key or settings.pydantic_gateway_api_key.strip() == "":
@@ -114,6 +129,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    logger.info("Application shutting down")
     if _scheduler:
         _scheduler.shutdown()
         logger.info("Backup scheduler stopped")
@@ -133,6 +149,9 @@ def create_app() -> FastAPI:
         redoc_url="/redoc" if settings.debug else None,
         lifespan=lifespan,
     )
+
+    # Structured logging middleware (NFR-OBS-001, NFR-OBS-005)
+    app.add_middleware(LoggingMiddleware)
 
     # CORS middleware
     app.add_middleware(

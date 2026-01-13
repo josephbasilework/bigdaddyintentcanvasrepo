@@ -1,0 +1,232 @@
+"""Tests for structured logging configuration.
+
+Tests the logging_config module which implements:
+- FR-022: Observability + Auditability
+- NFR-OBS-001: API endpoints request/response logging (no secrets)
+- NFR-OBS-002: Agent invocations latency, success/failure metrics
+- NFR-OBS-003: Job system lifecycle events, duration, outcomes
+- NFR-OBS-004: WebSocket connection events, message counts
+- NFR-OBS-005: Structured error logging with correlation IDs
+"""
+
+import logging
+
+from app.logging_config import (
+    JsonFormatter,
+    LogHelper,
+    clear_correlation_id,
+    configure_logging,
+    create_log_helper,
+    get_correlation_id,
+    get_logger,
+    set_correlation_id,
+)
+
+
+class TestCorrelationId:
+    """Tests for correlation ID context management."""
+
+    def test_get_correlation_id_generates_new_id(self):
+        """get_correlation_id should generate a new UUID when none is set."""
+        clear_correlation_id()
+        cid = get_correlation_id()
+        assert cid is not None
+        assert len(cid) == 36  # UUID string length
+
+    def test_get_correlation_id_returns_existing(self):
+        """get_correlation_id should return the existing ID when set."""
+        expected_cid = "test-correlation-id-123"
+        set_correlation_id(expected_cid)
+        actual_cid = get_correlation_id()
+        assert actual_cid == expected_cid
+
+    def test_clear_correlation_id(self):
+        """clear_correlation_id should remove the correlation ID."""
+        set_correlation_id("test-id")
+        clear_correlation_id()
+        # Getting a new ID after clearing should generate a new UUID
+        new_cid = get_correlation_id()
+        assert new_cid != "test-id"
+
+
+class TestJsonFormatter:
+    """Tests for JsonFormatter."""
+
+    def test_add_fields_includes_timestamp(self):
+        """JsonFormatter should add timestamp in ISO 8601 format."""
+        formatter = JsonFormatter()
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="Test message",
+            args=(),
+            exc_info=None,
+        )
+        result = {}
+        formatter.add_fields(result, log_record, {})
+
+        assert "timestamp" in result
+        assert "T" in result["timestamp"] or result["timestamp"].count("-") == 2
+
+    def test_add_fields_includes_correlation_id(self):
+        """JsonFormatter should include correlation ID when set."""
+        formatter = JsonFormatter()
+        set_correlation_id("test-cid-123")
+
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="Test message",
+            args=(),
+            exc_info=None,
+        )
+        result = {}
+        formatter.add_fields(result, log_record, {})
+
+        assert result.get("correlation_id") == "test-cid-123"
+        clear_correlation_id()
+
+    def test_add_fields_includes_standard_fields(self):
+        """JsonFormatter should include standard logging fields."""
+        formatter = JsonFormatter()
+
+        log_record = logging.LogRecord(
+            name="test.logger",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=42,
+            msg="Test message",
+            args=(),
+            exc_info=None,
+        )
+        log_record.funcName = "test_function"
+        log_record.module = "test_module"
+
+        result = {}
+        formatter.add_fields(result, log_record, {})
+
+        assert result.get("level") == "INFO"
+        assert result.get("logger") == "test.logger"
+        assert result.get("module") == "test_module"
+        assert result.get("function") == "test_function"
+        assert result.get("line") == 42
+
+
+class TestConfigureLogging:
+    """Tests for configure_logging function."""
+
+    def test_configure_logging_sets_root_level(self, caplog):
+        """configure_logging should set the root logger level."""
+        configure_logging(level=logging.DEBUG)
+
+        root_logger = logging.getLogger()
+        assert root_logger.level == logging.DEBUG
+
+    def test_configure_logging_json_format(self):
+        """configure_logging with json_format=True should use JsonFormatter."""
+        configure_logging(level=logging.INFO, json_format=True)
+
+        root_logger = logging.getLogger()
+        assert len(root_logger.handlers) > 0
+
+        handler = root_logger.handlers[0]
+        assert isinstance(handler.formatter, JsonFormatter)
+
+    def test_configure_logging_text_format(self):
+        """configure_logging with json_format=False should use text formatter."""
+        configure_logging(level=logging.INFO, json_format=False)
+
+        root_logger = logging.getLogger()
+        assert len(root_logger.handlers) > 0
+
+        handler = root_logger.handlers[0]
+        assert not isinstance(handler.formatter, JsonFormatter)
+
+    def test_configure_logging_custom_handler(self):
+        """configure_logging should accept a custom handler."""
+        custom_handler = logging.StreamHandler()
+        configure_logging(level=logging.INFO, handler=custom_handler)
+
+        root_logger = logging.getLogger()
+        assert custom_handler in root_logger.handlers
+
+
+class TestGetLogger:
+    """Tests for get_logger function."""
+
+    def test_get_logger_returns_logger(self):
+        """get_logger should return a logging.Logger instance."""
+        logger = get_logger("test.module")
+        assert isinstance(logger, logging.Logger)
+
+    def test_get_logger_same_name_returns_same_instance(self):
+        """get_logger should return the same logger for the same name."""
+        logger1 = get_logger("test.module.same")
+        logger2 = get_logger("test.module.same")
+        assert logger1 is logger2
+
+
+class TestLogHelper:
+    """Tests for LogHelper class."""
+
+    def test_log_helper_info(self, caplog):
+        """LogHelper.info should log info messages with component field."""
+        caplog.set_level(logging.INFO)
+        logger = get_logger("test.helper")
+        helper = LogHelper(logger, "test_component")
+
+        helper.info("Test message", extra_field="extra_value")
+
+        assert len(caplog.records) == 1
+        record = caplog.records[0]
+        assert record.message == "Test message"
+        assert record.levelno == logging.INFO
+        assert record.component == "test_component"
+
+    def test_log_helper_warning(self, caplog):
+        """LogHelper.warning should log warning messages."""
+        caplog.set_level(logging.WARNING)
+        logger = get_logger("test.helper")
+        helper = LogHelper(logger, "test_component")
+
+        helper.warning("Warning message")
+
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.WARNING
+
+    def test_log_helper_error(self, caplog):
+        """LogHelper.error should log error messages."""
+        caplog.set_level(logging.ERROR)
+        logger = get_logger("test.helper")
+        helper = LogHelper(logger, "test_component")
+
+        helper.error("Error message")
+
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.ERROR
+
+    def test_log_helper_debug(self, caplog):
+        """LogHelper.debug should log debug messages."""
+        caplog.set_level(logging.DEBUG)
+        logger = get_logger("test.helper")
+        helper = LogHelper(logger, "test_component")
+
+        helper.debug("Debug message")
+
+        assert len(caplog.records) == 1
+        assert caplog.records[0].levelno == logging.DEBUG
+
+
+class TestCreateLogHelper:
+    """Tests for create_log_helper function."""
+
+    def test_create_log_helper_returns_log_helper(self):
+        """create_log_helper should return a LogHelper instance."""
+        logger = get_logger("test.create")
+        helper = create_log_helper(logger, "test_component")
+
+        assert isinstance(helper, LogHelper)
