@@ -7,13 +7,17 @@ The service:
 - Extracts and structures content from artifacts
 - Generates well-formatted markdown documentation
 - Stores generated docs as artifacts
+- Computes diffs for update suggestions when source artifacts change
 """
 
 import logging
+import re
 from datetime import UTC, datetime
+from difflib import unified_diff
 from typing import Any
 
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.gateway.client import GatewayClient, get_gateway_client
 from app.jobs.artifact_storage import (
@@ -67,6 +71,32 @@ class GeneratedDocument(BaseModel):
         description="Timestamp when doc was generated",
     )
     success: bool = Field(default=True, description="Whether generation succeeded")
+
+
+class DocUpdateSuggestion(BaseModel):
+    """Suggestion for updating an existing document based on artifact changes.
+
+    Represents a diff between an existing document and a newly generated version,
+    allowing for HITL (Human-in-the-Loop) approval before applying changes.
+    """
+
+    existing_doc_artifact_id: int = Field(
+        description="Artifact ID of the existing document"
+    )
+    source_artifact_id: int = Field(
+        description="Artifact ID that the document was generated from"
+    )
+    new_content: str = Field(description="New document content")
+    diff: str = Field(description="Unified diff between old and new content")
+    has_changes: bool = Field(
+        default=True, description="Whether there are any changes"
+    )
+    lines_added: int = Field(default=0, description="Number of lines added")
+    lines_removed: int = Field(default=0, description="Number of lines removed")
+    suggested_at: str = Field(
+        default_factory=lambda: datetime.now(UTC).isoformat(),
+        description="Timestamp when suggestion was created",
+    )
 
 
 class DocGenerationService:
@@ -240,6 +270,241 @@ class DocGenerationService:
             generated.artifact_id = stored.id
 
         return generated
+
+    def compute_doc_diff(
+        self,
+        old_content: str,
+        new_content: str,
+        old_filename: str = "original.md",
+        new_filename: str = "updated.md",
+    ) -> tuple[str, int, int]:
+        """Compute a unified diff between two document contents.
+
+        Args:
+            old_content: Original document content.
+            new_content: New document content.
+            old_filename: Filename for the original (for diff header).
+            new_filename: Filename for the new version (for diff header).
+
+        Returns:
+            Tuple of (diff_string, lines_added, lines_removed).
+        """
+        old_lines = old_content.splitlines(keepends=True)
+        new_lines = new_content.splitlines(keepends=True)
+
+        diff_lines = list(
+            unified_diff(
+                old_lines,
+                new_lines,
+                fromfile=old_filename,
+                tofile=new_filename,
+                lineterm="\n",
+            )
+        )
+
+        diff_str = "".join(diff_lines)
+
+        # Count added and removed lines
+        lines_added = sum(1 for line in diff_lines if line.startswith("+") and not line.startswith("+++"))
+        lines_removed = sum(1 for line in diff_lines if line.startswith("-") and not line.startswith("---"))
+
+        return diff_str, lines_added, lines_removed
+
+    def extract_source_artifact_id(self, doc_artifact: StoredArtifact) -> int | None:
+        """Extract the source artifact ID from a doc artifact's description.
+
+        Args:
+            doc_artifact: The document artifact to parse.
+
+        Returns:
+            Source artifact ID if found, None otherwise.
+        """
+        if not doc_artifact.description:
+            return None
+
+        # Description format: "Generated documentation from artifact {id}"
+        match = re.search(r"from artifact (\d+)", doc_artifact.description)
+        if match:
+            return int(match.group(1))
+
+        return None
+
+    async def suggest_doc_update(
+        self,
+        db: AsyncSession,
+        existing_doc: StoredArtifact,
+        updated_source_artifact: StoredArtifact,
+        updated_result_data: dict[str, Any],
+        doc_format: str = "markdown",
+        include_metadata: bool = True,
+    ) -> DocUpdateSuggestion | None:
+        """Generate an update suggestion for an existing document.
+
+        When a source artifact changes and a document was previously generated
+        from it, this method generates a new version and creates a diff for
+        HITL approval.
+
+        Args:
+            db: Database session for loading the existing doc content.
+            existing_doc: The existing document artifact.
+            updated_source_artifact: The updated source artifact.
+            updated_result_data: The raw result data from the updated source.
+            doc_format: Output format for the new doc.
+            include_metadata: Whether to include metadata in the new doc.
+
+        Returns:
+            DocUpdateSuggestion if there are changes, None if content is identical.
+        """
+        # Load existing doc content
+        existing_result = await self.storage.get_artifact_content(db, existing_doc.id)
+        if not existing_result:
+            logger.warning(f"Could not load content for doc artifact {existing_doc.id}")
+            return None
+
+        _, old_content = existing_result
+
+        # Ensure old_content is a string (convert from bytes if needed)
+        if isinstance(old_content, bytes):
+            old_content = old_content.decode("utf-8")
+
+        # Generate new document from updated source
+        if updated_source_artifact.artifact_type == ArtifactType.SYNTHESIS_OUTPUT:
+            new_doc = await self.generate_from_research_result(
+                updated_result_data,
+                doc_format=doc_format,
+                include_metadata=include_metadata,
+            )
+        else:
+            new_doc = await self.generate_from_plan_result(
+                updated_result_data,
+                doc_format=doc_format,
+                include_metadata=include_metadata,
+            )
+
+        new_content = new_doc.content
+
+        # Compute diff
+        diff_str, lines_added, lines_removed = self.compute_doc_diff(
+            old_content,
+            new_content,
+            old_filename=f"doc_{existing_doc.id}.md",
+            new_filename=f"doc_{existing_doc.id}_updated.md",
+        )
+
+        # Check if there are actual changes
+        has_changes = old_content != new_content
+
+        if not has_changes:
+            logger.info(f"No changes detected for doc artifact {existing_doc.id}")
+            return None
+
+        source_id = self.extract_source_artifact_id(existing_doc) or updated_source_artifact.id
+
+        return DocUpdateSuggestion(
+            existing_doc_artifact_id=existing_doc.id,
+            source_artifact_id=source_id,
+            new_content=new_content,
+            diff=diff_str,
+            has_changes=has_changes,
+            lines_added=lines_added,
+            lines_removed=lines_removed,
+        )
+
+    async def find_docs_for_source(
+        self,
+        db: AsyncSession,
+        source_artifact_id: int,
+    ) -> list[StoredArtifact]:
+        """Find all document artifacts generated from a specific source artifact.
+
+        Args:
+            db: Database session.
+            source_artifact_id: The source artifact ID to search for.
+
+        Returns:
+            List of document artifacts that were generated from the source.
+        """
+        from sqlalchemy import select
+
+        from app.models.artifact import ArtifactType, JobArtifact
+
+        # Search for docs with descriptions containing the source artifact ID
+        result = await db.execute(
+            select(JobArtifact)
+            .where(
+                JobArtifact.artifact_type == ArtifactType.MARKDOWN_DOCUMENT.value,
+                JobArtifact.description.contains(f"from artifact {source_artifact_id}"),
+            )
+            .order_by(JobArtifact.created_at.desc())
+        )
+
+        artifacts = result.scalars().all()
+        return [StoredArtifact.from_model(a) for a in artifacts]
+
+    async def apply_doc_update(
+        self,
+        db: AsyncSession,
+        suggestion: DocUpdateSuggestion,
+        user_id: str | None = None,
+    ) -> StoredArtifact:
+        """Apply an approved document update suggestion.
+
+        Args:
+            db: Database session.
+            suggestion: The approved update suggestion.
+            user_id: Optional user ID for ownership.
+
+        Returns:
+            The updated stored artifact.
+        """
+        from sqlalchemy import select
+
+        from app.models.artifact import JobArtifact
+
+        # Get the existing artifact
+        result = await db.execute(
+            select(JobArtifact).where(JobArtifact.id == suggestion.existing_doc_artifact_id)
+        )
+        artifact = result.scalar_one_or_none()
+
+        if not artifact:
+            raise ValueError(f"Document artifact {suggestion.existing_doc_artifact_id} not found")
+
+        # Update the artifact with new content
+        size_bytes = len(suggestion.new_content.encode("utf-8"))
+
+        # Decide storage strategy based on size
+        if size_bytes <= self.storage.inline_threshold:
+            artifact.inline_data = suggestion.new_content
+            artifact.storage_path = None
+        else:
+            # Store as file
+            temp_filename = artifact.filename or f"doc_{artifact.id}.md"
+            storage_path = self.storage._get_storage_path(
+                artifact.job_id, artifact.id, temp_filename
+            )
+            content_bytes = suggestion.new_content.encode("utf-8")
+            storage_path = await self.storage._file_storage.store(
+                user_id or "system",
+                temp_filename,
+                content_bytes,
+                "text/markdown",
+            )
+            artifact.storage_path = storage_path
+            artifact.inline_data = None
+
+        artifact.size_bytes = size_bytes
+        artifact.updated_at = datetime.now(UTC)
+
+        await db.commit()
+        await db.refresh(artifact)
+
+        logger.info(
+            f"Applied doc update to artifact {artifact.id}: "
+            f"{suggestion.lines_added} additions, {suggestion.lines_removed} deletions"
+        )
+
+        return StoredArtifact.from_model(artifact)
 
     def _format_plan_as_markdown(
         self,
