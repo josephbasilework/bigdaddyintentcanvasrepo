@@ -514,7 +514,7 @@ class PerspectiveAnalysisRequest(BaseModel):
         default_factory=list,
         description="List of perspectives to analyze (e.g., skeptic, advocate, synthesizer)",
     )
-    input_refs: list[int] | None = Field(
+    input_refs: list[int | str | float] | None = Field(
         default=None,
         description="Optional list of node IDs to link critic nodes to",
     )
@@ -552,17 +552,18 @@ async def trigger_perspective_analysis(
     Raises:
         HTTPException: If enqueue fails (400) or server error (500)
     """
-    from app.jobs.client import enqueue_perspective_gather
+    from app.jobs.client import enqueue_perspective_analysis
 
-    # Default perspectives if none provided
+    # Default perspectives if none provided (FR-012)
     perspectives = request.perspectives or ["skeptic", "advocate", "synthesizer"]
 
     try:
-        job_id = await enqueue_perspective_gather(
-            query=request.topic,
+        job_id = await enqueue_perspective_analysis(
+            topic=request.topic,
             perspectives=perspectives,
             user_id=user_id,
             workspace_id=workspace_id,
+            input_refs=request.input_refs,
         )
 
         return PerspectiveAnalysisResponse(

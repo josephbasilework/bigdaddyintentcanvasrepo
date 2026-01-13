@@ -18,6 +18,7 @@ from app.jobs.worker import (
     deep_research_job,
     doc_generation_job,
     export_job,
+    perspective_analysis_job,
     perspective_gather_job,
     planner_job,
     synthesis_job,
@@ -31,6 +32,7 @@ logger = logging.getLogger(__name__)
 JOB_FUNCTIONS = {
     JobType.DEEP_RESEARCH: deep_research_job.__name__,
     JobType.PERSPECTIVE_GATHER: perspective_gather_job.__name__,
+    JobType.PERSPECTIVE_ANALYSIS: perspective_analysis_job.__name__,
     JobType.SYNTHESIS: synthesis_job.__name__,
     JobType.EXPORT: export_job.__name__,
     JobType.TRANSCRIPTION: transcription_job.__name__,
