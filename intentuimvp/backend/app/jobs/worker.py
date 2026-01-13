@@ -5,16 +5,25 @@ Jobs are defined as async functions that receive job context and parameters.
 """
 
 import asyncio
+import json
 import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.judge_agent import JudgeSynthesis, get_judge_agent
 from app.agents.research_agent import ResearchReport, get_research_agent
+from app.database import AsyncSessionLocal
 from app.gateway.client import GatewayClient, get_gateway_client
+from app.jobs.artifact_storage import (
+    ArtifactMetadata,
+    ArtifactType,
+    get_artifact_storage,
+)
 from app.jobs.base import JobResult, JobType, get_redis_settings
 from app.jobs.doc_generation import get_doc_service
 from app.jobs.progress import progress_tracker
@@ -22,8 +31,20 @@ from app.jobs.retry import (
     checkpoint_manager,
 )
 from app.models.audio_block import AudioBlockStatus
+from app.models.canvas import Canvas
+from app.models.edge import RelationType
+from app.models.node import Node, NodeType
+from app.repositories.canvas_repo import CanvasRepository
+from app.repositories.edge_repo import EdgeRepository
+from app.repositories.node_repo import NodeRepository
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_USER_ID = "default_user"
+REPORT_LABEL_LIMIT = 80
+REPORT_OFFSET_X = 240.0
+REPORT_OFFSET_Y = 140.0
+REPORT_OFFSET_Z = 1.0
 
 
 class JobCancelledError(Exception):
@@ -64,6 +85,189 @@ async def check_job_cancelled(job_id: str) -> None:
     if job and job.status == "cancelled":
         logger.info(f"[{job_id}] Job cancellation detected, stopping execution")
         raise JobCancelledError(f"Job {job_id} was cancelled")
+
+
+def _truncate_label(text: str, limit: int = REPORT_LABEL_LIMIT) -> str:
+    trimmed = text.strip()
+    if not trimmed:
+        return ""
+    if len(trimmed) <= limit:
+        return trimmed
+    suffix = "..."
+    return f"{trimmed[: max(0, limit - len(suffix))].rstrip()}{suffix}"
+
+
+def _build_report_label(query: str) -> str:
+    truncated_query = _truncate_label(query)
+    if truncated_query:
+        return f"Research Report: {truncated_query}"
+    return "Research Report"
+
+
+def _coerce_canvas_id(workspace_id: str | None) -> int | None:
+    if not workspace_id:
+        return None
+    try:
+        return int(workspace_id)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _resolve_canvas(
+    session: AsyncSession, user_id: str | None, workspace_id: str | None
+) -> Canvas:
+    canvas_repo = CanvasRepository(session)
+    canvas = None
+    canvas_id = _coerce_canvas_id(workspace_id)
+    if canvas_id is not None:
+        canvas = await canvas_repo.get_by_id(canvas_id)
+        if canvas is None:
+            logger.warning(
+                "Workspace ID did not match a canvas; falling back to user canvas",
+                extra={"workspace_id": workspace_id, "user_id": user_id},
+            )
+
+    effective_user_id = user_id or DEFAULT_USER_ID
+    if canvas is None:
+        canvases = await canvas_repo.get_by_user(effective_user_id, limit=1)
+        canvas = (
+            canvases[0]
+            if canvases
+            else await canvas_repo.create_canvas(
+                user_id=effective_user_id, name="default"
+            )
+        )
+
+    return canvas
+
+
+def _coerce_input_ref(ref: Any) -> int | None:
+    if isinstance(ref, bool):
+        return None
+    if isinstance(ref, int):
+        return ref
+    if isinstance(ref, float):
+        if ref.is_integer():
+            return int(ref)
+        return None
+    if isinstance(ref, str):
+        trimmed = ref.strip()
+        if not trimmed:
+            return None
+        try:
+            return int(trimmed)
+        except ValueError:
+            return None
+    return None
+
+
+async def _load_input_nodes(
+    session: AsyncSession, input_refs: list[int] | list[str] | None, canvas_id: int
+) -> list[Node]:
+    if not input_refs:
+        return []
+
+    seen: set[int] = set()
+    unique_ids: list[int] = []
+    for ref in input_refs:
+        ref_id = _coerce_input_ref(ref)
+        if ref_id is None or ref_id in seen:
+            continue
+        seen.add(ref_id)
+        unique_ids.append(ref_id)
+
+    if not unique_ids:
+        return []
+
+    stmt = select(Node).where(Node.id.in_(unique_ids), Node.canvas_id == canvas_id)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+def _compute_report_position(input_nodes: list[Node]) -> dict[str, float]:
+    if not input_nodes:
+        return {"x": 0.0, "y": 0.0, "z": 0.0}
+
+    positions = [node.get_position() for node in input_nodes]
+    avg_x = sum(pos.get("x", 0.0) for pos in positions) / len(positions)
+    avg_y = sum(pos.get("y", 0.0) for pos in positions) / len(positions)
+    max_z = max(pos.get("z", 0.0) for pos in positions)
+    return {
+        "x": avg_x + REPORT_OFFSET_X,
+        "y": avg_y + REPORT_OFFSET_Y,
+        "z": max_z + REPORT_OFFSET_Z,
+    }
+
+
+async def _store_research_report(
+    *,
+    job_id: str,
+    user_id: str | None,
+    workspace_id: str | None,
+    query: str,
+    result_data: dict[str, Any],
+    input_refs: list[int] | None,
+    judge_synthesis: JudgeSynthesis,
+) -> tuple[int, int, list[int], int]:
+    async with AsyncSessionLocal() as session:
+        canvas = await _resolve_canvas(session, user_id, workspace_id)
+        effective_user_id = user_id or DEFAULT_USER_ID
+        report_label = _build_report_label(query)
+
+        metadata = ArtifactMetadata(
+            artifact_type=ArtifactType.RESEARCH_REPORT,
+            artifact_name=report_label,
+            description=f"Deep research report for '{_truncate_label(query)}'",
+            filename=f"research_report_{job_id}.json",
+            mime_type="application/json",
+        )
+        storage = get_artifact_storage()
+        stored = await storage.store_artifact(
+            session,
+            job_id=job_id,
+            metadata=metadata,
+            content=json.dumps(result_data, ensure_ascii=True, indent=2),
+            user_id=effective_user_id,
+            workspace_id=str(canvas.id),
+        )
+
+        input_nodes = await _load_input_nodes(session, input_refs, canvas.id)
+        position = _compute_report_position(input_nodes)
+        node_metadata = {
+            "artifactId": stored.id,
+            "artifactType": stored.artifact_type,
+            "jobId": job_id,
+            "jobType": JobType.DEEP_RESEARCH.value,
+            "query": query,
+            "summary": judge_synthesis.executive_summary,
+            "workspaceId": str(canvas.id),
+            "sourceNodeIds": [node.id for node in input_nodes],
+            "reportGeneratedAt": datetime.now(UTC).isoformat(),
+        }
+
+        node_repo = NodeRepository(session)
+        node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label=report_label,
+            type=NodeType.DOCUMENT,
+            position=position,
+            node_metadata=node_metadata,
+        )
+
+        edge_ids: list[int] = []
+        if input_nodes:
+            edge_repo = EdgeRepository(session)
+            for input_node in input_nodes:
+                edge = await edge_repo.create_edge(
+                    canvas_id=canvas.id,
+                    from_node_id=node.id,
+                    to_node_id=input_node.id,
+                    relation_type=RelationType.DERIVED_FROM,
+                    metadata={"jobId": job_id, "artifactId": stored.id},
+                )
+                edge_ids.append(edge.id)
+
+    return stored.id, node.id, edge_ids, canvas.id
 
 
 async def _stream_periodic_progress(
@@ -237,7 +441,12 @@ Focus on the USER from an experiential standpoint.""",
 # These are the actual async functions that the worker will execute
 
 
-async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> JobResult:
+async def deep_research_job(
+    ctx: dict[str, Any],
+    query: str,
+    depth: int = 3,
+    input_refs: list[int] | None = None,
+) -> JobResult:
     """Execute a deep research job across multiple perspectives.
 
     This job orchestrates multi-perspective research by:
@@ -249,13 +458,15 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
         ctx: ARQ execution context (contains job_id, etc.)
         query: Research query to investigate
         depth: Depth of research (1-5, default 3)
+        input_refs: Optional list of node IDs used as inputs for linking
 
     Returns:
         JobResult with research findings or error.
     """
     job_id = ctx.get("job_id", str(uuid.uuid4()))
     user_id = ctx.get("user_id")
-    workspace_id = ctx.get("workspace_id")
+    workspace_id_raw = ctx.get("workspace_id")
+    workspace_id = str(workspace_id_raw) if workspace_id_raw is not None else None
 
     # Create job in progress tracker
     await progress_tracker.create_job(
@@ -263,7 +474,7 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
         job_type=JobType.DEEP_RESEARCH,
         user_id=user_id,
         workspace_id=workspace_id,
-        parameters={"query": query, "depth": depth},
+        parameters={"query": query, "depth": depth, "input_refs": input_refs},
     )
 
     logger.info(f"[{job_id}] Starting deep research job: query='{query}', depth={depth}")
@@ -476,6 +687,7 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
         result_data = {
             "query": query,
             "depth": depth,
+            "input_refs": input_refs,
             "perspectives": perspective_results,
             "web_research": research_report.model_dump(),
             "judge_synthesis": judge_synthesis.model_dump(),
@@ -483,6 +695,27 @@ async def deep_research_job(ctx: dict[str, Any], query: str, depth: int = 3) -> 
             "timestamp": datetime.now(UTC).isoformat(),
             "job_id": job_id,
         }
+
+        report_artifact_id, report_node_id, report_edge_ids, report_canvas_id = (
+            await _store_research_report(
+                job_id=job_id,
+                user_id=user_id,
+                workspace_id=workspace_id,
+                query=query,
+                result_data=result_data,
+                input_refs=input_refs,
+                judge_synthesis=judge_synthesis,
+            )
+        )
+
+        result_data.update(
+            {
+                "report_artifact_id": report_artifact_id,
+                "report_node_id": report_node_id,
+                "report_edge_ids": report_edge_ids,
+                "report_canvas_id": report_canvas_id,
+            }
+        )
 
         logger.info(f"[{job_id}] Deep research completed successfully")
 

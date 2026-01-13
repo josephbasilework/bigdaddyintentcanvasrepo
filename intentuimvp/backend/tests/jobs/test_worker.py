@@ -7,8 +7,12 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import pytest_asyncio
 from pydantic import ValidationError
+from sqlalchemy import select
 
+from app.database import AsyncSessionLocal, async_engine
+from app.jobs.base import JobType
 from app.jobs.worker import (
     DEFAULT_PERSPECTIVES,
     PerspectiveAgent,
@@ -19,6 +23,12 @@ from app.jobs.worker import (
     synthesis_job,
     transcription_job,
 )
+from app.models.artifact import ArtifactType, JobArtifact
+from app.models.edge import RelationType
+from app.models.node import NodeType
+from app.repositories.canvas_repo import CanvasRepository
+from app.repositories.edge_repo import EdgeRepository
+from app.repositories.node_repo import NodeRepository
 
 
 class TestPerspectiveAgent:
@@ -274,6 +284,105 @@ class TestDeepResearchJob:
             assert result.success is False
             assert result.error is not None
             assert "Gateway error" in result.error
+
+    async def test_deep_research_job_creates_report_node_and_artifact(self) -> None:
+        """Should store report artifact and link a report node to inputs."""
+        async with AsyncSessionLocal() as session:
+            canvas_repo = CanvasRepository(session)
+            canvas = await canvas_repo.create_canvas(user_id="report-user", name="default")
+            canvas_id = canvas.id
+
+            node_repo = NodeRepository(session)
+            node_a = await node_repo.create_node(
+                canvas_id=canvas.id,
+                label="Source A",
+                type=NodeType.TEXT,
+                position={"x": 10, "y": 20, "z": 0},
+                node_metadata=None,
+            )
+            node_b = await node_repo.create_node(
+                canvas_id=canvas.id,
+                label="Source B",
+                type=NodeType.TEXT,
+                position={"x": 40, "y": 60, "z": 0},
+                node_metadata=None,
+            )
+            input_ids = [node_a.id, node_b.id]
+
+        ctx = {
+            "job_id": "test-job-report",
+            "user_id": "report-user",
+            "workspace_id": str(canvas_id),
+        }
+
+        with patch("app.jobs.worker.get_gateway_client") as mock_gateway, patch(
+            "app.jobs.worker.get_research_agent"
+        ) as mock_research_agent:
+
+            mock_gateway_instance = MagicMock()
+            mock_gateway_instance.generate = AsyncMock(
+                return_value={
+                    "choices": [
+                        {
+                            "message": {
+                                "content": '{"executive_summary": "Test", "key_insights": [], "recommendations": [], "confidence": 0.8, "confidence_rationale": "Test", "risks": [], "open_questions": []}'
+                            }
+                        }
+                    ]
+                }
+            )
+            mock_gateway.return_value = mock_gateway_instance
+            mock_research_agent.return_value = MagicMock()
+
+            mock_report = MagicMock()
+            mock_report.summary = "Test summary"
+            mock_report.key_points = ["Point 1", "Point 2"]
+            mock_report.detailed_findings = "Detailed findings"
+            mock_report.model_dump.return_value = {
+                "summary": "Test summary",
+                "key_points": ["Point 1", "Point 2"],
+                "detailed_findings": "Detailed findings",
+            }
+            mock_research_agent.return_value.research = AsyncMock(return_value=mock_report)
+
+            result = await deep_research_job(
+                ctx,
+                query="Test query",
+                depth=2,
+                input_refs=input_ids,
+            )
+
+            assert result.success is True
+            assert result.data is not None
+
+            report_artifact_id = result.data["report_artifact_id"]
+            report_node_id = result.data["report_node_id"]
+            report_edge_ids = result.data["report_edge_ids"]
+
+        async with AsyncSessionLocal() as session:
+            node_repo = NodeRepository(session)
+            report_node = await node_repo.get_by_id(report_node_id)
+            assert report_node is not None
+            assert report_node.type == NodeType.DOCUMENT
+
+            metadata = report_node.get_metadata()
+            assert metadata["artifactId"] == report_artifact_id
+            assert metadata["jobId"] == ctx["job_id"]
+            assert metadata["jobType"] == JobType.DEEP_RESEARCH.value
+
+            edge_repo = EdgeRepository(session)
+            edges = await edge_repo.get_by_node(report_node_id)
+            assert {edge.to_node_id for edge in edges} == set(input_ids)
+            assert all(edge.relation_type == RelationType.DERIVED_FROM for edge in edges)
+            assert {edge.id for edge in edges} == set(report_edge_ids)
+
+            artifact_result = await session.execute(
+                select(JobArtifact).where(JobArtifact.id == report_artifact_id)
+            )
+            artifact = artifact_result.scalar_one_or_none()
+            assert artifact is not None
+            assert artifact.artifact_type == ArtifactType.RESEARCH_REPORT.value
+            assert artifact.workspace_id == str(canvas_id)
 
 
 @pytest.mark.asyncio
@@ -687,3 +796,10 @@ class TestPlannerJob:
         assert result.success is False
         assert result.data is not None
         assert result.data["success"] is False
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _dispose_async_engine():
+    """Dispose the async engine to avoid lingering background threads."""
+    yield
+    await async_engine.dispose()
