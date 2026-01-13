@@ -39,6 +39,35 @@ const buildDag = (): DAGData => ({
 });
 
 describe("CalendarSyncDialog", () => {
+  it("renders nothing when closed", () => {
+    render(
+      <CalendarSyncDialog
+        isOpen={false}
+        dag={buildDag()}
+        onCancel={vi.fn()}
+        onConfirm={vi.fn().mockResolvedValue({ success: true })}
+      />
+    );
+
+    expect(
+      screen.queryByRole("dialog", { name: /review suggested events/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("defaults to open when isOpen is omitted", () => {
+    render(
+      <CalendarSyncDialog
+        dag={buildDag()}
+        onCancel={vi.fn()}
+        onConfirm={vi.fn().mockResolvedValue({ success: true })}
+      />
+    );
+
+    expect(
+      screen.getByRole("dialog", { name: /review suggested events/i })
+    ).toBeInTheDocument();
+  });
+
   it("preselects eligible suggestions and disables incomplete ones", () => {
     render(
       <CalendarSyncDialog

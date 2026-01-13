@@ -21,7 +21,7 @@ export type CalendarSyncResult = {
 };
 
 type CalendarSyncDialogProps = {
-  isOpen: boolean;
+  isOpen?: boolean;
   dag: DAGData;
   onCancel: () => void;
   onConfirm: (selectedCandidates: CalendarSyncCandidate[]) => Promise<CalendarSyncResult>;
@@ -459,7 +459,7 @@ const CalendarSyncDialogContent = ({
 };
 
 export function CalendarSyncDialog({
-  isOpen,
+  isOpen = true,
   dag,
   onCancel,
   onConfirm,
