@@ -162,7 +162,9 @@ def _coerce_input_ref(ref: Any) -> int | None:
 
 
 async def _load_input_nodes(
-    session: AsyncSession, input_refs: list[int] | list[str] | None, canvas_id: int
+    session: AsyncSession,
+    input_refs: list[int | str | float] | None,
+    canvas_id: int,
 ) -> list[Node]:
     if not input_refs:
         return []
@@ -206,7 +208,7 @@ async def _store_research_report(
     workspace_id: str | None,
     query: str,
     result_data: dict[str, Any],
-    input_refs: list[int] | None,
+    input_refs: list[int | str | float] | None,
     judge_synthesis: JudgeSynthesis,
 ) -> tuple[int, int, list[int], int]:
     async with AsyncSessionLocal() as session:
@@ -445,7 +447,7 @@ async def deep_research_job(
     ctx: dict[str, Any],
     query: str,
     depth: int = 3,
-    input_refs: list[int] | None = None,
+    input_refs: list[int | str | float] | None = None,
 ) -> JobResult:
     """Execute a deep research job across multiple perspectives.
 

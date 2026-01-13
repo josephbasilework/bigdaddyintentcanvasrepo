@@ -1,6 +1,11 @@
 "use client";
 
 import { useMemo } from "react";
+import type {
+  DashboardSubscriptionSnapshot,
+  DashboardSubscriptionTarget,
+} from "../../agui/protocol";
+import { useDashboardStream } from "../../hooks/useDashboardStream";
 import { useCanvasStore } from "../../state/canvasStore";
 
 interface DashboardNodeProps {
@@ -21,12 +26,58 @@ const countBy = <T,>(items: T[], getKey: (item: T) => string): CountMap =>
     return acc;
   }, {});
 
+const STREAM_TARGETS: Array<{
+  key: DashboardSubscriptionTarget;
+  label: string;
+  accent: string;
+}> = [
+  { key: "workspace_state", label: "Workspace", accent: "#94a3b8" },
+  { key: "node", label: "Node Events", accent: "#38bdf8" },
+  { key: "edge", label: "Edge Events", accent: "#facc15" },
+  { key: "job", label: "Jobs", accent: "#f97316" },
+  { key: "artifact", label: "Artifacts", accent: "#34d399" },
+  { key: "tool_output", label: "Tool Output", accent: "#22d3ee" },
+];
+
+const resolveSubscriptionTarget = (subscription: DashboardSubscriptionSnapshot): string => {
+  const target =
+    subscription.target ??
+    subscription.subscriptionTarget ??
+    subscription.subscription_target;
+  if (typeof target === "string" && target.trim().length > 0) {
+    return target;
+  }
+  return "unknown";
+};
+
+const resolveSubscriptionSource = (subscription: DashboardSubscriptionSnapshot): string | null => {
+  const source = subscription.sourceId ?? subscription.source_id;
+  if (typeof source === "string" && source.trim().length > 0) {
+    return source;
+  }
+  return null;
+};
+
 export function DashboardNode({ nodeId }: DashboardNodeProps) {
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
   const documents = useCanvasStore((state) => state.documents);
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
+  const canvasId = useCanvasStore((state) => state.canvasId);
+
+  const dashboardNumericId = useMemo(() => {
+    if (!nodeId) return null;
+    const parsed = Number(nodeId);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [nodeId]);
+
+  const streamingEnabled = dashboardNumericId !== null && canvasId !== null;
+  const { stats, isConnected, lastUpdate, recentChanges } = useDashboardStream(
+    dashboardNumericId,
+    canvasId,
+    streamingEnabled
+  );
 
   const selectionCount =
     selectedNodeIds.length > 0
@@ -79,6 +130,65 @@ export function DashboardNode({ nodeId }: DashboardNodeProps) {
     }),
     [dagStatusCounts, dagTasks.length]
   );
+
+  const streamCountEntries = useMemo(
+    () =>
+      STREAM_TARGETS.map(({ key, label, accent }) => ({
+        key,
+        label,
+        accent,
+        value: stats.entityCounts[key] ?? 0,
+      })),
+    [stats.entityCounts]
+  );
+
+  const recentSignals = useMemo(() => recentChanges.slice(0, 4), [recentChanges]);
+
+  const subscriptionBadges = useMemo(
+    () =>
+      stats.activeSubscriptions.map((subscription, index) => {
+        const target = resolveSubscriptionTarget(subscription);
+        const sourceId = resolveSubscriptionSource(subscription);
+        const label = sourceId
+          ? `${formatLabel(target)} · ${sourceId}`
+          : formatLabel(target);
+        const idPart = subscription.id ? String(subscription.id) : null;
+        const key = idPart ? `subscription-${idPart}` : `${target}-${sourceId ?? "all"}-${index}`;
+        return { key, label };
+      }),
+    [stats.activeSubscriptions]
+  );
+
+  const streamStatusLabel = streamingEnabled
+    ? isConnected
+      ? "Connected"
+      : "Connecting"
+    : "Offline";
+  const streamStatusTone = streamingEnabled
+    ? isConnected
+      ? {
+          color: "#34d399",
+          background: "rgba(16, 185, 129, 0.15)",
+          border: "rgba(52, 211, 153, 0.4)",
+        }
+      : {
+          color: "#fbbf24",
+          background: "rgba(245, 158, 11, 0.15)",
+          border: "rgba(251, 191, 36, 0.4)",
+        }
+    : {
+        color: "#94a3b8",
+        background: "rgba(148, 163, 184, 0.12)",
+        border: "rgba(148, 163, 184, 0.35)",
+      };
+  const streamStatusDetail = streamingEnabled
+    ? isConnected
+      ? "Subscribed to backend updates."
+      : "Awaiting subscription confirmation."
+    : canvasId === null
+      ? "Save the workspace to enable streaming."
+      : "Sync the dashboard to the backend to enable streaming.";
+  const lastUpdateLabel = lastUpdate ? lastUpdate.toLocaleTimeString() : "No updates yet";
 
   return (
     <div
@@ -135,6 +245,106 @@ export function DashboardNode({ nodeId }: DashboardNodeProps) {
             <div style={{ fontSize: "18px", fontWeight: 600 }}>{item.value}</div>
           </div>
         ))}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: "12px", color: "#a0aec0" }}>Streaming Signals</div>
+          <div
+            style={{
+              fontSize: "11px",
+              color: streamStatusTone.color,
+              backgroundColor: streamStatusTone.background,
+              border: `1px solid ${streamStatusTone.border}`,
+              padding: "2px 8px",
+              borderRadius: "999px",
+            }}
+          >
+            {streamStatusLabel}
+          </div>
+        </div>
+        <div style={{ fontSize: "11px", color: "#64748b" }}>{streamStatusDetail}</div>
+        <div style={{ fontSize: "10px", color: "#64748b" }}>Last update: {lastUpdateLabel}</div>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: "6px",
+          }}
+        >
+          {streamCountEntries.map((entry) => (
+            <div
+              key={entry.key}
+              style={{
+                backgroundColor: "rgba(15, 23, 42, 0.5)",
+                border: `1px solid ${entry.accent}55`,
+                borderRadius: "8px",
+                padding: "6px 8px",
+              }}
+            >
+              <div style={{ fontSize: "10px", color: entry.accent }}>{entry.label}</div>
+              <div style={{ fontSize: "14px", fontWeight: 600 }}>{entry.value}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <div style={{ fontSize: "12px", color: "#a0aec0", marginBottom: "6px" }}>
+          Active Subscriptions
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "6px" }}>
+          {subscriptionBadges.length === 0 ? (
+            <span style={{ fontSize: "12px", color: "#64748b" }}>No subscriptions yet</span>
+          ) : (
+            subscriptionBadges.map((badge) => (
+              <span
+                key={badge.key}
+                style={{
+                  fontSize: "11px",
+                  padding: "3px 8px",
+                  borderRadius: "999px",
+                  backgroundColor: "rgba(30, 41, 59, 0.7)",
+                  border: "1px solid rgba(148, 163, 184, 0.25)",
+                  color: "#e2e8f0",
+                }}
+              >
+                {badge.label}
+              </span>
+            ))
+          )}
+        </div>
+      </div>
+
+      <div>
+        <div style={{ fontSize: "12px", color: "#a0aec0", marginBottom: "6px" }}>
+          Recent Signals
+        </div>
+        {recentSignals.length === 0 ? (
+          <div style={{ fontSize: "12px", color: "#64748b" }}>No updates yet</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+            {recentSignals.map((signal, index) => (
+              <div
+                key={`${signal.target}-${signal.timestamp.toISOString()}-${index}`}
+                style={{
+                  backgroundColor: "rgba(15, 23, 42, 0.55)",
+                  border: "1px solid rgba(148, 163, 184, 0.2)",
+                  borderRadius: "8px",
+                  padding: "6px 8px",
+                }}
+              >
+                <div style={{ fontSize: "11px", color: "#e2e8f0" }}>
+                  {formatLabel(signal.target)} · {formatLabel(signal.changeType)}
+                </div>
+                <div style={{ fontSize: "10px", color: "#64748b" }}>
+                  {signal.sourceId ? `Source: ${signal.sourceId}` : "Source: workspace"} ·{" "}
+                  {signal.timestamp.toLocaleTimeString()}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div>

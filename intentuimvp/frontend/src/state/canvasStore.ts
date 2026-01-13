@@ -16,7 +16,7 @@ export interface GraphNodeAnnotation {
 // Types for canvas entities
 export interface CanvasNode {
   id: string;
-  type: 'text' | 'document' | 'audio' | 'graph' | 'plan' | 'dag' | 'dashboard';
+  type: 'text' | 'document' | 'audio' | 'graph' | 'plan' | 'dag' | 'dashboard' | 'job';
   x: number;
   y: number;
   z: number;
@@ -29,6 +29,30 @@ export interface CanvasNode {
   planData?: PlanData;
   /** DAG-specific data (only for type='dag') */
   dagData?: DAGData;
+  /** Job-specific data (only for type='job') */
+  jobData?: JobData;
+}
+
+/**
+ * Job metadata for job-type nodes.
+ */
+export interface JobData {
+  /** Job ID from the backend */
+  jobId: string;
+  /** Job type (deep_research, perspective_gather, synthesis, etc.) */
+  jobType: string;
+  /** Job status (queued, in_progress, complete, failed, cancelled) */
+  status: string;
+  /** Progress percentage (0-100) */
+  progressPercent: number;
+  /** Current step description */
+  currentStep?: string;
+  /** Step number */
+  stepNumber?: number;
+  /** Total steps */
+  stepsTotal?: number;
+  /** Additional job data */
+  data?: Record<string, unknown>;
 }
 
 /**
@@ -110,6 +134,8 @@ interface CanvasSnapshot {
 
 // Store state interface
 interface CanvasState {
+  canvasId: number | null;
+  canvasName: string | null;
   // State
   nodes: CanvasNode[];
   edges: CanvasEdge[];
@@ -123,6 +149,7 @@ interface CanvasState {
 
   // Actions
   addNode: (node: Omit<CanvasNode, 'id'>) => string;
+  setCanvasMeta: (meta: { id?: number | null; name?: string | null }) => void;
   removeNode: (nodeId: string) => void;
   removeNodes: (nodeIds: string[]) => void;
   updateNodePosition: (nodeId: string, x: number, y: number, z?: number) => void;
@@ -165,6 +192,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
 
   return {
     // Initial state
+    canvasId: null,
+    canvasName: null,
     nodes: [],
     edges: [],
     documents: [],
@@ -184,6 +213,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
         nodes: [...state.nodes, newNode],
       }));
       return id;
+    },
+
+    setCanvasMeta: (meta) => {
+      set((state) => ({
+        canvasId: meta.id === undefined ? state.canvasId : meta.id,
+        canvasName: meta.name === undefined ? state.canvasName : meta.name,
+      }));
     },
 
     // Remove a node from the canvas

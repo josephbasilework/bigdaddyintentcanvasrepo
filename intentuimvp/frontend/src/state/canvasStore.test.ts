@@ -7,6 +7,8 @@ describe('canvasStore', () => {
   beforeEach(() => {
     // Reset to initial state by creating a fresh store
     useCanvasStore.setState({
+      canvasId: null,
+      canvasName: null,
       nodes: [],
       edges: [],
       documents: [],

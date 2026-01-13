@@ -83,6 +83,8 @@ describe('workspace canvas', () => {
     draggableProps.current = null;
 
     useCanvasStore.setState({
+      canvasId: null,
+      canvasName: null,
       nodes: [],
       edges: [],
       documents: [],

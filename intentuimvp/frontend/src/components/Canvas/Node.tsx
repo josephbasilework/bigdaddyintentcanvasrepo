@@ -12,6 +12,7 @@ import { DependencyEditor, DependencyDisplay } from "./DependencyEditor";
 import { PlanNode } from "./PlanNode";
 import { DAGNode } from "./DAGNode";
 import { DashboardNode } from "./DashboardNode";
+import { JobNode } from "./JobNode";
 import { CalendarSyncDialog } from "./CalendarSyncDialog";
 import {
   CalendarApprovalDialog,
@@ -30,7 +31,6 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface NodeProps {
   node: CanvasNode;
-  canvasId?: number | null;
   onStartConnect?: (nodeId: string) => void;
   connectSourceNodeId?: string | null;
   onConnectTarget?: (nodeId: string) => void;
@@ -44,7 +44,6 @@ interface NodeProps {
  */
 export function Node({
   node,
-  canvasId,
   onStartConnect,
   connectSourceNodeId,
   onConnectTarget,
@@ -512,6 +511,13 @@ export function Node({
           border: isSelected ? "2px solid #38bdf8" : "1px solid #1e3a5f",
           boxShadow: isSelected ? "0 0 20px rgba(56, 189, 248, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
         };
+      case "job":
+        return {
+          ...baseStyle,
+          backgroundColor: "#1f1a2d",
+          border: isSelected ? "2px solid #f472b6" : "1px solid #4a2a4a",
+          boxShadow: isSelected ? "0 0 20px rgba(244, 114, 182, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
+        };
       default:
         return baseStyle;
     }
@@ -533,6 +539,8 @@ export function Node({
         return "🧩";
       case "dashboard":
         return "📈";
+      case "job":
+        return "⚙️";
       default:
         return "📦";
     }
@@ -654,7 +662,15 @@ export function Node({
           ) : node.type === "dag" && node.dagData ? (
             <DAGNode dag={node.dagData} />
           ) : node.type === "dashboard" ? (
-            <DashboardNode nodeId={node.id} canvasId={canvasId} />
+            <DashboardNode nodeId={node.id} />
+          ) : node.type === "job" && node.jobData ? (
+            <JobNode
+              id={node.id}
+              title={node.title}
+              jobData={node.jobData}
+              isSelected={isSelected}
+              onSelect={handleClick}
+            />
           ) : node.content && (
             <div style={{
               fontSize: "13px",

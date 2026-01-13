@@ -34,6 +34,8 @@ import {
   generateMessageId,
   getTimestamp,
   computeChecksum,
+  DashboardUpdatePayload,
+  DashboardSubscribedPayload,
 } from "./protocol";
 
 export interface AGUIClientState {
@@ -124,6 +126,17 @@ export class AGUIClient {
 
   // State sync status listeners
   private stateSyncListeners: Set<(status: StateSyncStatus) => void> = new Set();
+
+  // Dashboard streaming listeners
+  private dashboardUpdateListeners: Map<
+    number,
+    Set<(payload: DashboardUpdatePayload) => void>
+  > = new Map();
+  private dashboardSubscribedListeners: Map<
+    number,
+    Set<(payload: DashboardSubscribedPayload) => void>
+  > = new Map();
+  private activeDashboardSubscriptions: Set<number> = new Set();
 
   constructor(config: AGUIClientConfig) {
     this.config = {
@@ -779,6 +792,121 @@ export class AGUIClient {
     }
 
     return {};
+  }
+
+  // ============================================================================
+  // Dashboard Streaming Methods
+  // ============================================================================
+
+  /**
+   * Subscribe to dashboard updates for a specific dashboard node
+   */
+  subscribeToDashboard(dashboardNodeId: number, canvasId: number): void {
+    if (this.activeDashboardSubscriptions.has(dashboardNodeId)) {
+      return;
+    }
+    this.activeDashboardSubscriptions.add(dashboardNodeId);
+
+    // In production, this would send a WebSocket message to subscribe
+    // For now, we just track the subscription locally
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      const message = {
+        type: "dashboard.subscribe",
+        payload: {
+          dashboard_node_id: dashboardNodeId,
+          canvas_id: canvasId,
+          targets: ["workspace_state", "node", "edge", "job", "artifact", "tool_output"],
+        },
+      };
+      this.ws.send(JSON.stringify(message));
+    }
+  }
+
+  /**
+   * Unsubscribe from dashboard updates
+   */
+  unsubscribeFromDashboard(dashboardNodeId: number): void {
+    this.activeDashboardSubscriptions.delete(dashboardNodeId);
+    this.dashboardUpdateListeners.delete(dashboardNodeId);
+    this.dashboardSubscribedListeners.delete(dashboardNodeId);
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      const message = {
+        type: "dashboard.unsubscribe",
+        payload: { dashboard_node_id: dashboardNodeId },
+      };
+      this.ws.send(JSON.stringify(message));
+    }
+  }
+
+  /**
+   * Register a listener for dashboard update events
+   */
+  onDashboardUpdate(
+    dashboardNodeId: number,
+    handler: (payload: DashboardUpdatePayload) => void
+  ): () => void {
+    let listeners = this.dashboardUpdateListeners.get(dashboardNodeId);
+    if (!listeners) {
+      listeners = new Set();
+      this.dashboardUpdateListeners.set(dashboardNodeId, listeners);
+    }
+    listeners.add(handler);
+
+    return () => {
+      listeners?.delete(handler);
+      if (listeners?.size === 0) {
+        this.dashboardUpdateListeners.delete(dashboardNodeId);
+      }
+    };
+  }
+
+  /**
+   * Register a listener for dashboard subscribed events
+   */
+  onDashboardSubscribed(
+    dashboardNodeId: number,
+    handler: (payload: DashboardSubscribedPayload) => void
+  ): () => void {
+    let listeners = this.dashboardSubscribedListeners.get(dashboardNodeId);
+    if (!listeners) {
+      listeners = new Set();
+      this.dashboardSubscribedListeners.set(dashboardNodeId, listeners);
+    }
+    listeners.add(handler);
+
+    return () => {
+      listeners?.delete(handler);
+      if (listeners?.size === 0) {
+        this.dashboardSubscribedListeners.delete(dashboardNodeId);
+      }
+    };
+  }
+
+  /**
+   * Dispatch a dashboard update to registered listeners
+   */
+  dispatchDashboardUpdate(payload: DashboardUpdatePayload): void {
+    const listeners = this.dashboardUpdateListeners.get(payload.dashboard_node_id);
+    if (listeners) {
+      for (const handler of listeners) {
+        handler(payload);
+      }
+    }
+  }
+
+  /**
+   * Dispatch a dashboard subscribed event to registered listeners
+   */
+  dispatchDashboardSubscribed(payload: DashboardSubscribedPayload): void {
+    const listeners = this.dashboardSubscribedListeners.get(
+      payload.dashboard_node_id
+    );
+    if (listeners) {
+      for (const handler of listeners) {
+        handler(payload);
+      }
+    }
   }
 }
 

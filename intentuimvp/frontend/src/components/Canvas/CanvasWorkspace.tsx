@@ -48,6 +48,28 @@ const getString = (value: unknown): string | null =>
 const getNumber = (value: unknown, fallback: number): number =>
   typeof value === "number" && Number.isFinite(value) ? value : fallback;
 
+const getOptionalNumber = (value: unknown): number | null => {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const resolveCanvasMeta = (value: unknown): { id: number | null; name: string | null } => {
+  if (!isRecord(value)) {
+    return { id: null, name: null };
+  }
+
+  return {
+    id: getOptionalNumber(value.id ?? value.canvasId ?? value.canvas_id),
+    name: getString(value.name),
+  };
+};
+
 const DAG_STATUS_VALUES = new Set<DAGTask["status"]>([
   "pending",
   "in_progress",
@@ -362,6 +384,7 @@ export function CanvasWorkspace() {
     setEdges,
     addEdge,
     setSelectedNodes,
+    setCanvasMeta,
   } = useCanvasStore();
   const { saveStatus, saveError } = useAutoSave({
     debounceMs: 500,
@@ -608,9 +631,11 @@ export function CanvasWorkspace() {
 
         const data = await response.json();
         const normalized = normalizeWorkspaceState(data);
+        const meta = resolveCanvasMeta(data);
         if (normalized.hadCorruption) {
           console.warn("Workspace state contained invalid data; recovered what we could.");
         }
+        setCanvasMeta(meta);
         setNodes(normalized.nodes);
         setEdges(normalized.edges);
         if (isActive) {
@@ -619,6 +644,7 @@ export function CanvasWorkspace() {
       } catch (error) {
         console.error("Failed to load canvas state:", error);
         if (isActive) {
+          setCanvasMeta({ id: null, name: null });
           setLoadStatus("error");
         }
       }
@@ -628,7 +654,7 @@ export function CanvasWorkspace() {
     return () => {
       isActive = false;
     };
-  }, [setNodes, setEdges]);
+  }, [setCanvasMeta, setNodes, setEdges]);
 
   const handleCanvasMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (event.target !== event.currentTarget) return;

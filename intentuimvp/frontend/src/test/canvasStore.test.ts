@@ -10,6 +10,8 @@ describe('canvasStore', () => {
   beforeEach(() => {
     // Reset Zustand store state using setState
     useCanvasStore.setState({
+      canvasId: null,
+      canvasName: null,
       nodes: [],
       edges: [],
       documents: [],

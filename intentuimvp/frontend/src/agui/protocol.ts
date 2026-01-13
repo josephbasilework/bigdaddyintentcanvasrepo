@@ -583,6 +583,43 @@ export interface AGUIClientConfig {
 }
 
 // ============================================================================
+// Dashboard Streaming Types
+// ============================================================================
+
+export type DashboardSubscriptionTarget =
+  | 'workspace_state'
+  | 'node'
+  | 'edge'
+  | 'job'
+  | 'artifact'
+  | 'tool_output';
+
+export type DashboardChangeType = 'created' | 'updated' | 'deleted';
+
+export interface DashboardSubscriptionSnapshot {
+  target?: DashboardSubscriptionTarget;
+  subscriptionTarget?: DashboardSubscriptionTarget;
+  subscription_target?: DashboardSubscriptionTarget;
+  sourceId?: string;
+  source_id?: string;
+  id?: number | string;
+}
+
+export interface DashboardUpdatePayload {
+  dashboard_node_id: number;
+  subscription_target: DashboardSubscriptionTarget;
+  source_id: string | null;
+  change_type: DashboardChangeType;
+  data: Record<string, unknown>;
+  timestamp: string;
+}
+
+export interface DashboardSubscribedPayload {
+  dashboard_node_id: number;
+  subscriptions: DashboardSubscriptionSnapshot[];
+}
+
+// ============================================================================
 // Protocol Version
 // ============================================================================
 
