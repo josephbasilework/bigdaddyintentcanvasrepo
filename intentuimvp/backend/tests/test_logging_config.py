@@ -9,11 +9,13 @@ Tests the logging_config module which implements:
 - NFR-OBS-005: Structured error logging with correlation IDs
 """
 
+import json
 import logging
 
 from app.logging_config import (
     JsonFormatter,
     LogHelper,
+    RedactingFormatter,
     clear_correlation_id,
     configure_logging,
     create_log_helper,
@@ -230,3 +232,241 @@ class TestCreateLogHelper:
         helper = create_log_helper(logger, "test_component")
 
         assert isinstance(helper, LogHelper)
+
+
+class TestSecretRedaction:
+    """Tests for secret redaction in log formatters.
+
+    Implements FR-022 AC: "Given log inspected, When secrets searched, Then no secrets present"
+
+    NOTE: Test strings are constructed programmatically to avoid triggering GitHub
+    secret scanning on the test data itself.
+    """
+
+    def test_json_formatter_redacts_openai_api_key(self):
+        """JsonFormatter should redact OpenAI API keys (sk-*)."""
+        formatter = JsonFormatter()
+        # Construct test key to avoid secret scanning
+        test_key = "sk-" + "abc123def456789012345678901234567890"
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg=f"API key: {test_key}",
+            args=(),
+            exc_info=None,
+        )
+        json_str = formatter.format(log_record)
+        result = json.loads(json_str)
+
+        assert result["message"] == "API key: [REDACTED]"
+        assert test_key not in json_str
+
+    def test_json_formatter_redacts_anthropic_api_key(self):
+        """JsonFormatter should redact Anthropic API keys (sk-ant-*)."""
+        formatter = JsonFormatter()
+        # Construct test key to avoid secret scanning
+        test_key = "sk-ant-" + "api123" + "-" + "4567890123456789012345678901234567890"
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg=f"Using key: {test_key}",
+            args=(),
+            exc_info=None,
+        )
+        json_str = formatter.format(log_record)
+        result = json.loads(json_str)
+
+        assert result["message"] == "Using key: [REDACTED]"
+
+    def test_json_formatter_redacts_email_addresses(self):
+        """JsonFormatter should redact email addresses."""
+        formatter = JsonFormatter()
+        # Construct email to avoid secret scanning
+        email = "user" + "@" + "example.com"
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg=f"User email: {email}",
+            args=(),
+            exc_info=None,
+        )
+        json_str = formatter.format(log_record)
+        result = json.loads(json_str)
+
+        assert result["message"] == "User email: [REDACTED]"
+
+    def test_json_formatter_redacts_phone_numbers(self):
+        """JsonFormatter should redact phone numbers."""
+        formatter = JsonFormatter()
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="Call us at 555-123-4567",
+            args=(),
+            exc_info=None,
+        )
+        json_str = formatter.format(log_record)
+        result = json.loads(json_str)
+
+        assert result["message"] == "Call us at [REDACTED]"
+
+    def test_json_formatter_redacts_credit_cards(self):
+        """JsonFormatter should redact credit card numbers."""
+        formatter = JsonFormatter()
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="Card: 4111-1111-1111-1111",
+            args=(),
+            exc_info=None,
+        )
+        json_str = formatter.format(log_record)
+        result = json.loads(json_str)
+
+        assert result["message"] == "Card: [REDACTED]"
+
+    def test_json_formatter_redacts_aws_access_keys(self):
+        """JsonFormatter should redact AWS Access Keys."""
+        formatter = JsonFormatter()
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="AWS key: AKIAIOSFODNN7EXAMPLE",
+            args=(),
+            exc_info=None,
+        )
+        json_str = formatter.format(log_record)
+        result = json.loads(json_str)
+
+        assert result["message"] == "AWS key: [REDACTED]"
+
+    def test_json_formatter_redacts_github_tokens(self):
+        """JsonFormatter should redact GitHub personal access tokens."""
+        formatter = JsonFormatter()
+        # Construct test token to avoid secret scanning
+        test_token = "ghp_" + "1234567890" + "abcdefghijklmnopqrstuvwxyz" + "123456"
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg=f"GH token: {test_token}",
+            args=(),
+            exc_info=None,
+        )
+        json_str = formatter.format(log_record)
+        result = json.loads(json_str)
+
+        # Note: The "token: <value>" pattern is matched as a whole
+        assert result["message"] == "GH [REDACTED]"
+
+    def test_json_formatter_redacts_slack_tokens(self):
+        """JsonFormatter should redact Slack tokens."""
+        formatter = JsonFormatter()
+        # Construct test token to avoid secret scanning
+        prefix = "xoxb-"
+        mid = "1234567890"
+        suffix = "-" + "1234567890123" + "-" + "AbCdEfGhIjKlMnOpQrStUv"
+        test_token = prefix + mid + suffix
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg=f"Slack bot token: {test_token}",
+            args=(),
+            exc_info=None,
+        )
+        json_str = formatter.format(log_record)
+        result = json.loads(json_str)
+
+        # Note: The "token: <value>" pattern is matched as a whole
+        assert result["message"] == "Slack bot [REDACTED]"
+
+    def test_json_formatter_redacts_generic_secrets(self):
+        """JsonFormatter should redact generic secret patterns."""
+        formatter = JsonFormatter()
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="Secret: secret=abc123def456789012345",
+            args=(),
+            exc_info=None,
+        )
+        json_str = formatter.format(log_record)
+        result = json.loads(json_str)
+
+        assert result["message"] == "Secret: [REDACTED]"
+
+    def test_json_formatter_redacts_uuids(self):
+        """JsonFormatter should redact UUID patterns."""
+        formatter = JsonFormatter()
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="UUID: 550e8400-e29b-41d4-a716-446655440000",
+            args=(),
+            exc_info=None,
+        )
+        json_str = formatter.format(log_record)
+        result = json.loads(json_str)
+
+        assert result["message"] == "UUID: [REDACTED]"
+
+    def test_json_formatter_preserves_safe_content(self):
+        """JsonFormatter should preserve content without secrets."""
+        formatter = JsonFormatter()
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg="Processing request for user john_doe",
+            args=(),
+            exc_info=None,
+        )
+        json_str = formatter.format(log_record)
+        result = json.loads(json_str)
+
+        assert result["message"] == "Processing request for user john_doe"
+
+    def test_redacting_formatter_redacts_secrets(self):
+        """RedactingFormatter should redact secrets in text format."""
+        formatter = RedactingFormatter(
+            fmt="%(asctime)s [%(levelname)8s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        # Construct test values to avoid secret scanning
+        test_key = "sk-" + "abc123def456789012345678901234567890"
+        email = "user" + "@" + "example.com"
+        log_record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="test.py",
+            lineno=1,
+            msg=f"API key: {test_key}, email: {email}",
+            args=(),
+            exc_info=None,
+        )
+
+        formatted = formatter.format(log_record)
+
+        assert "[REDACTED]" in formatted
+        assert test_key not in formatted
+        assert email not in formatted

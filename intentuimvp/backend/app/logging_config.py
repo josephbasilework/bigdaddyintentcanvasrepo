@@ -17,6 +17,7 @@ Logging standards (NFR-OBS):
 """
 
 import logging
+import re
 import sys
 import uuid
 from contextvars import ContextVar
@@ -60,18 +61,101 @@ def clear_correlation_id() -> None:
 
 
 class JsonFormatter(jsonlogger.JsonFormatter):
-    """Custom JSON formatter with additional context fields.
+    """Custom JSON formatter with additional context fields and secret redaction.
 
     Formats log records as JSON with structured fields including:
     - timestamp: ISO 8601 format with UTC timezone
     - level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
     - logger: Logger name
-    - message: Log message
+    - message: Log message (with secrets redacted)
     - correlation_id: Request correlation ID for trace reconstruction
     - module: Python module where log was emitted
     - function: Function name where log was emitted
     - line: Line number where log was emitted
+
+    Secret redaction patterns:
+    - API keys (sk-*, sk-ant-*, Pydantic Gateway keys)
+    - Generic secret/token/password patterns
+    - AWS Access Keys
+    - GitHub tokens (ghp_*)
+    - Slack tokens (xoxb-*, xoxp-*, xoxa-*)
+    - Email addresses
+    - Phone numbers
+    - Credit card numbers
     """
+
+    # Regex patterns for secret redaction
+    REDACT_PATTERNS: list[str] = [
+        # OpenAI-style API keys
+        r"sk-[a-zA-Z0-9]{20,}",
+        # Anthropic API keys
+        r"sk-ant-[a-zA-Z0-9_-]{20,}",
+        # Pydantic Gateway API keys
+        r"pydantic[-_]?gateway[-_]?(api[_-]?key|key)\s*[:=]\s*[\"']?[a-zA-Z0-9_-]{20,}",
+        # Generic secret/token/password patterns (common env var patterns)
+        r"(api[_-]?key|secret|token|password|auth)\s*[:=]\s*[\"']?[a-zA-Z0-9_-]{15,}",
+        # AWS Access Keys
+        r"(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}",
+        # GitHub personal access tokens
+        r"ghp_[a-zA-Z0-9]{36}",
+        r"gho_[a-zA-Z0-9]{36}",
+        r"ghu_[a-zA-Z0-9]{36}",
+        r"ghs_[a-zA-Z0-9]{36}",
+        r"ghr_[a-zA-Z0-9]{36}",
+        # Slack tokens
+        r"xox[baprs]-[a-zA-Z0-9-]{10,}",
+        # Email addresses
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
+        # Phone numbers (US format)
+        r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b",
+        # Credit card numbers
+        r"\b(?:\d{4}[- ]?){3}\d{4}\b",
+        # Generic UUID-style patterns that might be sensitive
+        r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    ]
+
+    def _redact_secrets(self, message: str) -> str:
+        """Redact sensitive information from a message string.
+
+        Args:
+            message: The message string to redact.
+
+        Returns:
+            The message with sensitive patterns replaced with [REDACTED].
+        """
+        redacted = message
+        for pattern in self.REDACT_PATTERNS:
+            redacted = re.sub(pattern, "[REDACTED]", redacted, flags=re.IGNORECASE)
+        return redacted
+
+    def _redact_dict_values(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Recursively redact sensitive values in a dictionary.
+
+        Args:
+            data: Dictionary to redact.
+
+        Returns:
+            Dictionary with sensitive values redacted.
+        """
+        redacted = {}
+        for key, value in data.items():
+            # Skip redaction for known safe keys
+            if key in {"timestamp", "level", "logger", "module", "function", "line"}:
+                redacted[key] = value
+            elif isinstance(value, str):
+                redacted[key] = self._redact_secrets(value)
+            elif isinstance(value, dict):
+                redacted[key] = self._redact_dict_values(value)
+            elif isinstance(value, list):
+                redacted[key] = [
+                    self._redact_dict_values(item) if isinstance(item, dict)
+                    else self._redact_secrets(item) if isinstance(item, str)
+                    else item
+                    for item in value
+                ]
+            else:
+                redacted[key] = value
+        return redacted
 
     def add_fields(
         self,
@@ -95,23 +179,64 @@ class JsonFormatter(jsonlogger.JsonFormatter):
         log_record["function"] = record.funcName
         log_record["line"] = record.lineno
 
-        # Add exception info if present
+        # Redact all string values in the log record (except known safe keys)
+        for key, value in list(log_record.items()):
+            if key in {"timestamp", "level", "logger", "module", "function", "line"}:
+                continue
+            elif isinstance(value, str):
+                log_record[key] = self._redact_secrets(value)
+            elif isinstance(value, dict):
+                log_record[key] = self._redact_dict_values(value)
+            elif isinstance(value, list):
+                log_record[key] = [
+                    self._redact_dict_values(item) if isinstance(item, dict)
+                    else self._redact_secrets(item) if isinstance(item, str)
+                    else item
+                    for item in value
+                ]
+
+        # Add exception info if present (redact secrets from stack traces)
         if record.exc_info:
-            log_record["exception"] = self.formatException(record.exc_info)
+            exc_str = self.formatException(record.exc_info)  # type: ignore[arg-type]
+            log_record["exception"] = self._redact_secrets(exc_str)
 
 
 class RedactingFormatter(Formatter):
     """Formatter that redacts sensitive values from log messages.
 
-    Currently placeholder - full secret redaction will be implemented in T4-F7.3.
-    This formatter exists to establish the pattern for secret redaction.
+    Used for text-based logging (non-JSON format) with secret redaction.
+    Redacts the same patterns as JsonFormatter for consistency.
     """
 
-    # Patterns that will be redacted in T4-F7.3:
-    # - API keys, tokens, passwords
-    # - PII (email addresses, phone numbers)
-    # - Gateway credentials
-    REDACT_PATTERNS: list[str] = []  # Populated in T4-F7.3
+    # Same redaction patterns as JsonFormatter
+    REDACT_PATTERNS: list[str] = [
+        # OpenAI-style API keys
+        r"sk-[a-zA-Z0-9]{20,}",
+        # Anthropic API keys
+        r"sk-ant-[a-zA-Z0-9_-]{20,}",
+        # Pydantic Gateway API keys
+        r"pydantic[-_]?gateway[-_]?(api[_-]?key|key)\s*[:=]\s*[\"']?[a-zA-Z0-9_-]{20,}",
+        # Generic secret/token/password patterns (common env var patterns)
+        r"(api[_-]?key|secret|token|password|auth)\s*[:=]\s*[\"']?[a-zA-Z0-9_-]{15,}",
+        # AWS Access Keys
+        r"(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}",
+        # GitHub personal access tokens
+        r"ghp_[a-zA-Z0-9]{36}",
+        r"gho_[a-zA-Z0-9]{36}",
+        r"ghu_[a-zA-Z0-9]{36}",
+        r"ghs_[a-zA-Z0-9]{36}",
+        r"ghr_[a-zA-Z0-9]{36}",
+        # Slack tokens
+        r"xox[baprs]-[a-zA-Z0-9-]{10,}",
+        # Email addresses
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
+        # Phone numbers (US format)
+        r"\b\d{3}[-.]?\d{3}[-.]?\d{4}\b",
+        # Credit card numbers
+        r"\b(?:\d{4}[- ]?){3}\d{4}\b",
+        # Generic UUID-style patterns that might be sensitive
+        r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b",
+    ]
 
     def format(self, record: logging.LogRecord) -> str:
         """Format the log record with secret redaction.
@@ -123,9 +248,8 @@ class RedactingFormatter(Formatter):
             Formatted log message with sensitive values redacted.
         """
         msg = super().format(record)
-        # Secret redaction will be implemented in T4-F7.3
-        # for pattern in self.REDACT_PATTERNS:
-        #     msg = re.sub(pattern, "[REDACTED]", msg)
+        for pattern in self.REDACT_PATTERNS:
+            msg = re.sub(pattern, "[REDACTED]", msg, flags=re.IGNORECASE)
         return msg
 
 

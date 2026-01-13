@@ -3,6 +3,12 @@
 
 title = "IntentUI Secret Scanning"
 
+[allowlist]
+description = "Global allowlist for test files with redacted secrets."
+paths = [
+  '''intentuimvp/backend/tests/test_logging_config\.py''',
+]
+
 [[rules]]
 description = "OpenAI API key"
 id = "openai-api-key"
@@ -41,6 +47,17 @@ keywords = ["api_key", "apikey", "secret", "token"]
   regexTarget = "line"
   regexes = [
     '''(?i)api[_-]?key\s*[:=]\s*PYDANTIC_GATEWAY_API_KEY''',
+  ]
+
+  [[rules.allowlists]]
+  description = "Allow [REDACTED] strings in test files (false positives)."
+  condition = "AND"
+  paths = [
+    '''intentuimvp/backend/tests/test_logging_config\.py''',
+  ]
+  regexTarget = "line"
+  regexes = [
+    '''\[REDACTED\]''',
   ]
 
 [[rules]]
