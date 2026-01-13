@@ -14,6 +14,8 @@ Logging standards (NFR-OBS):
 - NFR-OBS-003: Job system lifecycle events, duration, outcomes
 - NFR-OBS-004: WebSocket connection events, message counts
 - NFR-OBS-005: Structured error logging with correlation IDs
+
+Implements NFR-PRIV-004: PII warning + log redaction rules.
 """
 
 import logging
@@ -105,6 +107,8 @@ class JsonFormatter(jsonlogger.JsonFormatter):
         r"(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}",
         # Generic secret/token/password patterns (must come AFTER specific token patterns)
         r"(api[_-]?key|secret|password|auth)\s*[:=]\s*[\"']?[a-zA-Z0-9_-]{15,}",
+        # SSN (US format) - NFR-PRIV-004
+        r"\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b",
         # Email addresses
         r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
         # Phone numbers (US format)
@@ -230,6 +234,8 @@ class RedactingFormatter(Formatter):
         # Generic secret/password patterns (must come AFTER specific token patterns)
         # Note: "token" excluded to avoid matching Slack/GitHub token labels
         r"(api[_-]?key|secret|password|auth)\s*[:=]\s*[\"']?[a-zA-Z0-9_-]{15,}",
+        # SSN (US format) - NFR-PRIV-004
+        r"\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b",
         # Email addresses
         r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b",
         # Phone numbers (US format)

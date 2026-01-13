@@ -5,6 +5,7 @@ provider SDK imports (OpenAI, Anthropic, etc.) allowed elsewhere.
 
 Implements NFR-PERF-003: Gateway call latency tracking.
 Implements NFR-REL-001: Retry with exponential backoff and degradation logging.
+Implements NFR-PRIV-004: PII warning + log redaction rules.
 """
 
 import asyncio
@@ -16,6 +17,7 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.pii_detector import get_pii_detector
 from app.telemetry import track_gateway_call
 
 logger = logging.getLogger(__name__)
@@ -273,6 +275,8 @@ class GatewayClient:
     async def _make_request(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Make a single request to the Gateway.
 
+        Implements NFR-PRIV-004: PII warning before sending to external services.
+
         Args:
             payload: Request payload.
 
@@ -283,10 +287,62 @@ class GatewayClient:
             httpx.HTTPStatusError: On HTTP errors.
             httpx.RequestError: On network errors.
         """
+        # Scan for PII before sending to Gateway
+        pii_detector = get_pii_detector()
+        text_content = self._extract_text_from_payload(payload)
+
+        if text_content:
+            pii_result = pii_detector.scan(text_content, context="Gateway request")
+
+            if pii_result.has_pii:
+                logger.warning(
+                    pii_result.warning_message or "PII detected in Gateway request",
+                    extra={
+                        "event": "pii_detected",
+                        "pii_types": [d.type.value for d in pii_result.detections],
+                        "severity": pii_result.severity.value,
+                        "model": payload.get("model", "unknown"),
+                    },
+                )
+
+                # Check if request should be blocked
+                if pii_detector.is_blocked(pii_result):
+                    raise GatewayClientError(
+                        f"Request blocked: PII detected with severity {pii_result.severity.value}. "
+                        f"Content must be reviewed before sending to external services."
+                    )
+
         client = self._get_client()
         response = await client.post("/v1/chat/completions", json=payload)
         response.raise_for_status()
         return response.json()
+
+    def _extract_text_from_payload(self, payload: dict[str, Any]) -> str:
+        """Extract text content from payload for PII scanning.
+
+        Args:
+            payload: Gateway request payload.
+
+        Returns:
+            Concatenated text content from messages.
+        """
+        messages = payload.get("messages", [])
+        if not messages:
+            return ""
+
+        # Extract content from each message
+        text_parts: list[str] = []
+        for msg in messages:
+            content = msg.get("content")
+            if isinstance(content, str):
+                text_parts.append(content)
+            elif isinstance(content, list):
+                # Handle multimodal content (text + images, etc.)
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        text_parts.append(item.get("text", ""))
+
+        return "\n".join(text_parts)
 
 
 # Singleton instance
