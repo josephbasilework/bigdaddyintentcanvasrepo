@@ -65,8 +65,11 @@ def enqueue_command(submission: CommandSubmission) -> None:
 
 
 async def _route_command_submission(submission: CommandSubmission) -> None:
-    """Route a command submission through the context router."""
+    """Route a command submission through the context router and execute handler."""
+    from app.handlers import get_handler_executor
+
     router = get_context_router()
+    executor = get_handler_executor()
     payload = ContextPayload(
         text=submission.command,
         attachments=submission.attachments,
@@ -87,6 +90,18 @@ async def _route_command_submission(submission: CommandSubmission) -> None:
                 "assumptions_count": len(decision.assumptions),
             },
         )
+
+        # Execute the handler
+        result = await executor.execute(decision, correlation_id=submission.correlation_id)
+        logger.info(
+            "Handler executed",
+            extra={
+                "correlation_id": submission.correlation_id,
+                "handler": decision.handler,
+                "result": result,
+            },
+        )
+
     except TimeoutError:
         logger.warning(
             "Command routing timed out",
