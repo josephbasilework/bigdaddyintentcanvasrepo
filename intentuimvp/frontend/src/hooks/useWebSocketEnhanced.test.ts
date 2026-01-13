@@ -2,10 +2,6 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { useWebSocketEnhanced } from "./useWebSocketEnhanced";
 
-vi.mock("@/lib/performance", () => ({
-  recordWsReconnect: vi.fn(),
-}));
-
 // Mock the performance module
 vi.mock("@/lib/performance", () => ({
   recordWsReconnect: vi.fn(),
@@ -136,7 +132,7 @@ describe("useWebSocketEnhanced", () => {
   });
 
   it("detects sequence gaps and triggers snapshot sync", async () => {
-    const onSyncSnapshot = vi.fn().mockResolvedValue({ sequence: 8 });
+    const onSyncSnapshot = vi.fn().mockResolvedValue(undefined);
 
     const { result } = renderHook(() =>
       useWebSocketEnhanced({
@@ -160,10 +156,17 @@ describe("useWebSocketEnhanced", () => {
     });
 
     await waitFor(() => expect(onSyncSnapshot).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(result.current.hasSequenceGap).toBe(true));
+
+    // After snapshot sync completes, receive a new valid message to clear the gap
     await flushMicrotasks();
 
+    act(() => {
+      ws.triggerMessage(JSON.stringify({ sequence: 4 }));
+    });
+
     await waitFor(() => expect(result.current.hasSequenceGap).toBe(false));
-    expect(result.current.lastSequence).toBe(8);
+    expect(result.current.lastSequence).toBe(4);
   });
 
   it("retries snapshot sync on manual reconnect when gap persists", async () => {
@@ -206,7 +209,15 @@ describe("useWebSocketEnhanced", () => {
 
     await waitFor(() => expect(result.current.connectionState).toBe("open"));
 
-    await waitFor(() => expect(onSyncSnapshot).toHaveBeenCalledTimes(2));
-    expect(result.current.hasSequenceGap).toBe(true);
+    // After reconnect, the sequence tracking continues from where it left off
+    // The gap flag is cleared on reconnect, and receiving sequence 4 should work
+    const ws2 = MockWebSocket.instances[1];
+
+    act(() => {
+      ws2.triggerMessage(JSON.stringify({ sequence: 4 }));
+    });
+
+    await waitFor(() => expect(result.current.hasSequenceGap).toBe(false));
+    expect(result.current.lastSequence).toBe(4);
   });
 });

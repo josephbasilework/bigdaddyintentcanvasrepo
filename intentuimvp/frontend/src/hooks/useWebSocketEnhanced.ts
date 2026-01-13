@@ -140,6 +140,9 @@ export function useWebSocketEnhanced(
   const isManualCloseRef = useRef(false);
   const disconnectTimeRef = useRef<number | null>(null);
 
+  // Ref to break circular dependency between connect and scheduleReconnect
+  const connectRef = useRef<(() => void) | null>(null);
+
   // Event queue for messages sent during disconnection
   const eventQueueRef = useRef<QueuedEvent[]>([]);
 
@@ -429,14 +432,13 @@ export function useWebSocketEnhanced(
 
     reconnectTimeoutRef.current = setTimeout(() => {
       reconnectAttemptsRef.current++;
-      connect();
+      connectRef.current?.();
     }, delay);
   }, [
     shouldReconnect,
     maxReconnectAttempts,
     getReconnectDelay,
     clearReconnectTimeout,
-    connect,
   ]);
 
   /**
@@ -593,6 +595,11 @@ export function useWebSocketEnhanced(
     clearReconnectTimeout();
     connect();
   }, [connect, clearReconnectTimeout]);
+
+  // Update connectRef to break circular type dependency
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   // Establish connection on mount
   useEffect(() => {
