@@ -1,0 +1,58 @@
+"""Dashboard update publishing service.
+
+This module provides a compatibility layer for publishing dashboard updates
+when entities change. It wraps the DashboardStreamingService with a simpler
+interface that can be called from API endpoints and repositories.
+
+Implements FR-015: Dashboards (Live State Visualization)
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Literal
+
+from app.models.dashboard_subscription import DashboardSubscriptionTarget
+from app.ws.dashboard_streaming import get_dashboard_streaming_service
+
+logger = logging.getLogger(__name__)
+
+
+async def publish_dashboard_update(
+    canvas_id: int,
+    target: DashboardSubscriptionTarget,
+    source_id: str,
+    change_type: Literal["created", "updated", "deleted"],
+    data: dict[str, Any],
+) -> int:
+    """Publish a dashboard update to subscribed clients.
+
+    This is a convenience wrapper around DashboardStreamingService.publish_update
+    that can be easily called from API endpoints and repositories.
+
+    Args:
+        canvas_id: The canvas where the change occurred.
+        target: The type of entity that changed.
+        source_id: The ID of the changed entity.
+        change_type: The type of change (created, updated, deleted).
+        data: The updated entity data.
+
+    Returns:
+        Number of dashboard connections that received the update.
+    """
+    service = get_dashboard_streaming_service()
+    count = await service.publish_update(
+        canvas_id=canvas_id,
+        target=target,
+        source_id=source_id,
+        change_type=change_type,
+        data=data,
+    )
+
+    if count > 0:
+        logger.debug(
+            f"Dashboard update published: {target.value}={source_id}, "
+            f"change_type={change_type}, subscribers={count}"
+        )
+
+    return count

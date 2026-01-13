@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_db
+from app.models.dashboard_subscription import DashboardSubscriptionTarget
 from app.models.node import Node
 from app.repositories.node_repo import NodeRepository
 from app.schemas.node import (
@@ -17,6 +18,7 @@ from app.schemas.node import (
     NodeResponse,
     NodeUpdateRequest,
 )
+from app.services.dashboard_updates import publish_dashboard_update
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -74,6 +76,13 @@ async def create_node(
             type=payload.type,
             position=payload.position.model_dump(),
             node_metadata=payload.metadata,
+        )
+        await publish_dashboard_update(
+            canvas_id=node.canvas_id,
+            target=DashboardSubscriptionTarget.NODE,
+            source_id=str(node.id),
+            change_type="created",
+            data=_serialize_node(node),
         )
         logger.info(f"Created node {node.id} on canvas {payload.canvas_id} for user {user_id}")
         return _serialize_node(node)
@@ -242,6 +251,13 @@ async def update_node(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Node not found",
             )
+        await publish_dashboard_update(
+            canvas_id=updated.canvas_id,
+            target=DashboardSubscriptionTarget.NODE,
+            source_id=str(updated.id),
+            change_type="updated",
+            data=_serialize_node(updated),
+        )
         logger.info(f"Updated node {node_id} for user {user_id}")
         return _serialize_node(updated)
     except HTTPException:
@@ -271,10 +287,23 @@ async def delete_node(
         HTTPException: If node not found
     """
     repo = NodeRepository(db)
+    node = await repo.get_by_id(node_id)
+    if node is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Node not found",
+        )
     deleted = await repo.delete(node_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Node not found",
         )
+    await publish_dashboard_update(
+        canvas_id=node.canvas_id,
+        target=DashboardSubscriptionTarget.NODE,
+        source_id=str(node.id),
+        change_type="deleted",
+        data=_serialize_node(node),
+    )
     logger.info(f"Deleted node {node_id} for user {user_id}")
