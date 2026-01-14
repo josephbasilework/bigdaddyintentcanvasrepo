@@ -23,6 +23,7 @@ from app.api.runs import router as runs_router
 from app.api.telemetry import router as telemetry_router
 from app.api.workspace import router as workspace_router
 from app.config import get_settings
+from app.copilotkit import setup_copilotkit
 from app.database import SessionLocal
 from app.logging_config import configure_logging
 from app.middleware import LoggingMiddleware
@@ -213,6 +214,9 @@ def create_app() -> FastAPI:
     app.include_router(mcp_router, tags=["mcp"])
     app.include_router(jobs_router, tags=["jobs"])
     app.include_router(telemetry_router, tags=["telemetry"])
+
+    # CopilotKit endpoint (PRD Section 9.3 EI-004)
+    setup_copilotkit(app)
 
     @app.get("/")
     async def root() -> dict[str, object]:
