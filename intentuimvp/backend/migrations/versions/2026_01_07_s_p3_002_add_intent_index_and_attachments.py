@@ -22,11 +22,17 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _is_postgresql() -> bool:
+    """Check if the current database connection is PostgreSQL."""
+    return op.get_bind().dialect.name == "postgresql"
+
+
 def upgrade() -> None:
     """Upgrade schema."""
 
     # Enable pgvector extension if not already enabled
-    op.execute('CREATE EXTENSION IF NOT EXISTS vector')
+    if _is_postgresql():
+        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     # Create user_intents table for intent meaning index with pgvector
     op.create_table(
