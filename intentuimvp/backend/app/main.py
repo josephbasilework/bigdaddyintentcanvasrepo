@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.api.audio import router as audio_router
 from app.api.backup import router as backup_router
+from app.api.commands import router as commands_router
 from app.api.context import router as context_router
 from app.api.edges import router as edges_router
 from app.api.health import router as health_router
@@ -204,6 +205,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router, tags=["health"])
     app.include_router(ws_router, tags=["websocket"])
     app.include_router(runs_router, tags=["runs"])
+    app.include_router(commands_router, tags=["commands"])
     app.include_router(context_router, tags=["context"])
     app.include_router(workspace_router, tags=["workspace"])
     app.include_router(nodes_router, tags=["nodes"])
