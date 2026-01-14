@@ -12,6 +12,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy import inspect
 
 # revision identifiers, used by Alembic.
 revision: str = '20260107_vz6_jobs'
@@ -20,8 +21,17 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
+def _table_exists(table_name: str) -> bool:
+    """Check if a table exists in the current database."""
+    bind = op.get_bind()
+    return inspect(bind).has_table(table_name)
+
+
 def upgrade() -> None:
     """Upgrade schema."""
+    if _table_exists('job'):
+        return
+
     # Create job table
     op.create_table(
         'job',
