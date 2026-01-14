@@ -35,8 +35,7 @@ def upgrade() -> None:
         sa.Column('created_at', sa.DateTime(), server_default=sa.text('NOW()'), nullable=False),
         sa.Column('updated_at', sa.DateTime(), server_default=sa.text('NOW()'), onupdate=sa.text('NOW()'), nullable=False),
     )
-    # Create index on canvas_id for efficient queries
-    op.create_index('ix_audio_block_canvas_id', 'audio_block', ['canvas_id'])
+    # Note: index on canvas_id is already created via index=True in the column definition
 
 
 def downgrade() -> None:
