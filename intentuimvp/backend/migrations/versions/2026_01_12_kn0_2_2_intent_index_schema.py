@@ -28,7 +28,7 @@ def _is_postgresql() -> bool:
     return op.get_bind().dialect.name == "postgresql"
 
 
-def _resolution_column_type() -> sa.TypeEngine:
+def _resolution_column_type() -> sa.types.TypeEngine:
     if _is_postgresql():
         from sqlalchemy.dialects import postgresql
 
