@@ -12,6 +12,7 @@ import type {
   IntentWorkflowRound,
 } from "@/components/Assumptions";
 import { useCanvasStore, type CanvasNode } from "@/state/canvasStore";
+import { useConversationStore } from "@/state/conversationStore";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useChatTurns } from "@/hooks/useChatTurns";
 import { useTurns } from "@/hooks/useTurns";
@@ -33,9 +34,22 @@ type CommandSubmissionLog = {
   attachments: string[];
 };
 
+/**
+ * Node context for contextual conversation.
+ * When a node is selected, its content becomes primary context for agent interaction.
+ */
+type NodeContext = {
+  id: string;
+  title: string;
+  node_type: string;
+  content?: string;
+  metadata?: Record<string, unknown>;
+};
+
 type SelectionScope = {
   selected_nodes: string[];
   selected_edges: string[];
+  node_context?: NodeContext[];
 };
 
 type WorkflowRound = IntentWorkflowRound & {
@@ -55,7 +69,7 @@ const getSelectionIds = (
 const getSelectionScopeItems = (
   selectionIds: string[],
   nodes: CanvasNode[]
-): Array<{ id: string; label: string }> => {
+): Array<{ id: string; label: string; hasContent?: boolean }> => {
   if (selectionIds.length === 0) {
     return [];
   }
@@ -65,8 +79,41 @@ const getSelectionScopeItems = (
     return {
       id,
       label: node?.title ?? "Unknown node",
+      hasContent: Boolean(node?.content),
     };
   });
+};
+
+/**
+ * Build node context array from selected nodes.
+ * Includes node content for contextual conversation with agent.
+ */
+const buildNodeContext = (
+  selectionIds: string[],
+  nodes: CanvasNode[]
+): NodeContext[] => {
+  if (selectionIds.length === 0) {
+    return [];
+  }
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  return selectionIds
+    .map((id) => {
+      const node = nodeById.get(id);
+      if (!node) return null;
+      const context: NodeContext = {
+        id: node.id,
+        title: node.title,
+        node_type: node.type,
+      };
+      if (node.content) {
+        context.content = node.content;
+      }
+      if (node.metadata) {
+        context.metadata = node.metadata;
+      }
+      return context;
+    })
+    .filter((ctx): ctx is NodeContext => ctx !== null);
 };
 
 type AssumptionResponse = {
@@ -320,12 +367,35 @@ export default function Home() {
   const clearSelection = useCanvasStore((state) => state.clearSelection);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
+  const conversationScope = useConversationStore((state) => state.scope);
+  const setNodeScope = useConversationStore((state) => state.setNodeScope);
+  const setGlobalScope = useConversationStore((state) => state.setGlobalScope);
   const selectionIds = getSelectionIds(selectedNodeIds, selectedNodeId);
   const selectionItems = getSelectionScopeItems(selectionIds, nodes);
+  const nodeContext = buildNodeContext(selectionIds, nodes);
   const selectionScope: SelectionScope = {
     selected_nodes: selectionIds,
     selected_edges: [],
+    node_context: nodeContext.length > 0 ? nodeContext : undefined,
   };
+
+  // Sync conversation scope with primary selected node
+  useEffect(() => {
+    if (selectedNodeId) {
+      const node = nodes.find((n) => n.id === selectedNodeId);
+      if (node) {
+        setNodeScope(node.id, node.title, Boolean(node.content));
+      }
+    } else {
+      setGlobalScope();
+    }
+  }, [selectedNodeId, nodes, setNodeScope, setGlobalScope]);
+
+  // Handler to clear node context (also clears selection)
+  const handleClearContext = useCallback(() => {
+    clearSelection();
+    setGlobalScope();
+  }, [clearSelection, setGlobalScope]);
 
   const currentRound = useMemo(() => {
     if (!activeRoundId) {
@@ -758,7 +828,7 @@ export default function Home() {
             round.id === currentRound.id
               ? {
                   ...round,
-                  status: "superseded",
+                  status: "superseded" as const,
                   clarificationResponse: note ?? round.clarificationResponse,
                 }
               : round
@@ -912,6 +982,8 @@ export default function Home() {
         onClearSelection={clearSelection}
         placeholder="Type a command..."
         panelContent={panelContent}
+        conversationScope={conversationScope}
+        onClearContext={handleClearContext}
         panelToggles={[
           {
             label: "Chat",

@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { NodeContextBanner } from "./NodeContextBanner";
+import type { ConversationScope } from "@/state/conversationStore";
 
 interface FloatingInputProps {
   /** Callback when user submits input (pressed Enter) */
@@ -27,11 +29,17 @@ interface FloatingInputProps {
   panelToggle?: PanelToggleConfig;
   /** Optional toggle configs for multiple panels */
   panelToggles?: PanelToggleConfig[];
+  /** Current conversation scope (global or node-specific) */
+  conversationScope?: ConversationScope;
+  /** Callback when user clears the node context */
+  onClearContext?: () => void;
 }
 
 interface SelectionScopeItem {
   id: string;
   label: string;
+  /** Whether this node has content that will be used as context */
+  hasContent?: boolean;
 }
 
 interface PanelToggleConfig {
@@ -110,6 +118,8 @@ export function FloatingInput({
   panelContent,
   panelToggle,
   panelToggles,
+  conversationScope,
+  onClearContext,
 }: FloatingInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
@@ -226,6 +236,12 @@ export function FloatingInput({
         </div>
       )}
       {panelContent && <div className="floating-panel">{panelContent}</div>}
+      {conversationScope && (
+        <NodeContextBanner
+          scope={conversationScope}
+          onClearContext={onClearContext}
+        />
+      )}
       {selectionCount > 0 && (
         <div className="selection-scope" role="region" aria-label="Selection scope">
           <div className="selection-scope-header">
@@ -250,10 +266,11 @@ export function FloatingInput({
             {visibleSelection.map((item) => (
               <div
                 key={item.id}
-                className="selection-chip"
+                className={`selection-chip${item.hasContent ? " has-context" : ""}`}
                 role="listitem"
-                title={item.label}
+                title={item.hasContent ? `${item.label} (content as context)` : item.label}
               >
+                {item.hasContent && <span className="context-indicator" aria-hidden="true" />}
                 {formatSelectionLabel(item.label)}
               </div>
             ))}
@@ -452,6 +469,7 @@ export function FloatingInput({
         .selection-chip {
           display: inline-flex;
           align-items: center;
+          gap: 0.3rem;
           padding: 0.3rem 0.55rem;
           border-radius: 999px;
           background-color: rgba(15, 23, 42, 0.9);
@@ -462,6 +480,20 @@ export function FloatingInput({
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
+        }
+
+        .selection-chip.has-context {
+          border-color: rgba(56, 189, 248, 0.5);
+          background-color: rgba(15, 23, 42, 0.95);
+        }
+
+        .context-indicator {
+          display: inline-block;
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background-color: #38bdf8;
+          flex-shrink: 0;
         }
 
         .selection-chip-more {
