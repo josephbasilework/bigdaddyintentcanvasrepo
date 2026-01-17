@@ -336,6 +336,72 @@ async def test_canvas_link_nodes_tool_rejects_invalid_node() -> None:
 
 
 @pytest.mark.asyncio
+async def test_canvas_create_visualization_tool_creates_nodes_and_edges() -> None:
+    """Verify canvas.create_visualization creates nodes, edges, and metadata."""
+    manager = get_tool_manager()
+    token = uuid.uuid4().hex
+
+    async with AsyncSessionLocal() as session:
+        canvas_repo = CanvasRepository(session)
+        canvas = await canvas_repo.create_canvas(
+            DEFAULT_USER_ID, name=f"viz-{token}"
+        )
+
+    result = await manager.execute_tool(
+        "canvas.create_visualization",
+        {
+            "layout": {
+                "layout": "tree",
+                "spacing_x": 120,
+                "spacing_y": 80,
+                "origin": {"x": 10000, "y": 20000, "z": 0},
+            },
+            "nodes": [
+                {"id": "root", "title": f"Root {token}", "type": NodeType.TEXT},
+                {"id": "child-1", "title": "Child One", "type": NodeType.TEXT},
+                {"id": "child-2", "title": "Child Two", "type": NodeType.TEXT},
+            ],
+            "edges": [
+                {"from_id": "root", "to_id": "child-1", "relation_type": RelationType.REFERENCES},
+                {"from_id": "root", "to_id": "child-2", "relation_type": RelationType.REFERENCES},
+            ],
+            "metadata": {"source": "tool-test"},
+        },
+    )
+
+    assert result.success
+    output = result.output
+    assert output["canvas_id"] == canvas.id
+    visualization_id = output["visualization_id"]
+    nodes_out = output["nodes"]
+    assert len(nodes_out) == 3
+
+    positions = {item["ref_id"]: item["position"] for item in nodes_out}
+    assert positions["root"]["y"] == pytest.approx(20000)
+    assert positions["child-1"]["y"] == pytest.approx(20000 + 80)
+    assert positions["child-2"]["y"] == pytest.approx(20000 + 80)
+
+    async with AsyncSessionLocal() as session:
+        node_repo = NodeRepository(session)
+        edge_repo = EdgeRepository(session)
+
+        node_ids = [item["id"] for item in nodes_out]
+        nodes = [await node_repo.get_by_id(node_id) for node_id in node_ids]
+
+        assert all(node is not None for node in nodes)
+        for node in nodes:
+            assert node is not None
+            assert node.canvas_id == canvas.id
+            metadata = node.get_metadata()
+            assert metadata["visualization"]["id"] == visualization_id
+            assert metadata["visualization"]["layout"] == "tree"
+
+        edge_ids = {edge["id"] for edge in output["edges"]}
+        edges = await edge_repo.get_by_canvas(canvas.id)
+        assert edge_ids.issubset({edge.id for edge in edges})
+
+
+@pytest.mark.asyncio
 async def test_workspace_search_scopes() -> None:
     """Verify workspace.search filters results by scope."""
     manager = get_tool_manager()

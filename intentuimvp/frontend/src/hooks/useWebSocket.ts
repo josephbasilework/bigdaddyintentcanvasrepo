@@ -15,7 +15,10 @@ export interface WebSocketMessage {
     | "state.update"
     | "state.snapshot"
     | "node.created"
-    | "node.updated";
+    | "node.updated"
+    | "edge.created"
+    | "edge.updated"
+    | "edge.deleted";
   message?: string;
   sequence?: number;
   payload?: unknown;

@@ -258,7 +258,7 @@ interface CanvasState {
   updateNode: (nodeId: string, updates: Partial<CanvasNode>) => void;
   clearSelection: () => void;
   setNodes: (nodes: CanvasNode[]) => void;
-  addEdge: (edge: Omit<CanvasEdge, 'id'>) => string;
+  addEdge: (edge: Omit<CanvasEdge, 'id'> & { id?: string }) => string;
   removeEdge: (edgeId: string) => void;
   updateEdge: (edgeId: string, updates: Partial<CanvasEdge>) => void;
   setEdges: (edges: CanvasEdge[]) => void;
@@ -474,7 +474,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
 
     // Add an edge between two nodes
     addEdge: (edge) => {
-      const id = `edge-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const id = edge.id ?? `edge-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
       const newEdge: CanvasEdge = {
         ...edge,
         id,

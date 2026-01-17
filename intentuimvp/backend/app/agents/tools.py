@@ -13,10 +13,12 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC
+from uuid import uuid4
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlalchemy import or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agui import AgentNotificationMessage, AgentRequestMessage
 from app.agui.schemas import AgentNotificationPayload, AgentRequestPayload
@@ -33,6 +35,12 @@ from app.models.turn import TurnActor, TurnType
 from app.repositories.canvas_repo import CanvasRepository
 from app.repositories.edge_repo import EdgeRepository
 from app.repositories.node_repo import DuplicatePositionError, NodeRepository
+from app.services.visualization_layout import (
+    LayoutDirection,
+    LayoutEdge,
+    LayoutType,
+    compute_layout_positions,
+)
 from app.services.turns import log_turn_for_user_async
 
 logger = logging.getLogger(__name__)
@@ -133,6 +141,102 @@ class CanvasCreateNodeParams(BaseModel):
     position: CanvasNodePosition = Field(..., description="Node position")
     metadata: dict[str, Any] | None = Field(
         default=None, description="Optional node metadata"
+    )
+
+
+class VisualizationLayoutParams(BaseModel):
+    """Layout configuration for visualization nodes."""
+
+    layout: LayoutType = Field(..., description="Layout type")
+    direction: LayoutDirection = Field(
+        default="down",
+        description="Layout direction for tree/hierarchy layouts",
+    )
+    spacing_x: float = Field(default=260.0, gt=0, description="Horizontal spacing")
+    spacing_y: float = Field(default=180.0, gt=0, description="Vertical spacing")
+    origin: CanvasNodePosition = Field(
+        default_factory=lambda: CanvasNodePosition(x=0, y=0, z=0),
+        description="Layout origin position",
+    )
+
+
+class VisualizationNodeSpec(BaseModel):
+    """Node spec for visualization creation."""
+
+    id: str = Field(..., min_length=1, description="Client node identifier")
+    title: str = Field(..., min_length=1, description="Node title")
+    content: str | None = Field(default=None, description="Optional node content")
+    type: NodeType = Field(default=NodeType.TEXT, description="Node type")
+    metadata: dict[str, Any] | None = Field(
+        default=None, description="Optional node metadata"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_inputs(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+        node_id = values.get("id") or values.get("node_id") or values.get("nodeId") or values.get("key")
+        if node_id:
+            values["id"] = str(node_id)
+        title = values.get("title") or values.get("label") or values.get("content")
+        if title:
+            values["title"] = title
+        return values
+
+
+class VisualizationEdgeSpec(BaseModel):
+    """Edge spec for visualization creation."""
+
+    from_id: str = Field(..., min_length=1, description="Source node identifier")
+    to_id: str = Field(..., min_length=1, description="Target node identifier")
+    relation_type: RelationType = Field(
+        default=RelationType.REFERENCES,
+        description="Edge relation type",
+    )
+    label: str | None = Field(default=None, description="Optional edge label")
+    metadata: dict[str, Any] | None = Field(
+        default=None, description="Optional edge metadata"
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_inputs(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+        from_id = (
+            values.get("from_id")
+            or values.get("from")
+            or values.get("source")
+            or values.get("source_id")
+        )
+        to_id = (
+            values.get("to_id")
+            or values.get("to")
+            or values.get("target")
+            or values.get("target_id")
+        )
+        if from_id:
+            values["from_id"] = str(from_id)
+        if to_id:
+            values["to_id"] = str(to_id)
+        return values
+
+
+class CanvasCreateVisualizationParams(BaseModel):
+    """Parameters for creating a visualization with nodes and edges."""
+
+    layout: VisualizationLayoutParams = Field(
+        ..., description="Layout configuration"
+    )
+    nodes: list[VisualizationNodeSpec] = Field(
+        ..., min_length=1, description="Visualization nodes"
+    )
+    edges: list[VisualizationEdgeSpec] = Field(
+        default_factory=list, description="Visualization edges"
+    )
+    metadata: dict[str, Any] | None = Field(
+        default=None, description="Optional visualization metadata"
     )
 
 
@@ -356,6 +460,91 @@ class ToolManager:
             except Exception as e:
                 raise ValueError(f"Invalid expression: {e}")
 
+        async def _fetch_existing_positions(
+            canvas_id: int,
+            session: AsyncSession,
+        ) -> set[tuple[float, float, float]]:
+            result = await session.execute(
+                select(Node.position).where(Node.canvas_id == canvas_id)
+            )
+            positions: set[tuple[float, float, float]] = set()
+            for raw in result.scalars().all():
+                if not raw:
+                    continue
+                try:
+                    pos = json.loads(raw)
+                    positions.add(
+                        (float(pos.get("x", 0)), float(pos.get("y", 0)), float(pos.get("z", 0)))
+                    )
+                except (ValueError, TypeError):
+                    continue
+            return positions
+
+        def _positions_conflict(
+            positions: dict[str, CanvasNodePosition],
+            occupied: set[tuple[float, float, float]],
+        ) -> bool:
+            seen: set[tuple[float, float, float]] = set()
+            for pos in positions.values():
+                key = (pos.x, pos.y, pos.z)
+                if key in occupied or key in seen:
+                    return True
+                seen.add(key)
+            return False
+
+        def _resolve_positions(
+            *,
+            node_ids: list[str],
+            layout: VisualizationLayoutParams,
+            edges: list[VisualizationEdgeSpec],
+            occupied: set[tuple[float, float, float]],
+            canvas_id: int,
+        ) -> dict[str, CanvasNodePosition]:
+            layout_edges = [
+                LayoutEdge(source=edge.from_id, target=edge.to_id) for edge in edges
+            ]
+
+            def compute(origin: CanvasNodePosition) -> dict[str, CanvasNodePosition]:
+                raw_positions = compute_layout_positions(
+                    node_ids,
+                    layout_edges,
+                    layout=layout.layout,
+                    spacing_x=layout.spacing_x,
+                    spacing_y=layout.spacing_y,
+                    direction=layout.direction,
+                    origin_x=origin.x,
+                    origin_y=origin.y,
+                )
+                return {
+                    node_id: CanvasNodePosition(
+                        x=pos[0], y=pos[1], z=origin.z
+                    )
+                    for node_id, pos in raw_positions.items()
+                }
+
+            for candidate in _iter_position_candidates(layout.origin):
+                candidate_positions = compute(candidate)
+                if not _positions_conflict(candidate_positions, occupied):
+                    return candidate_positions
+
+            base_positions = compute(layout.origin)
+            resolved: dict[str, CanvasNodePosition] = {}
+            taken = set(occupied)
+            for node_id in node_ids:
+                base = base_positions[node_id]
+                for candidate in _iter_position_candidates(base):
+                    key = (candidate.x, candidate.y, candidate.z)
+                    if key not in taken:
+                        resolved[node_id] = candidate
+                        taken.add(key)
+                        break
+                else:
+                    raise DuplicatePositionError(
+                        canvas_id=canvas_id,
+                        position=base.model_dump(),
+                    )
+            return resolved
+
         async def canvas_create_node(
             type: NodeType,
             content: str,
@@ -522,6 +711,175 @@ class ToolManager:
 
             return {"id": node.id}
 
+        async def canvas_create_visualization(
+            layout: VisualizationLayoutParams | dict[str, Any],
+            nodes: list[VisualizationNodeSpec | dict[str, Any]],
+            edges: list[VisualizationEdgeSpec | dict[str, Any]] | None = None,
+            metadata: dict[str, Any] | None = None,
+        ) -> dict[str, Any]:
+            """Create a visualization layout with multiple nodes and edges."""
+            params = CanvasCreateVisualizationParams(
+                layout=layout,
+                nodes=nodes,
+                edges=edges or [],
+                metadata=metadata,
+            )
+
+            node_ids = [spec.id for spec in params.nodes]
+            if len(set(node_ids)) != len(node_ids):
+                raise ValueError("Visualization node IDs must be unique")
+
+            node_id_set = set(node_ids)
+            for edge in params.edges:
+                if edge.from_id not in node_id_set or edge.to_id not in node_id_set:
+                    raise ValueError(
+                        f"Edge references unknown node IDs: {edge.from_id} -> {edge.to_id}"
+                    )
+
+            visualization_id = uuid4().hex
+
+            async with AsyncSessionLocal() as session:
+                canvas_repo = CanvasRepository(session)
+                canvases = await canvas_repo.get_by_user(
+                    DEFAULT_USER_ID, limit=1
+                )
+                canvas = (
+                    canvases[0]
+                    if canvases
+                    else await canvas_repo.create_canvas(
+                        user_id=DEFAULT_USER_ID, name="default"
+                    )
+                )
+
+                occupied_positions = await _fetch_existing_positions(
+                    canvas.id, session
+                )
+                resolved_positions = _resolve_positions(
+                    node_ids=node_ids,
+                    layout=params.layout,
+                    edges=params.edges,
+                    occupied=occupied_positions,
+                    canvas_id=canvas.id,
+                )
+
+                node_repo = NodeRepository(session)
+                edge_repo = EdgeRepository(session)
+
+                created_nodes: dict[str, Node] = {}
+                created_edges: list[int] = []
+
+                for spec in params.nodes:
+                    position = resolved_positions[spec.id]
+                    node_metadata = dict(spec.metadata or {})
+                    node_metadata["visualization"] = {
+                        "id": visualization_id,
+                        "layout": params.layout.layout,
+                        "node_ref": spec.id,
+                        "title": spec.title,
+                        "context": metadata or {},
+                    }
+                    node = await node_repo.create_node(
+                        canvas_id=canvas.id,
+                        label=spec.title,
+                        type=spec.type,
+                        position=position.model_dump(),
+                        node_metadata=node_metadata,
+                    )
+                    created_nodes[spec.id] = node
+
+                    node_payload = {
+                        "id": str(node.id),
+                        "type": spec.type.value
+                        if hasattr(spec.type, "value")
+                        else str(spec.type),
+                        "title": spec.title,
+                        "content": spec.content,
+                        "x": position.x,
+                        "y": position.y,
+                        "z": position.z,
+                        "metadata": node_metadata,
+                    }
+                    await ws_manager.broadcast(
+                        json.dumps({"type": "node.created", "payload": node_payload})
+                    )
+
+                    await log_turn_for_user_async(
+                        session,
+                        user_id=DEFAULT_USER_ID,
+                        workspace_id=canvas.id,
+                        actor=TurnActor.AGENT,
+                        turn_type=TurnType.NODE_CREATED,
+                        summary=f"Visualization node created: {spec.title}",
+                        payload=node_payload,
+                        related_node_id=node.id,
+                    )
+
+                for edge in params.edges:
+                    from_node = created_nodes[edge.from_id]
+                    to_node = created_nodes[edge.to_id]
+                    edge_metadata = dict(edge.metadata or {})
+                    edge_metadata["visualization_id"] = visualization_id
+
+                    try:
+                        created = await edge_repo.create_edge(
+                            canvas_id=canvas.id,
+                            from_node_id=from_node.id,
+                            to_node_id=to_node.id,
+                            relation_type=edge.relation_type,
+                            label=edge.label,
+                            metadata=edge_metadata,
+                        )
+                    except DependencyCycleError as exc:
+                        raise ValueError(str(exc)) from exc
+
+                    created_edges.append(created.id)
+                    edge_payload = {
+                        "id": str(created.id),
+                        "fromNodeId": str(from_node.id),
+                        "toNodeId": str(to_node.id),
+                        "relationType": created.relation_type.value
+                        if hasattr(created.relation_type, "value")
+                        else str(created.relation_type),
+                        "label": created.label,
+                        "metadata": edge_metadata,
+                    }
+                    await ws_manager.broadcast(
+                        json.dumps({"type": "edge.created", "payload": edge_payload})
+                    )
+
+                    await log_turn_for_user_async(
+                        session,
+                        user_id=DEFAULT_USER_ID,
+                        workspace_id=canvas.id,
+                        actor=TurnActor.AGENT,
+                        turn_type=TurnType.EDGE_CREATED,
+                        summary="Visualization edge created",
+                        payload=edge_payload,
+                        related_edge_id=created.id,
+                    )
+
+            return {
+                "visualization_id": visualization_id,
+                "layout": params.layout.layout,
+                "canvas_id": canvas.id,
+                "nodes": [
+                    {
+                        "ref_id": spec.id,
+                        "id": created_nodes[spec.id].id,
+                        "title": spec.title,
+                        "content": spec.content,
+                        "position": resolved_positions[spec.id].model_dump(),
+                    }
+                    for spec in params.nodes
+                ],
+                "edges": [
+                    {
+                        "id": edge_id,
+                    }
+                    for edge_id in created_edges
+                ],
+            }
+
         async def canvas_update_node(
             node_id: int,
             patch: CanvasUpdateNodePatch | dict[str, Any],
@@ -660,6 +1018,20 @@ class ToolManager:
                 except DependencyCycleError as e:
                     raise ValueError(str(e)) from e
 
+                edge_payload = {
+                    "id": str(edge.id),
+                    "fromNodeId": str(edge.from_node_id),
+                    "toNodeId": str(edge.to_node_id),
+                    "relationType": edge.relation_type.value
+                    if hasattr(edge.relation_type, "value")
+                    else str(edge.relation_type),
+                    "label": edge.label,
+                    "metadata": edge.get_metadata(),
+                }
+                await ws_manager.broadcast(
+                    json.dumps({"type": "edge.created", "payload": edge_payload})
+                )
+
                 await log_turn_for_user_async(
                     session,
                     user_id=DEFAULT_USER_ID,
@@ -667,7 +1039,7 @@ class ToolManager:
                     actor=TurnActor.AGENT,
                     turn_type=TurnType.EDGE_CREATED,
                     summary="Edge created by agent",
-                    payload=edge.to_dict(),
+                    payload=edge_payload,
                     related_edge_id=edge.id,
                 )
 
@@ -944,6 +1316,14 @@ class ToolManager:
             description="Create a new node on the canvas",
             func=canvas_create_node,
             parameters=CanvasCreateNodeParams,
+            is_async=True,
+        )
+
+        self.register_function(
+            name="canvas.create_visualization",
+            description="Create a multi-node visualization layout on the canvas",
+            func=canvas_create_visualization,
+            parameters=CanvasCreateVisualizationParams,
             is_async=True,
         )
 

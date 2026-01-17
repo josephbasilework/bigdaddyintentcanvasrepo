@@ -462,6 +462,7 @@ class SafetyGuardrails:
         self._tool_action_matrix: dict[ActionDomain, dict[str, ActionApproval]] = {
             ActionDomain.CANVAS: {
                 "create_node": ActionApproval.SAFE,
+                "create_visualization": ActionApproval.SAFE,
                 "update_label": ActionApproval.SAFE,
                 "move": ActionApproval.SAFE,
                 "update_node": ActionApproval.SAFE,

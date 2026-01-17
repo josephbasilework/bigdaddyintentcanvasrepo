@@ -11,7 +11,11 @@ import type {
   AssumptionSet,
   IntentWorkflowRound,
 } from "@/components/Assumptions";
-import { useCanvasStore, type CanvasNode } from "@/state/canvasStore";
+import {
+  useCanvasStore,
+  type CanvasEdgeRelationType,
+  type CanvasNode,
+} from "@/state/canvasStore";
 import { useConversationStore } from "@/state/conversationStore";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useChatTurns } from "@/hooks/useChatTurns";
@@ -27,6 +31,14 @@ const getWebSocketUrl = (): string => {
   return `${protocol}//${url.host}/ws`;
 };
 const WS_URL = getWebSocketUrl();
+const EDGE_RELATION_TYPES: Set<CanvasEdgeRelationType> = new Set([
+  "depends_on",
+  "references",
+  "supports",
+  "conflicts",
+  "derived_from",
+  "critiques",
+]);
 
 type CommandSubmissionLog = {
   id: string;
@@ -360,7 +372,9 @@ export default function Home() {
     null
   );
   const nodes = useCanvasStore((state) => state.nodes);
+  const edges = useCanvasStore((state) => state.edges);
   const addNode = useCanvasStore((state) => state.addNode);
+  const addEdge = useCanvasStore((state) => state.addEdge);
   const updateNodePosition = useCanvasStore((state) => state.updateNodePosition);
   const updateNode = useCanvasStore((state) => state.updateNode);
   const selectNode = useCanvasStore((state) => state.selectNode);
@@ -492,8 +506,52 @@ export default function Home() {
           updateNode(nodeId, updates);
         }
       }
+      if (message.type === "edge.created" && message.payload) {
+        const payload = message.payload as {
+          id: string;
+          fromNodeId?: string;
+          toNodeId?: string;
+          sourceNodeId?: string;
+          targetNodeId?: string;
+          relationType?: string;
+          label?: string;
+          metadata?: Record<string, unknown>;
+          type?: string;
+        };
+        const edgeId = String(payload.id);
+        if (edges.some((edge) => edge.id === edgeId)) {
+          return;
+        }
+        const sourceId = payload.fromNodeId ?? payload.sourceNodeId;
+        const targetId = payload.toNodeId ?? payload.targetNodeId;
+        if (!sourceId || !targetId) {
+          console.warn("DEBUG: edge.created missing node IDs:", payload);
+          return;
+        }
+        const relationType = payload.relationType;
+        const normalizedRelation = relationType && EDGE_RELATION_TYPES.has(relationType as CanvasEdgeRelationType)
+          ? (relationType as CanvasEdgeRelationType)
+          : undefined;
+        addEdge({
+          id: edgeId,
+          sourceNodeId: String(sourceId),
+          targetNodeId: String(targetId),
+          relationType: normalizedRelation,
+          label: payload.label,
+        });
+      }
     },
-    [nodes, addNode, updateNodePosition, updateNode, selectNode, selectedNodeId, selectedNodeIds]
+    [
+      nodes,
+      edges,
+      addNode,
+      addEdge,
+      updateNodePosition,
+      updateNode,
+      selectNode,
+      selectedNodeId,
+      selectedNodeIds,
+    ]
   );
 
   // Connect to WebSocket for real-time updates

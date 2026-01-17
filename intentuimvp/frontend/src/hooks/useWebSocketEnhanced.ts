@@ -56,6 +56,11 @@ export interface WebSocketMessage {
     | "error"
     | "state.update"
     | "state.snapshot"
+    | "node.created"
+    | "node.updated"
+    | "edge.created"
+    | "edge.updated"
+    | "edge.deleted"
     | "raw";
   message?: string;
   sequence?: number;
