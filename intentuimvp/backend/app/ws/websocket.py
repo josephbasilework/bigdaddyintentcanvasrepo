@@ -1,15 +1,18 @@
 """WebSocket endpoint for real-time updates using AG-UI protocol.
 
 Implements NFR-OBS-004: WebSocket connection events, message counts
+Implements Global Session Identity for persistent session across reconnects
 """
 
 import asyncio
 import json
 import logging
 from collections import defaultdict
+from dataclasses import dataclass
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from pydantic import ValidationError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agui import (
     AgentNotificationMessage,
@@ -23,12 +26,24 @@ from app.agui import (
     StateSyncRequestMessage,
 )
 from app.config import get_settings
+from app.database import get_async_db
 from app.logging_config import get_correlation_id
+from app.repositories.session_repo import AsyncSessionRepository
 from app.ws.dashboard_streaming import get_dashboard_streaming_service
 from app.ws.state_manager import get_state_manager
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+@dataclass
+class SessionContext:
+    """Context for an active WebSocket session."""
+
+    session_id: str
+    user_id: str
+    workspace_id: int
+    is_new_session: bool
 
 router = APIRouter()
 
@@ -43,6 +58,7 @@ class ConnectionManager:
     for sending messages to all connected clients.
 
     Implements NFR-OBS-004: Logs WebSocket connection events and message counts.
+    Implements Global Session Identity: Maps connections to session contexts.
     """
 
     def __init__(self) -> None:
@@ -53,10 +69,33 @@ class ConnectionManager:
         self._message_counts: dict[int, dict[str, int]] = defaultdict(
             lambda: {"sent": 0, "received": 0}
         )
+        # Track session context per connection (Global Session Identity)
+        self._session_contexts: dict[int, SessionContext] = {}
 
     def _get_connection_id(self, websocket: WebSocket) -> int:
         """Get a unique ID for a WebSocket connection."""
         return id(websocket)
+
+    def get_session_context(self, websocket: WebSocket) -> SessionContext | None:
+        """Get the session context for a WebSocket connection."""
+        conn_id = self._get_connection_id(websocket)
+        return self._session_contexts.get(conn_id)
+
+    def set_session_context(
+        self, websocket: WebSocket, context: SessionContext
+    ) -> None:
+        """Set the session context for a WebSocket connection."""
+        conn_id = self._get_connection_id(websocket)
+        self._session_contexts[conn_id] = context
+
+    def get_connections_by_session(self, session_id: str) -> list[WebSocket]:
+        """Get all WebSocket connections for a given session ID."""
+        connections = []
+        for ws in self.active_connections:
+            ctx = self.get_session_context(ws)
+            if ctx and ctx.session_id == session_id:
+                connections.append(ws)
+        return connections
 
     async def connect(self, websocket: WebSocket) -> None:
         """Accept and register a new WebSocket connection.
@@ -93,6 +132,7 @@ class ConnectionManager:
         """
         conn_id = self._get_connection_id(websocket)
         message_counts = self._message_counts.get(conn_id, {})
+        session_context = self._session_contexts.get(conn_id)
 
         self.active_connections.discard(websocket)
 
@@ -103,6 +143,7 @@ class ConnectionManager:
                 "event": "websocket_connection",
                 "action": "disconnected",
                 "connection_id": conn_id,
+                "session_id": session_context.session_id if session_context else None,
                 "active_connections": len(self.active_connections),
                 "messages_sent": message_counts.get("sent", 0),
                 "messages_received": message_counts.get("received", 0),
@@ -110,8 +151,9 @@ class ConnectionManager:
             },
         )
 
-        # Clean up message counts
+        # Clean up message counts and session context
         self._message_counts.pop(conn_id, None)
+        self._session_contexts.pop(conn_id, None)
 
     async def send_personal_message(self, message: str, websocket: WebSocket) -> None:
         """Send a plain text message to a specific WebSocket connection.
@@ -317,6 +359,77 @@ async def verify_websocket_auth(websocket: WebSocket) -> bool:
     return bool(token)
 
 
+def get_websocket_user(websocket: WebSocket) -> str:
+    """Extract user ID from WebSocket connection.
+
+    For MVP, returns default_user. In production, extract from JWT token.
+
+    Args:
+        websocket: The WebSocket connection
+
+    Returns:
+        User ID string
+    """
+    # TODO: Extract user from JWT in query params or headers
+    # For now, use default user like the REST API
+    return "default_user"
+
+
+async def establish_session(
+    websocket: WebSocket, db: AsyncSession
+) -> SessionContext | None:
+    """Establish or resume a workspace session for the WebSocket connection.
+
+    Extracts session_id from query params. If provided, attempts to resume
+    the existing session. If not provided or invalid, creates a new session.
+
+    Args:
+        websocket: The WebSocket connection
+        db: Async database session
+
+    Returns:
+        SessionContext with session details, or None if session could not be established
+    """
+    from sqlalchemy import select
+
+    from app.models.canvas import Canvas
+
+    user_id = get_websocket_user(websocket)
+    session_id = websocket.query_params.get("session_id")
+
+    # Get or create canvas for user (matches workspace API behavior)
+    result = await db.execute(
+        select(Canvas)
+        .filter(Canvas.user_id == user_id)
+        .order_by(Canvas.updated_at.desc())
+        .limit(1)
+    )
+    canvas = result.scalar_one_or_none()
+
+    if canvas is None:
+        # Create a default canvas for the user
+        canvas = Canvas(user_id=user_id, name="default")
+        db.add(canvas)
+        await db.commit()
+        await db.refresh(canvas)
+        logger.info(f"Created default canvas {canvas.id} for user {user_id}")
+
+    # Get or create session
+    session_repo = AsyncSessionRepository(db)
+    session, is_new = await session_repo.get_or_create_session(
+        user_id=user_id,
+        workspace_id=canvas.id,
+        session_id=session_id,
+    )
+
+    return SessionContext(
+        session_id=session.session_id,
+        user_id=user_id,
+        workspace_id=canvas.id,
+        is_new_session=is_new,
+    )
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     """WebSocket endpoint for AG-UI protocol real-time communication.
@@ -324,11 +437,16 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     Clients connect to this endpoint to exchange AG-UI protocol messages
     with the backend. The endpoint handles:
     - Connection acceptance with authentication
+    - Session establishment/resumption (Global Session Identity)
     - AG-UI message validation and routing
     - Broadcasting agent messages to connected clients
     - Heartbeat every 30 seconds using AG-UI notification messages
 
+    Query Parameters:
+        session_id (optional): Session ID to resume an existing session
+
     Implements NFR-OBS-004: Logs WebSocket message receives.
+    Implements Global Session Identity for persistent sessions across reconnects.
 
     Args:
         websocket: The WebSocket connection.
@@ -355,12 +473,41 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     await manager.connect(websocket)
 
-    # Send welcome notification
-    welcome_payload = AgentNotificationPayload(
-        level="info",
-        title="Connected",
-        message="WebSocket connection established",
-    )
+    # Establish or resume session (Global Session Identity)
+    session_context: SessionContext | None = None
+    async for db in get_async_db():
+        try:
+            session_context = await establish_session(websocket, db)
+            if session_context:
+                manager.set_session_context(websocket, session_context)
+                logger.info(
+                    "Session established",
+                    extra={
+                        "event": "session_established",
+                        "session_id": session_context.session_id,
+                        "workspace_id": session_context.workspace_id,
+                        "is_new_session": session_context.is_new_session,
+                        "connection_id": conn_id,
+                        "correlation_id": get_correlation_id(),
+                    },
+                )
+        except Exception as e:
+            logger.error(f"Failed to establish session: {e}", exc_info=True)
+        break
+
+    # Send welcome notification with session info
+    if session_context:
+        welcome_payload = AgentNotificationPayload(
+            level="info",
+            title="Connected",
+            message=f"Session {'resumed' if not session_context.is_new_session else 'created'}: {session_context.session_id[:8]}...",
+        )
+    else:
+        welcome_payload = AgentNotificationPayload(
+            level="info",
+            title="Connected",
+            message="WebSocket connection established (no session)",
+        )
     welcome_msg = AgentNotificationMessage(payload=welcome_payload)
     await manager.send_agui_message(welcome_msg, websocket)
 

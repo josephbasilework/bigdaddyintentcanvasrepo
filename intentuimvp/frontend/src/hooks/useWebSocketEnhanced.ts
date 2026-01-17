@@ -4,6 +4,48 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { recordWsReconnect } from "@/lib/performance";
 
 /**
+ * Storage key for persisting session ID across browser refreshes.
+ */
+const SESSION_ID_STORAGE_KEY = "intentui_workspace_session_id";
+
+/**
+ * Generate a UUID v4 session ID.
+ */
+function generateSessionId(): string {
+  // Use crypto.randomUUID if available, otherwise fall back to manual generation
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  // Fallback for environments without crypto.randomUUID
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+/**
+ * Get or create a session ID from storage.
+ * Returns existing session ID if found, otherwise generates a new one.
+ */
+function getOrCreateSessionId(): string {
+  if (typeof window === "undefined") {
+    return generateSessionId();
+  }
+
+  // Try localStorage first (persists across tabs and browser sessions)
+  const stored = localStorage.getItem(SESSION_ID_STORAGE_KEY);
+  if (stored) {
+    return stored;
+  }
+
+  // Generate new session ID
+  const newSessionId = generateSessionId();
+  localStorage.setItem(SESSION_ID_STORAGE_KEY, newSessionId);
+  return newSessionId;
+}
+
+/**
  * WebSocket message types supported by the backend.
  */
 export interface WebSocketMessage {
@@ -93,17 +135,29 @@ export interface UseWebSocketReturn {
    * Whether a sequence gap has been detected (triggering snapshot sync).
    */
   hasSequenceGap: boolean;
+
+  /**
+   * The session ID for this WebSocket connection.
+   * Persists across reconnects and browser refreshes.
+   */
+  sessionId: string;
+
+  /**
+   * Clear the session ID and start a fresh session on next connect.
+   */
+  clearSession: () => void;
 }
 
 /**
  * Default WebSocket URL based on environment.
+ * Includes session_id as a query parameter for Global Session Identity.
  */
-const getDefaultWebSocketUrl = (): string => {
+const getDefaultWebSocketUrl = (sessionId: string): string => {
   if (typeof window === "undefined") return "";
 
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const host = process.env.NEXT_PUBLIC_WS_URL || window.location.host;
-  return `${protocol}//${host}/ws`;
+  return `${protocol}//${host}/ws?session_id=${encodeURIComponent(sessionId)}`;
 };
 
 /**
@@ -113,14 +167,19 @@ const getDefaultWebSocketUrl = (): string => {
  * - Queued event flushing after reconnect
  * - Sequence gap detection with REST snapshot sync
  * - Telemetry tracking for NFR-PERF-005
+ * - Global Session Identity (persistent session_id across reconnects)
  *
  * Implements T2-F9.2: WebSocket reconnect + queued events
  */
 export function useWebSocketEnhanced(
   options: UseWebSocketOptions = {}
 ): UseWebSocketReturn {
+  // Get or create session ID on first render (persisted across reconnects)
+  const sessionIdRef = useRef<string>(getOrCreateSessionId());
+  const [sessionId, setSessionId] = useState<string>(sessionIdRef.current);
+
   const {
-    url: urlProp = getDefaultWebSocketUrl(),
+    url: urlProp,
     onMessage,
     onOpen,
     onClose,
@@ -133,6 +192,9 @@ export function useWebSocketEnhanced(
     enableSequenceTracking = true,
     maxQueueSize = 100,
   } = options;
+
+  // Compute the WebSocket URL with session ID
+  const wsUrl = urlProp || getDefaultWebSocketUrl(sessionIdRef.current);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -158,6 +220,22 @@ export function useWebSocketEnhanced(
   const [queuedEventCount, setQueuedEventCount] = useState(0);
   const [lastSequence, setLastSequence] = useState<number | null>(null);
   const [hasSequenceGap, setHasSequenceGap] = useState(false);
+
+  /**
+   * Clear the session ID and create a fresh one.
+   * Useful for "logout" or "new workspace" scenarios.
+   */
+  const clearSession = useCallback(() => {
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(SESSION_ID_STORAGE_KEY);
+    }
+    const newId = generateSessionId();
+    sessionIdRef.current = newId;
+    setSessionId(newId);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(SESSION_ID_STORAGE_KEY, newId);
+    }
+  }, []);
 
   /**
    * Calculate reconnection delay with exponential backoff.
@@ -443,9 +521,10 @@ export function useWebSocketEnhanced(
 
   /**
    * Establish a WebSocket connection.
+   * URL includes session_id for Global Session Identity.
    */
   const connect = useCallback(() => {
-    if (!urlProp) return;
+    if (!wsUrl) return;
 
     // Close existing connection if any
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -456,7 +535,8 @@ export function useWebSocketEnhanced(
     setConnectionState("connecting");
 
     try {
-      const ws = new WebSocket(urlProp);
+      console.log(`WebSocket: Connecting with session_id=${sessionIdRef.current.slice(0, 8)}...`);
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = (event) => {
@@ -524,7 +604,7 @@ export function useWebSocketEnhanced(
       scheduleReconnect();
     }
   }, [
-    urlProp,
+    wsUrl,
     onOpen,
     onClose,
     onError,
@@ -618,5 +698,7 @@ export function useWebSocketEnhanced(
     queuedEventCount,
     lastSequence,
     hasSequenceGap,
+    sessionId,
+    clearSession,
   };
 }

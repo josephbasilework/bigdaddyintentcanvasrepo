@@ -1,4 +1,4 @@
-"""SQLAlchemy models for canvas, nodes, dashboards, preferences, backups, jobs, artifacts, audio, turns, and MCP."""
+"""SQLAlchemy models for canvas, nodes, dashboards, preferences, backups, jobs, artifacts, audio, turns, sessions, and MCP."""
 
 from app.models.artifact import JobArtifact
 from app.models.audio_block import AudioBlock, AudioBlockStatus
@@ -12,6 +12,7 @@ from app.models.edge import Edge, RelationType
 from app.models.job import Job
 from app.models.node import Node, NodeType
 from app.models.preferences import Preferences
+from app.models.session import WorkspaceSession
 from app.models.turn import Turn, TurnActor, TurnType
 
 # MCP models are imported separately to avoid circular dependencies
@@ -34,4 +35,5 @@ __all__ = [
     "Turn",
     "TurnActor",
     "TurnType",
+    "WorkspaceSession",
 ]
