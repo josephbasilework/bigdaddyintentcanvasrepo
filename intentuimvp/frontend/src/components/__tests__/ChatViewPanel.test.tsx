@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { ChatViewPanel } from "../ChatView/ChatViewPanel";
-import type { TurnResponse } from "@/hooks/useChatTurns";
+import type { TurnResponse } from "@/hooks/turnTypes";
 
 describe("ChatViewPanel", () => {
   it("renders markdown and clarification tags", () => {

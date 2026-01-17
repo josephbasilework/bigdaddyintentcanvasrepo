@@ -5,18 +5,6 @@ import type { TurnListResponse, TurnResponse } from "./turnTypes";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const CHAT_TURN_TYPES = new Set([
-  "user_input",
-  "agent_response",
-  "system_message",
-  "assumption_presented",
-  "assumption_confirmed",
-  "assumption_rejected",
-  "assumption_modified",
-]);
-
-const isChatTurn = (turn: TurnResponse): boolean => CHAT_TURN_TYPES.has(turn.type);
-
 const mergeTurns = (current: TurnResponse[], incoming: TurnResponse[]): TurnResponse[] => {
   if (incoming.length === 0) {
     return current;
@@ -35,19 +23,19 @@ const mergeTurns = (current: TurnResponse[], incoming: TurnResponse[]): TurnResp
   });
 };
 
-export type UseChatTurnsOptions = {
+export type UseTurnsOptions = {
   sessionIds: string[];
   enabled?: boolean;
   pollIntervalMs?: number;
   limit?: number;
 };
 
-export const useChatTurns = ({
+export const useTurns = ({
   sessionIds,
   enabled = true,
   pollIntervalMs = 5000,
   limit = 200,
-}: UseChatTurnsOptions) => {
+}: UseTurnsOptions) => {
   const normalizedSessionIds = useMemo(
     () => Array.from(new Set(sessionIds.filter(Boolean))).sort(),
     [sessionIds]
@@ -73,7 +61,7 @@ export const useChatTurns = ({
         signal,
       });
       if (!response.ok) {
-        throw new Error(`Failed to load chat turns (${response.status})`);
+        throw new Error(`Failed to load turns (${response.status})`);
       }
       const data = (await response.json()) as TurnListResponse;
       const allTurns = data.turns ?? [];
@@ -84,7 +72,7 @@ export const useChatTurns = ({
         );
         lastSequenceBySession.current.set(sessionId, maxSequence);
       }
-      return allTurns.filter(isChatTurn);
+      return allTurns;
     },
     [limit]
   );
@@ -135,7 +123,7 @@ export const useChatTurns = ({
           const message =
             result.reason instanceof Error
               ? result.reason.message
-              : "Failed to load chat turns.";
+              : "Failed to load turns.";
           setError(message);
         }
       }

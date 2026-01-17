@@ -1,6 +1,7 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useChatTurns, type TurnResponse } from "./useChatTurns";
+import { useChatTurns } from "./useChatTurns";
+import type { TurnResponse } from "./turnTypes";
 
 const mockFetch = vi.fn();
 
