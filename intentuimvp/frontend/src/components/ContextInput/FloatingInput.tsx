@@ -361,7 +361,9 @@ export function FloatingInput({
         .floating-panel {
           margin-bottom: 0.75rem;
           display: flex;
-          justify-content: center;
+          flex-direction: column;
+          align-items: stretch;
+          gap: 0.75rem;
           width: 100%;
           transform-origin: bottom center;
           animation: panel-rise 0.2s ease-out;

@@ -44,19 +44,34 @@ export interface AssumptionSet {
   sessionId?: string;
 }
 
-export interface AssumptionsPanelProps {
-  /** Array of assumptions to display */
+export type WorkflowRoundStatus =
+  | "reviewing"
+  | "resolved"
+  | "executed"
+  | "dismissed"
+  | "superseded";
+
+export interface IntentWorkflowRound {
+  id: string;
+  createdAt: string;
+  commandText: string;
+  attachments: string[];
   assumptions: Assumption[];
-  /** Optional intent/assumption context */
   assumptionSet?: AssumptionSet;
-  /** Callback when user accepts an assumption */
+  clarifyingQuestions?: string[];
+  clarificationResponse?: string;
+  status: WorkflowRoundStatus;
+}
+
+export interface AssumptionsPanelProps {
+  id?: string;
+  currentRound: IntentWorkflowRound | null;
+  previousRounds?: IntentWorkflowRound[];
   onAccept: (id: string) => void;
-  /** Callback when user rejects an assumption */
   onReject: (id: string) => void;
-  /** Callback when user edits an assumption */
   onEdit: (id: string, text: string) => void;
-  /** Callback when user confirms all assumptions and proceeds */
   onConfirm: () => void;
-  /** Optional callback to dismiss the panel */
   onDismiss?: () => void;
+  onRequestRevision?: () => void;
+  onClarificationSubmit?: (response: string) => void;
 }

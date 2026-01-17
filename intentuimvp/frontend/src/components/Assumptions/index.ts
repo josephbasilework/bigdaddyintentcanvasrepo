@@ -5,5 +5,7 @@ export type {
   AssumptionSet,
   AssumptionStatus,
   AssumptionsPanelProps,
+  IntentWorkflowRound,
   IntentAlternative,
+  WorkflowRoundStatus,
 } from "./types";

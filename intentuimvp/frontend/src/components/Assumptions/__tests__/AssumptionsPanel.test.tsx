@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 import { AssumptionsPanel } from "../AssumptionsPanel";
-import type { Assumption, AssumptionSet } from "../types";
+import type { Assumption, AssumptionSet, IntentWorkflowRound } from "../types";
 
 const mockAssumptions: Assumption[] = [
   {
@@ -50,11 +50,23 @@ const mockAssumptionSet: AssumptionSet = {
   ],
 };
 
+const mockRound: IntentWorkflowRound = {
+  id: "round-1",
+  createdAt: "2025-01-01T00:00:00.000Z",
+  commandText: "Research vector databases",
+  attachments: [],
+  assumptions: mockAssumptions,
+  assumptionSet: mockAssumptionSet,
+  clarifyingQuestions: [],
+  status: "reviewing",
+};
+
 describe("AssumptionsPanel", () => {
   it("renders null when no assumptions provided", () => {
     const { container } = render(
       <AssumptionsPanel
-        assumptions={[]}
+        currentRound={null}
+        previousRounds={[]}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -67,7 +79,7 @@ describe("AssumptionsPanel", () => {
   it("renders assumptions correctly", () => {
     render(
       <AssumptionsPanel
-        assumptions={mockAssumptions}
+        currentRound={mockRound}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -76,7 +88,7 @@ describe("AssumptionsPanel", () => {
     );
 
     // Check title
-    expect(screen.getByText("Please Review These Assumptions")).toBeInTheDocument();
+    expect(screen.getByText("Intent Workflow")).toBeInTheDocument();
 
     // Check assumption texts
     expect(
@@ -94,7 +106,7 @@ describe("AssumptionsPanel", () => {
     const onAccept = vi.fn();
     render(
       <AssumptionsPanel
-        assumptions={mockAssumptions}
+        currentRound={mockRound}
         onAccept={onAccept}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -112,7 +124,7 @@ describe("AssumptionsPanel", () => {
     const onReject = vi.fn();
     render(
       <AssumptionsPanel
-        assumptions={mockAssumptions}
+        currentRound={mockRound}
         onAccept={vi.fn()}
         onReject={onReject}
         onEdit={vi.fn()}
@@ -130,7 +142,7 @@ describe("AssumptionsPanel", () => {
     const onEdit = vi.fn();
     render(
       <AssumptionsPanel
-        assumptions={mockAssumptions}
+        currentRound={mockRound}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={onEdit}
@@ -152,7 +164,7 @@ describe("AssumptionsPanel", () => {
   it("disables confirm button when not all assumptions are resolved", () => {
     render(
       <AssumptionsPanel
-        assumptions={mockAssumptions}
+        currentRound={mockRound}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -177,7 +189,10 @@ describe("AssumptionsPanel", () => {
     const onConfirm = vi.fn();
     render(
       <AssumptionsPanel
-        assumptions={resolvedAssumptions}
+        currentRound={{
+          ...mockRound,
+          assumptions: resolvedAssumptions,
+        }}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -196,7 +211,7 @@ describe("AssumptionsPanel", () => {
   it("displays correct category badges", () => {
     render(
       <AssumptionsPanel
-        assumptions={mockAssumptions}
+        currentRound={mockRound}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -212,7 +227,7 @@ describe("AssumptionsPanel", () => {
   it("displays confidence scores", () => {
     render(
       <AssumptionsPanel
-        assumptions={mockAssumptions}
+        currentRound={mockRound}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -228,7 +243,7 @@ describe("AssumptionsPanel", () => {
   it("displays explanation when provided", () => {
     render(
       <AssumptionsPanel
-        assumptions={mockAssumptions}
+        currentRound={mockRound}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -243,7 +258,7 @@ describe("AssumptionsPanel", () => {
     const onDismiss = vi.fn();
     render(
       <AssumptionsPanel
-        assumptions={mockAssumptions}
+        currentRound={mockRound}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -266,7 +281,10 @@ describe("AssumptionsPanel", () => {
 
     render(
       <AssumptionsPanel
-        assumptions={resolvedAssumptions}
+        currentRound={{
+          ...mockRound,
+          assumptions: resolvedAssumptions,
+        }}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -281,7 +299,7 @@ describe("AssumptionsPanel", () => {
   it("updates summary counts when assumptions change status", () => {
     const { rerender } = render(
       <AssumptionsPanel
-        assumptions={mockAssumptions}
+        currentRound={mockRound}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -297,7 +315,10 @@ describe("AssumptionsPanel", () => {
 
     rerender(
       <AssumptionsPanel
-        assumptions={updatedAssumptions}
+        currentRound={{
+          ...mockRound,
+          assumptions: updatedAssumptions,
+        }}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -311,8 +332,7 @@ describe("AssumptionsPanel", () => {
   it("renders intent summary details when provided", () => {
     render(
       <AssumptionsPanel
-        assumptions={mockAssumptions}
-        assumptionSet={mockAssumptionSet}
+        currentRound={mockRound}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -330,8 +350,7 @@ describe("AssumptionsPanel", () => {
   it("toggles reasoning and alternatives when explain is clicked", () => {
     render(
       <AssumptionsPanel
-        assumptions={mockAssumptions}
-        assumptionSet={mockAssumptionSet}
+        currentRound={mockRound}
         onAccept={vi.fn()}
         onReject={vi.fn()}
         onEdit={vi.fn()}
@@ -350,5 +369,33 @@ describe("AssumptionsPanel", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Alternate interpretations")).toBeInTheDocument();
     expect(screen.getByText("Plan")).toBeInTheDocument();
+  });
+
+  it("submits clarifying responses when provided", () => {
+    const onClarificationSubmit = vi.fn();
+    const clarificationRound: IntentWorkflowRound = {
+      ...mockRound,
+      assumptions: [],
+      clarifyingQuestions: ["Clarify the goal for this request."],
+    };
+
+    render(
+      <AssumptionsPanel
+        currentRound={clarificationRound}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onEdit={vi.fn()}
+        onConfirm={vi.fn()}
+        onClarificationSubmit={onClarificationSubmit}
+      />
+    );
+
+    expect(screen.getByText("Clarify the goal for this request.")).toBeInTheDocument();
+
+    const textarea = screen.getByLabelText("Your response");
+    fireEvent.change(textarea, { target: { value: "Focus on Q3 revenue." } });
+    fireEvent.click(screen.getByRole("button", { name: "Send clarification" }));
+
+    expect(onClarificationSubmit).toHaveBeenCalledWith("Focus on Q3 revenue.");
   });
 });

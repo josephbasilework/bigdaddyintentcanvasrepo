@@ -323,6 +323,7 @@ describe('workspace canvas', () => {
 
   it('persists assumption resolutions before executing commands', async () => {
     let batchPayload: Record<string, unknown> | null = null;
+    let completionSessionId: string | null = null;
 
     fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input.toString();
@@ -333,6 +334,15 @@ describe('workspace canvas', () => {
         const rawBody = init?.body ? String(init.body) : '';
         batchPayload = rawBody ? JSON.parse(rawBody) : null;
         return Promise.resolve(createResponse({ resolved_count: 1 }));
+      }
+      if (url.includes('/api/context/sessions/') && url.endsWith('/complete')) {
+        const parts = url.split('/api/context/sessions/');
+        const sessionPart = parts[1] ?? '';
+        completionSessionId = sessionPart.split('/')[0] || null;
+        return Promise.resolve(createResponse({
+          status: 'completed',
+          session_id: completionSessionId,
+        }));
       }
       if (url.includes('/api/context/assumptions')) {
         return Promise.resolve(createResponse({
@@ -387,6 +397,58 @@ describe('workspace canvas', () => {
         },
       ],
     });
+    await waitFor(() => expect(completionSessionId).toBe('session-123'));
+  });
+
+  it('treats edited assumptions as accepted', async () => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/api/workspace')) {
+        return Promise.resolve(createResponse({ nodes: [], edges: [] }));
+      }
+      if (url.includes('/api/context/assumptions')) {
+        return Promise.resolve(createResponse({
+          intent: 'capture',
+          confidence: 0.4,
+          alternatives: [],
+          assumptions: [
+            {
+              id: 'assumption-1',
+              text: 'Use last quarter data',
+              confidence: 0.4,
+              category: 'parameter',
+              explanation: null,
+            },
+          ],
+          reasoning: '',
+          should_auto_execute: false,
+          session_id: 'session-123',
+        }));
+      }
+      return Promise.resolve(createResponse({}));
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const commandInput = screen.getByRole('textbox', { name: /command input/i });
+    fireEvent.change(commandInput, { target: { value: 'Capture metrics' } });
+    fireEvent.keyDown(commandInput, { key: 'Enter' });
+
+    const editButton = await screen.findByRole('button', { name: 'Edit' });
+    fireEvent.click(editButton);
+
+    const editor = screen.getByLabelText('Edit assumption');
+    fireEvent.change(editor, { target: { value: 'Use year-to-date data' } });
+
+    const saveButton = screen.getByRole('button', { name: 'Save' });
+    fireEvent.click(saveButton);
+
+    expect(await screen.findByText(/Accepted/)).toBeInTheDocument();
+    expect(
+      await screen.findByRole('button', { name: /continue with execution/i })
+    ).toBeInTheDocument();
   });
 
   it('uses the current zoom scale for draggable nodes', async () => {

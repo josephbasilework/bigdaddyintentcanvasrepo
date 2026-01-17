@@ -6,7 +6,11 @@ import { ChatViewPanel } from "@/components/ChatView";
 import { EventsViewPanel } from "@/components/EventsView";
 import { WheelViewPanel } from "@/components/WheelView";
 import { AssumptionsPanel } from "@/components/Assumptions";
-import type { Assumption, AssumptionSet } from "@/components/Assumptions";
+import type {
+  Assumption,
+  AssumptionSet,
+  IntentWorkflowRound,
+} from "@/components/Assumptions";
 import { useCanvasStore, type CanvasNode } from "@/state/canvasStore";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useChatTurns } from "@/hooks/useChatTurns";
@@ -32,6 +36,10 @@ type CommandSubmissionLog = {
 type SelectionScope = {
   selected_nodes: string[];
   selected_edges: string[];
+};
+
+type WorkflowRound = IntentWorkflowRound & {
+  selection: SelectionScope;
 };
 
 const getSelectionIds = (
@@ -61,12 +69,6 @@ const getSelectionScopeItems = (
   });
 };
 
-type PendingCommand = {
-  text: string;
-  attachments: string[];
-  selection: SelectionScope;
-};
-
 type AssumptionResponse = {
   id: string;
   text: string;
@@ -88,6 +90,7 @@ type AssumptionSetResponse = {
   reasoning: string;
   should_auto_execute: boolean;
   session_id?: string | null;
+  clarifying_questions?: string[] | null;
 };
 
 type AssumptionResolutionPayload = {
@@ -124,6 +127,107 @@ const mapAssumptionResponse = (assumption: AssumptionResponse): Assumption => ({
   status: "pending",
   explanation: assumption.explanation ?? undefined,
 });
+
+const createRoundId = (): string => {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `round-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
+const buildClarifyingQuestions = (
+  assumptionData: AssumptionSetResponse
+): string[] => {
+  if (
+    assumptionData.clarifying_questions &&
+    assumptionData.clarifying_questions.length > 0
+  ) {
+    return assumptionData.clarifying_questions;
+  }
+  if (assumptionData.assumptions.length > 0 || assumptionData.should_auto_execute) {
+    return [];
+  }
+  if (assumptionData.alternatives.length > 0) {
+    return ["Which of these intents best matches your goal?"];
+  }
+  return ["Can you clarify what you want to accomplish?"];
+};
+
+const createWorkflowRound = (
+  assumptionData: AssumptionSetResponse,
+  commandText: string,
+  attachments: string[],
+  selection: SelectionScope,
+  options: { force?: boolean } = {}
+): WorkflowRound | null => {
+  const mappedAssumptions = assumptionData.assumptions.map(mapAssumptionResponse);
+  const clarifyingQuestions = buildClarifyingQuestions(assumptionData);
+  const shouldCreate =
+    options.force || mappedAssumptions.length > 0 || clarifyingQuestions.length > 0;
+
+  if (!shouldCreate) {
+    return null;
+  }
+
+  const assumptionSet: AssumptionSet = {
+    intent: assumptionData.intent,
+    intentDescription: assumptionData.intent_description ?? undefined,
+    confidence: assumptionData.confidence,
+    reasoning: assumptionData.reasoning,
+    alternatives: assumptionData.alternatives ?? [],
+    sessionId: assumptionData.session_id ?? undefined,
+  };
+
+  return {
+    id: assumptionData.session_id ?? createRoundId(),
+    createdAt: new Date().toISOString(),
+    commandText,
+    attachments,
+    selection,
+    assumptions: mappedAssumptions,
+    assumptionSet,
+    clarifyingQuestions,
+    status: "reviewing",
+  };
+};
+
+const buildRevisionPrompt = (round: WorkflowRound, note?: string): string => {
+  const lines: string[] = [
+    "Please revise the proposal and assumptions based on the feedback below.",
+    "",
+    `Original request: ${round.commandText}`,
+  ];
+
+  if (round.assumptionSet?.intent) {
+    lines.push(`Current proposal: ${round.assumptionSet.intent}`);
+  }
+  if (round.assumptionSet?.intentDescription) {
+    lines.push(`Proposal details: ${round.assumptionSet.intentDescription}`);
+  }
+
+  if (round.assumptions.length > 0) {
+    lines.push("", "Assumption feedback:");
+    for (const assumption of round.assumptions) {
+      const normalizedText = assumption.text.trim();
+      const normalizedOriginal = assumption.originalText.trim();
+      if (
+        assumption.status === "accepted" &&
+        normalizedText !== normalizedOriginal
+      ) {
+        lines.push(`- edited: \"${normalizedOriginal}\" -> \"${normalizedText}\"`);
+        continue;
+      }
+      lines.push(`- ${assumption.status}: ${normalizedText}`);
+    }
+  }
+
+  if (note) {
+    lines.push("", `User clarification: ${note}`);
+  }
+
+  lines.push("", "Return an updated proposal with any remaining assumptions.");
+  return lines.join("\n");
+};
 
 const buildAssumptionResolutions = (
   assumptions: Assumption[]
@@ -177,11 +281,31 @@ const persistAssumptionResolutions = async (
   }
 };
 
+const completeAssumptionSession = async (
+  sessionId?: string | null
+): Promise<void> => {
+  if (!sessionId) {
+    return;
+  }
+
+  const response = await fetch(
+    `${API_BASE_URL}/api/context/sessions/${sessionId}/complete`,
+    {
+      method: "POST",
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Assumption session completion error: ${response.status} ${response.statusText}`
+    );
+  }
+};
+
 export default function Home() {
   const [commands, setCommands] = useState<CommandSubmissionLog[]>([]);
-  const [assumptions, setAssumptions] = useState<Assumption[]>([]);
-  const [assumptionSet, setAssumptionSet] = useState<AssumptionSet | null>(null);
-  const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
+  const [workflowRounds, setWorkflowRounds] = useState<WorkflowRound[]>([]);
+  const [activeRoundId, setActiveRoundId] = useState<string | null>(null);
   const [routingError, setRoutingError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("Ready for commands.");
   const [attachments, setAttachments] = useState<string[]>([]);
@@ -201,6 +325,20 @@ export default function Home() {
     selected_nodes: selectionIds,
     selected_edges: [],
   };
+
+  const currentRound = useMemo(() => {
+    if (!activeRoundId) {
+      return null;
+    }
+    return workflowRounds.find((round) => round.id === activeRoundId) ?? null;
+  }, [activeRoundId, workflowRounds]);
+
+  const previousRounds = useMemo(() => {
+    if (!activeRoundId) {
+      return workflowRounds;
+    }
+    return workflowRounds.filter((round) => round.id !== activeRoundId);
+  }, [activeRoundId, workflowRounds]);
 
   // Handle WebSocket messages for real-time node updates from backend
   const handleWebSocketMessage = useCallback(
@@ -294,9 +432,18 @@ export default function Home() {
   });
 
   const chatSessionIds = useMemo(() => {
-    const ids = [wsSessionId, assumptionSet?.sessionId].filter(Boolean) as string[];
-    return Array.from(new Set(ids));
-  }, [wsSessionId, assumptionSet?.sessionId]);
+    const ids = new Set<string>();
+    if (wsSessionId) {
+      ids.add(wsSessionId);
+    }
+    for (const round of workflowRounds) {
+      const sessionId = round.assumptionSet?.sessionId;
+      if (sessionId) {
+        ids.add(sessionId);
+      }
+    }
+    return Array.from(ids);
+  }, [wsSessionId, workflowRounds]);
 
   const isChatOpen = activeView === "chat";
   const isWheelOpen = activeView === "wheel";
@@ -326,8 +473,19 @@ export default function Home() {
       setStatusMessage(`Routing error: ${routingError}`);
       return;
     }
-    if (assumptions.length > 0) {
-      setStatusMessage(`${assumptions.length} assumptions need review.`);
+    if (currentRound && currentRound.status === "reviewing") {
+      if ((currentRound.clarifyingQuestions?.length ?? 0) > 0) {
+        setStatusMessage("Clarification needed.");
+        return;
+      }
+      const pendingCount = currentRound.assumptions.filter(
+        (assumption) => assumption.status === "pending"
+      ).length;
+      if (pendingCount > 0) {
+        setStatusMessage(`${pendingCount} assumptions need review.`);
+        return;
+      }
+      setStatusMessage("Review the proposal.");
       return;
     }
     if (commands.length > 0) {
@@ -335,7 +493,16 @@ export default function Home() {
       return;
     }
     setStatusMessage("Ready for commands.");
-  }, [assumptions.length, commands.length, routingError]);
+  }, [commands.length, currentRound, routingError]);
+
+  useEffect(() => {
+    if (!activeRoundId) {
+      return;
+    }
+    if (!workflowRounds.some((round) => round.id === activeRoundId)) {
+      setActiveRoundId(null);
+    }
+  }, [activeRoundId, workflowRounds]);
 
   const handleFilesDrop = (files: File[]) => {
     const names = files.map((file) => file.name).filter(Boolean);
@@ -355,11 +522,14 @@ export default function Home() {
     setAttachments((prev) => prev.filter((item) => item !== name));
   };
 
-  const clearAssumptions = () => {
-    setAssumptions([]);
-    setAssumptionSet(null);
-    setPendingCommand(null);
-  };
+  const updateRound = useCallback(
+    (roundId: string, updater: (round: WorkflowRound) => WorkflowRound) => {
+      setWorkflowRounds((prev) =>
+        prev.map((round) => (round.id === roundId ? updater(round) : round))
+      );
+    },
+    []
+  );
 
   const queueCommand = async (
     value: string,
@@ -391,7 +561,6 @@ export default function Home() {
     setAttachments([]);
     // Node creation is now handled by the backend via WebSocket broadcast
     // The handleWebSocketMessage callback will add the node when it receives "node.created"
-    console.log("Command queued:", data);
   };
 
   const handleCommandSubmit = async (value: string) => {
@@ -424,28 +593,17 @@ export default function Home() {
       }
 
       const assumptionData: AssumptionSetResponse = await assumptionResponse.json();
-      console.log("DEBUG: Assumptions API response:", assumptionData);
-      console.log("DEBUG: Assumptions count:", assumptionData.assumptions?.length ?? 0);
+      const nextRound = createWorkflowRound(
+        assumptionData,
+        value,
+        attachmentsForSubmission,
+        selection
+      );
 
-      if (assumptionData.assumptions.length > 0) {
-        const mapped = assumptionData.assumptions.map(mapAssumptionResponse);
-        console.log("DEBUG: Setting assumptions state:", mapped);
-        setAssumptions(mapped);
-        setAssumptionSet({
-          intent: assumptionData.intent,
-          intentDescription: assumptionData.intent_description ?? undefined,
-          confidence: assumptionData.confidence,
-          reasoning: assumptionData.reasoning,
-          alternatives: assumptionData.alternatives ?? [],
-          sessionId: assumptionData.session_id ?? undefined,
-        });
-        setPendingCommand({
-          text: value,
-          attachments: attachmentsForSubmission,
-          selection,
-        });
+      if (nextRound) {
+        setWorkflowRounds((prev) => [...prev, nextRound]);
+        setActiveRoundId(nextRound.id);
         setAttachments([]);
-        console.log("DEBUG: State updated, returning early (should show panel)");
         return;
       }
     } catch (error) {
@@ -461,64 +619,168 @@ export default function Home() {
   };
 
   const handleAcceptAssumption = (id: string) => {
-    setAssumptions((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, status: "accepted" as const } : a))
-    );
+    if (!activeRoundId || currentRound?.status !== "reviewing") {
+      return;
+    }
+    updateRound(activeRoundId, (round) => ({
+      ...round,
+      assumptions: round.assumptions.map((assumption) =>
+        assumption.id === id
+          ? { ...assumption, status: "accepted" as const }
+          : assumption
+      ),
+    }));
   };
 
   const handleRejectAssumption = (id: string) => {
-    setAssumptions((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, status: "rejected" as const } : a))
-    );
+    if (!activeRoundId || currentRound?.status !== "reviewing") {
+      return;
+    }
+    updateRound(activeRoundId, (round) => ({
+      ...round,
+      assumptions: round.assumptions.map((assumption) =>
+        assumption.id === id
+          ? { ...assumption, status: "rejected" as const }
+          : assumption
+      ),
+    }));
   };
 
   const handleEditAssumption = (id: string, text: string) => {
-    setAssumptions((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, text } : a))
-    );
+    if (!activeRoundId || currentRound?.status !== "reviewing") {
+      return;
+    }
+    updateRound(activeRoundId, (round) => ({
+      ...round,
+      assumptions: round.assumptions.map((assumption) =>
+        assumption.id === id
+          ? { ...assumption, text, status: "accepted" as const }
+          : assumption
+      ),
+    }));
   };
 
   const handleConfirmAssumptions = async () => {
-    const accepted = assumptions.filter((a) => a.status === "accepted");
-    const rejected = assumptions.filter((a) => a.status === "rejected");
-    const commandToSend = pendingCommand;
-    const resolutions = buildAssumptionResolutions(assumptions);
-
-    console.log("Assumptions confirmed:", {
-      accepted,
-      rejected,
-      sessionId: assumptionSet?.sessionId,
-    });
+    if (!currentRound || currentRound.status !== "reviewing") {
+      return;
+    }
+    if ((currentRound.clarifyingQuestions?.length ?? 0) > 0) {
+      return;
+    }
+    const roundId = currentRound.id;
+    const resolutions = buildAssumptionResolutions(currentRound.assumptions);
 
     try {
       await persistAssumptionResolutions({
-        session_id: assumptionSet?.sessionId ?? undefined,
+        session_id: currentRound.assumptionSet?.sessionId ?? undefined,
         resolutions,
       });
     } catch (error) {
       console.error("Failed to store assumption resolutions:", error);
     }
 
-    clearAssumptions();
-
-    if (!commandToSend) {
-      return;
+    try {
+      await completeAssumptionSession(currentRound.assumptionSet?.sessionId ?? undefined);
+    } catch (error) {
+      console.error("Failed to mark assumption session complete:", error);
     }
+
+    updateRound(roundId, (round) => ({ ...round, status: "resolved" }));
 
     try {
       await queueCommand(
-        commandToSend.text,
-        commandToSend.attachments,
-        commandToSend.selection
+        currentRound.commandText,
+        currentRound.attachments,
+        currentRound.selection
       );
+      updateRound(roundId, (round) => ({ ...round, status: "executed" }));
     } catch (error) {
       console.error("Routing failed:", error);
       setRoutingError(error instanceof Error ? error.message : "Unknown error");
     }
   };
 
+  const requestFollowupRound = async (note?: string) => {
+    if (!currentRound || currentRound.status !== "reviewing") {
+      return;
+    }
+    setRoutingError(null);
+    const resolutions = buildAssumptionResolutions(currentRound.assumptions);
+    if (resolutions.length > 0) {
+      try {
+        await persistAssumptionResolutions({
+          session_id: currentRound.assumptionSet?.sessionId ?? undefined,
+          resolutions,
+        });
+      } catch (error) {
+        console.error("Failed to store assumption revisions:", error);
+      }
+    }
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/context/assumptions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          text: buildRevisionPrompt(currentRound, note),
+          attachments: currentRound.attachments,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `Assumptions API error: ${response.status} ${response.statusText}`
+        );
+      }
+
+      const assumptionData: AssumptionSetResponse = await response.json();
+      const nextRound = createWorkflowRound(
+        assumptionData,
+        currentRound.commandText,
+        currentRound.attachments,
+        currentRound.selection,
+        { force: true }
+      );
+
+      if (!nextRound) {
+        return;
+      }
+
+      setWorkflowRounds((prev) =>
+        prev
+          .map((round) =>
+            round.id === currentRound.id
+              ? {
+                  ...round,
+                  status: "superseded",
+                  clarificationResponse: note ?? round.clarificationResponse,
+                }
+              : round
+          )
+          .concat(nextRound)
+      );
+      setActiveRoundId(nextRound.id);
+    } catch (error) {
+      console.error("Assumptions follow-up failed:", error);
+      setRoutingError(error instanceof Error ? error.message : "Unknown error");
+    }
+  };
+
+  const handleRequestRevision = () => {
+    void requestFollowupRound();
+  };
+
+  const handleClarificationSubmit = (note: string) => {
+    void requestFollowupRound(note);
+  };
+
   const handleDismissAssumptions = () => {
-    clearAssumptions();
+    if (!activeRoundId) {
+      return;
+    }
+    updateRound(activeRoundId, (round) => ({ ...round, status: "dismissed" }));
+    setActiveRoundId(null);
   };
 
   const handleViewToggle = (view: "chat" | "wheel" | "events") => {
@@ -552,13 +814,42 @@ export default function Home() {
     />
   ) : null;
 
-  const panelContent = isChatOpen
+  const visiblePreviousRounds = previousRounds.filter(
+    (round) => round.status !== "dismissed"
+  );
+
+  const workflowPanel =
+    currentRound || visiblePreviousRounds.length > 0 ? (
+      <AssumptionsPanel
+        key={currentRound?.id ?? "intent-workflow"}
+        id="intent-workflow-panel"
+        currentRound={currentRound}
+        previousRounds={visiblePreviousRounds}
+        onAccept={handleAcceptAssumption}
+        onReject={handleRejectAssumption}
+        onEdit={handleEditAssumption}
+        onConfirm={handleConfirmAssumptions}
+        onDismiss={handleDismissAssumptions}
+        onRequestRevision={handleRequestRevision}
+        onClarificationSubmit={handleClarificationSubmit}
+      />
+    ) : null;
+
+  const viewPanel = isChatOpen
     ? chatPanel
     : isWheelOpen
       ? wheelPanel
       : isEventsOpen
         ? eventsPanel
         : null;
+
+  const panelContent =
+    workflowPanel || viewPanel ? (
+      <>
+        {workflowPanel}
+        {viewPanel}
+      </>
+    ) : null;
 
   return (
     <>
@@ -607,18 +898,6 @@ export default function Home() {
           </div>
         )}
       </Canvas>
-      {console.log("DEBUG: Render check - assumptions.length:", assumptions.length)}
-      {assumptions.length > 0 && (
-        <AssumptionsPanel
-          assumptions={assumptions}
-          assumptionSet={assumptionSet ?? undefined}
-          onAccept={handleAcceptAssumption}
-          onReject={handleRejectAssumption}
-          onEdit={handleEditAssumption}
-          onConfirm={handleConfirmAssumptions}
-          onDismiss={handleDismissAssumptions}
-        />
-      )}
       <FloatingInput
         onSubmit={handleCommandSubmit}
         onFilesDrop={handleFilesDrop}
