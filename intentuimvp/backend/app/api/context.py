@@ -524,6 +524,7 @@ async def get_session(session_id: str) -> dict[str, Any]:
         "created_at": session["created_at"],
         "resolved_assumptions": session["resolved_assumptions"],
         "is_complete": session["is_complete"],
+        "clarifications": session.get("clarifications", []),
     }
 
 

@@ -100,8 +100,15 @@ async def test_route_command_submission_passes_selection(monkeypatch) -> None:
     captured: dict[str, ContextPayload] = {}
 
     class FakeRouter:
-        async def route(self, payload: ContextPayload) -> RoutingDecision:
+        async def route(
+            self,
+            payload: ContextPayload,
+            *,
+            user_id: str | None = None,
+            session_id: str | None = None,
+        ) -> RoutingDecision:
             captured["payload"] = payload
+            captured["session_id"] = session_id
             return RoutingDecision(
                 handler="help_handler",
                 confidence=1.0,
@@ -109,7 +116,7 @@ async def test_route_command_submission_passes_selection(monkeypatch) -> None:
                 reason="ok",
             )
 
-    monkeypatch.setattr("app.api.commands.get_context_router", lambda: FakeRouter())
+    monkeypatch.setattr("app.api.commands.get_input_router", lambda: FakeRouter())
 
     submission = CommandSubmission(
         correlation_id="test",
@@ -119,6 +126,7 @@ async def test_route_command_submission_passes_selection(monkeypatch) -> None:
             selected_nodes=["node-1"],
             selected_edges=["edge-1"],
         ),
+        session_id="session-123",
     )
 
     await _route_command_submission(submission)
@@ -127,3 +135,4 @@ async def test_route_command_submission_passes_selection(monkeypatch) -> None:
     assert payload.selection is not None
     assert payload.selection.selected_nodes == ["node-1"]
     assert payload.selection.selected_edges == ["edge-1"]
+    assert captured["session_id"] == "session-123"

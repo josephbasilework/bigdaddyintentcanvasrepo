@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.context.models import ContextPayload, SelectionScope
-from app.context.router import get_context_router
+from app.context.input_router import get_input_router
 from app.database import get_db
 from app.models.turn import TurnActor, TurnType
 from app.services.turns import log_turn_for_user_sync
@@ -52,6 +52,7 @@ class CommandSubmission:
     command: str
     attachments: list[str]
     selection: SelectionScope | None = None
+    session_id: str | None = None
 
 
 def _validate_command(command: str) -> None:
@@ -75,7 +76,7 @@ async def _route_command_submission(submission: CommandSubmission) -> None:
     """Route a command submission through the context router and execute handler."""
     from app.handlers import get_handler_executor
 
-    router = get_context_router()
+    router = get_input_router()
     executor = get_handler_executor()
     payload = ContextPayload(
         text=submission.command,
@@ -85,7 +86,11 @@ async def _route_command_submission(submission: CommandSubmission) -> None:
 
     try:
         decision = await asyncio.wait_for(
-            router.route(payload),
+            router.route(
+                payload,
+                user_id="default_user",
+                session_id=submission.session_id,
+            ),
             timeout=ROUTING_HANDOFF_TIMEOUT_S,
         )
         logger.info(
@@ -141,6 +146,7 @@ async def submit_command(
         command=command,
         attachments=payload.attachments or [],
         selection=payload.selection,
+        session_id=payload.session_id,
     )
 
     enqueue_command(submission)

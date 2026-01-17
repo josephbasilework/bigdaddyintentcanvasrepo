@@ -27,13 +27,31 @@ from app.agui import (
 )
 from app.agui.schemas import AgentProgressPayload as AgentProgressPayloadSchema
 from app.context.models import ContextPayload, RoutingDecision
+from app.database import SessionLocal
 from app.models.node import NodeType
+from app.repositories.preferences import PreferencesRepository
+from app.schemas.preferences import PreferencesData
+from app.services.input_classifier import (
+    extract_configuration_updates,
+    strip_note_prefix,
+)
 from app.ws.websocket import manager as ws_manager
 
 logger = logging.getLogger(__name__)
 
+# Default user identifier for MVP flows
+DEFAULT_USER_ID = "default_user"
+
 # Default node position if not specified
 DEFAULT_NODE_POSITION = CanvasNodePosition(x=100, y=100, z=0)
+
+
+def _preview_text(text: str, limit: int = 120) -> str:
+    """Create a short preview for user-facing acknowledgments."""
+    normalized = text.strip()
+    if len(normalized) <= limit:
+        return normalized
+    return f"{normalized[: max(0, limit - 3)].rstrip()}..."
 
 
 def _generate_call_id() -> str:
@@ -107,6 +125,14 @@ class HandlerExecutor:
                     result = await self._create_handler(payload, run_id)
                 case "chat_handler":
                     result = await self._chat_handler(payload, run_id)
+                case "note_handler":
+                    result = await self._note_handler(payload, run_id)
+                case "configuration_handler":
+                    result = await self._configuration_handler(payload, run_id)
+                case "clarification_handler":
+                    result = await self._clarification_handler(payload, run_id)
+                case "clarification_response_handler":
+                    result = await self._clarification_response_handler(payload, run_id)
                 case "research_handler":
                     result = await self._research_handler(payload, run_id)
                 case "analyze_handler":
@@ -151,6 +177,7 @@ class HandlerExecutor:
         run_id: str,
         node_type: NodeType,
         content: str,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Helper to execute canvas_create_node tool with streaming.
 
@@ -172,6 +199,7 @@ class HandlerExecutor:
                 "type": node_type.value if isinstance(node_type, NodeType) else node_type,
                 "content": content,
                 "position": DEFAULT_NODE_POSITION.model_dump(),
+                "metadata": metadata,
             },
         )
 
@@ -181,6 +209,7 @@ class HandlerExecutor:
                 "type": node_type,
                 "content": content,
                 "position": DEFAULT_NODE_POSITION.model_dump(),
+                "metadata": metadata,
             },
         )
 
@@ -261,6 +290,121 @@ class HandlerExecutor:
         # Execute canvas_create_node tool
         await self._send_progress(run_id, "chat_handler", "Creating text node...", 0.3)
         return await self._execute_canvas_create_node(run_id, NodeType.TEXT, text)
+
+    async def _note_handler(
+        self,
+        payload: ContextPayload,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Handle note-style inputs by capturing a text node."""
+        text = strip_note_prefix(payload.text)
+        content = text if text else payload.text.strip()
+        if not content:
+            content = "Note"
+
+        metadata = {"classification": "note"}
+        await self._send_progress(run_id, "note_handler", "Capturing note...", 0.3)
+        return await self._execute_canvas_create_node(
+            run_id,
+            NodeType.TEXT,
+            content,
+            metadata=metadata,
+        )
+
+    async def _configuration_handler(
+        self,
+        payload: ContextPayload,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Handle configuration updates by applying preference changes."""
+        text = payload.text.strip()
+        updates, _signals = extract_configuration_updates(text)
+
+        await self._send_progress(
+            run_id,
+            "configuration_handler",
+            "Applying configuration...",
+            0.3,
+        )
+
+        if not updates:
+            message = (
+                "No configuration updates recognized. Try 'set theme to dark' "
+                "or 'zoom to 120%'."
+            )
+            return await self._execute_canvas_create_node(
+                run_id,
+                NodeType.TEXT,
+                message,
+                metadata={"classification": "configuration", "status": "no_updates"},
+            )
+
+        try:
+            applied = self._apply_configuration_updates(updates)
+            summary = ", ".join(f"{key}={value}" for key, value in applied.items())
+            message = f"Updated preferences: {summary}"
+            metadata = {"classification": "configuration", "updates": applied}
+        except Exception as exc:
+            logger.error("Configuration update failed", exc_info=True)
+            message = f"Configuration update failed: {exc}"
+            metadata = {"classification": "configuration", "status": "error"}
+
+        return await self._execute_canvas_create_node(
+            run_id,
+            NodeType.TEXT,
+            message,
+            metadata=metadata,
+        )
+
+    async def _clarification_handler(
+        self,
+        payload: ContextPayload,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Handle ambiguous inputs by asking for clarification."""
+        preview = _preview_text(payload.text)
+        message = "Can you clarify what you want to do?"
+        if preview:
+            message = f"Clarification needed for: {preview}. Can you clarify?"
+
+        await self._send_progress(
+            run_id,
+            "clarification_handler",
+            "Requesting clarification...",
+            0.3,
+        )
+
+        return await self._execute_canvas_create_node(
+            run_id,
+            NodeType.TEXT,
+            message,
+            metadata={"classification": "ambiguous", "original_input": preview},
+        )
+
+    async def _clarification_response_handler(
+        self,
+        payload: ContextPayload,
+        run_id: str,
+    ) -> dict[str, Any]:
+        """Handle clarification responses with acknowledgment."""
+        preview = _preview_text(payload.text)
+        message = "Clarification noted."
+        if preview:
+            message = f"Clarification noted: {preview}"
+
+        await self._send_progress(
+            run_id,
+            "clarification_response_handler",
+            "Recording clarification...",
+            0.3,
+        )
+
+        return await self._execute_canvas_create_node(
+            run_id,
+            NodeType.TEXT,
+            message,
+            metadata={"classification": "clarification_response"},
+        )
 
     async def _research_handler(
         self,
@@ -417,6 +561,19 @@ You can also type natural language commands and I'll do my best to understand.
         return await self._execute_canvas_create_node(
             run_id, NodeType.DOCUMENT, f"Judgment: {text}"
         )
+
+    def _apply_configuration_updates(self, updates: dict[str, Any]) -> dict[str, Any]:
+        """Apply preference updates and return the normalized values."""
+        with SessionLocal() as db:
+            repo = PreferencesRepository(db)
+            prefs = repo.get_by_user(DEFAULT_USER_ID)
+            base = prefs.preferences if prefs else PreferencesData().model_dump()
+            merged = dict(base)
+            merged.update(updates)
+            validated = PreferencesData(**merged)
+            repo.upsert_preferences(DEFAULT_USER_ID, validated.model_dump())
+        normalized = validated.model_dump()
+        return {key: normalized.get(key) for key in updates}
 
     async def _send_progress(
         self,

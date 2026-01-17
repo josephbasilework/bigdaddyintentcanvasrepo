@@ -47,6 +47,7 @@ class AssumptionStore:
             "is_complete": False,
             "assumptions": normalized_assumptions,
             "expected_assumption_ids": expected_ids,
+            "clarifications": [],
         }
         if original_text is not None:
             session["original_text"] = original_text
@@ -216,6 +217,23 @@ class AssumptionStore:
         if not session:
             return []
         return session.get("assumptions", [])
+
+    def record_clarification(self, session_id: str, text: str) -> dict[str, Any]:
+        """Record a clarification response for a session."""
+        if session_id not in self._sessions:
+            self._init_session(session_id)
+        entry = {"text": text.strip(), "timestamp": time.time()}
+        clarifications = self._sessions[session_id].setdefault("clarifications", [])
+        clarifications.append(entry)
+        logger.info("Recorded clarification for session %s", session_id)
+        return entry
+
+    def get_clarifications(self, session_id: str) -> list[dict[str, Any]]:
+        """Get clarification responses for a session."""
+        session = self._sessions.get(session_id)
+        if not session:
+            return []
+        return session.get("clarifications", [])
 
     def mark_complete(self, session_id: str) -> None:
         """Mark a session as complete.
