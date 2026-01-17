@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 interface FloatingInputProps {
   /** Callback when user submits input (pressed Enter) */
@@ -19,11 +19,23 @@ interface FloatingInputProps {
   autoFocus?: boolean;
   /** Maximum length of input */
   maxLength?: number;
+  /** Optional panel content rendered above the input stack */
+  panelContent?: ReactNode;
+  /** Optional toggle config for the panel */
+  panelToggle?: PanelToggleConfig;
 }
 
 interface SelectionScopeItem {
   id: string;
   label: string;
+}
+
+interface PanelToggleConfig {
+  label: string;
+  activeLabel?: string;
+  ariaControls?: string;
+  isOpen: boolean;
+  onToggle: () => void;
 }
 
 interface SlashTemplate {
@@ -90,6 +102,8 @@ export function FloatingInput({
   placeholder = "Type a command...",
   autoFocus = true,
   maxLength = 1000,
+  panelContent,
+  panelToggle,
 }: FloatingInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
@@ -199,6 +213,7 @@ export function FloatingInput({
           Drop files to attach
         </div>
       )}
+      {panelContent && <div className="floating-panel">{panelContent}</div>}
       {selectionCount > 0 && (
         <div className="selection-scope" role="region" aria-label="Selection scope">
           <div className="selection-scope-header">
@@ -273,6 +288,21 @@ export function FloatingInput({
           ))}
         </div>
       )}
+      {panelToggle && (
+        <div className="panel-toggle">
+          <button
+            type="button"
+            className={`panel-toggle-button${panelToggle.isOpen ? " is-active" : ""}`}
+            onClick={panelToggle.onToggle}
+            aria-expanded={panelToggle.isOpen}
+            aria-controls={panelToggle.ariaControls}
+          >
+            {panelToggle.isOpen
+              ? panelToggle.activeLabel ?? panelToggle.label
+              : panelToggle.label}
+          </button>
+        </div>
+      )}
       <input
         ref={inputRef}
         type="text"
@@ -313,6 +343,10 @@ export function FloatingInput({
           color: #e2e8f0;
           font-size: 0.85rem;
           pointer-events: none;
+        }
+
+        .floating-panel {
+          margin-bottom: 0.75rem;
         }
 
         .selection-scope {
@@ -413,6 +447,42 @@ export function FloatingInput({
         }
 
         .attachment-remove:focus-visible {
+          outline: 2px solid var(--focus-ring);
+          outline-offset: 2px;
+        }
+
+        .panel-toggle {
+          display: flex;
+          justify-content: flex-start;
+          margin-bottom: 0.5rem;
+        }
+
+        .panel-toggle-button {
+          display: inline-flex;
+          align-items: center;
+          gap: 0.35rem;
+          padding: 0.35rem 0.75rem;
+          border-radius: 999px;
+          border: 1px solid #2a2a2a;
+          background: rgba(15, 23, 42, 0.9);
+          color: #e2e8f0;
+          font-size: 0.75rem;
+          letter-spacing: 0.02em;
+          text-transform: uppercase;
+          cursor: pointer;
+        }
+
+        .panel-toggle-button.is-active {
+          border-color: #38bdf8;
+          color: #e0f2fe;
+          box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.35);
+        }
+
+        .panel-toggle-button:hover {
+          border-color: #475569;
+        }
+
+        .panel-toggle-button:focus-visible {
           outline: 2px solid var(--focus-ring);
           outline-offset: 2px;
         }

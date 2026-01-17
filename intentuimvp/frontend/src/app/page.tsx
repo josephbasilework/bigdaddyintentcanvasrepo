@@ -2,11 +2,13 @@
 
 import { Canvas, CanvasWorkspace } from "@/components/Canvas";
 import { FloatingInput } from "@/components/ContextInput/FloatingInput";
+import { ChatViewPanel } from "@/components/ChatView";
 import { AssumptionsPanel } from "@/components/Assumptions";
 import type { Assumption, AssumptionSet } from "@/components/Assumptions";
 import { useCanvasStore, type CanvasNode } from "@/state/canvasStore";
-import { useEffect, useState, useCallback } from "react";
-import { useWebSocket, type WebSocketMessage } from "@/hooks/useWebSocket";
+import { useEffect, useState, useCallback, useMemo } from "react";
+import { useChatTurns } from "@/hooks/useChatTurns";
+import { useWebSocketEnhanced, type WebSocketMessage } from "@/hooks/useWebSocketEnhanced";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -250,6 +252,7 @@ export default function Home() {
   const [routingError, setRoutingError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("Ready for commands.");
   const [attachments, setAttachments] = useState<string[]>([]);
+  const [isChatOpen, setIsChatOpen] = useState(false);
   const nodes = useCanvasStore((state) => state.nodes);
   const addNode = useCanvasStore((state) => state.addNode);
   const updateNodePosition = useCanvasStore((state) => state.updateNodePosition);
@@ -343,13 +346,27 @@ export default function Home() {
         }
       }
     },
-    [nodes, addNode, updateNodePosition, updateNode]
+    [nodes, addNode, updateNodePosition, updateNode, selectNode, selectedNodeId, selectedNodeIds]
   );
 
   // Connect to WebSocket for real-time updates
-  useWebSocket({
+  const { sessionId: wsSessionId } = useWebSocketEnhanced({
     url: WS_URL,
     onMessage: handleWebSocketMessage,
+  });
+
+  const chatSessionIds = useMemo(() => {
+    const ids = [wsSessionId, assumptionSet?.sessionId].filter(Boolean) as string[];
+    return Array.from(new Set(ids));
+  }, [wsSessionId, assumptionSet?.sessionId]);
+
+  const {
+    turns: chatTurns,
+    isLoading: isChatLoading,
+    error: chatError,
+  } = useChatTurns({
+    sessionIds: chatSessionIds,
+    enabled: isChatOpen,
   });
 
   useEffect(() => {
@@ -451,6 +468,7 @@ export default function Home() {
         command: value,
         attachments: attachmentsForSubmission,
         selection,
+        session_id: wsSessionId,
       }),
     });
 
@@ -590,6 +608,15 @@ export default function Home() {
     clearAssumptions();
   };
 
+  const chatPanel = isChatOpen ? (
+    <ChatViewPanel
+      id="chat-view-panel"
+      turns={chatTurns}
+      isLoading={isChatLoading}
+      error={chatError}
+    />
+  ) : null;
+
   return (
     <>
       <Canvas>
@@ -656,6 +683,14 @@ export default function Home() {
         selection={selectionItems}
         onRemoveAttachment={handleRemoveAttachment}
         placeholder="Type a command..."
+        panelContent={chatPanel}
+        panelToggle={{
+          label: "Chat view",
+          activeLabel: "Hide chat",
+          isOpen: isChatOpen,
+          onToggle: () => setIsChatOpen((prev) => !prev),
+          ariaControls: "chat-view-panel",
+        }}
       />
     </>
   );
