@@ -4,6 +4,7 @@ import asyncio
 import base64
 import tempfile
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI, testclient
@@ -293,3 +294,55 @@ class TestAudioBlockEndpoints:
 
         get_response = client.get(f"/api/audio/blocks/{block_id}")
         assert get_response.status_code == 404
+
+    def test_get_audio_block_content(
+        self,
+        client: testclient.TestClient,
+        sync_session_local,
+    ) -> None:
+        """Test retrieving audio content for playback."""
+        canvas_id = create_canvas(sync_session_local)
+        audio_data = create_test_audio_data()
+
+        response = client.post(
+            "/api/audio/blocks",
+            json={"canvas_id": canvas_id, "audio_data": audio_data},
+        )
+        assert response.status_code == 201
+        block_id = response.json()["id"]
+
+        content_response = client.get(f"/api/audio/blocks/{block_id}/content")
+        assert content_response.status_code == 200
+        assert content_response.content
+        assert content_response.headers["content-type"].startswith("audio/")
+
+    def test_transcribe_audio_block(
+        self,
+        client: testclient.TestClient,
+        sync_session_local,
+    ) -> None:
+        """Test enqueuing transcription for an audio block."""
+        canvas_id = create_canvas(sync_session_local)
+        audio_data = create_test_audio_data()
+
+        response = client.post(
+            "/api/audio/blocks",
+            json={"canvas_id": canvas_id, "audio_data": audio_data},
+        )
+        assert response.status_code == 201
+        block_id = response.json()["id"]
+
+        with patch("app.api.audio.JobService") as mock_service:
+            mock_service.return_value.enqueue_transcription = AsyncMock(
+                return_value="job-123"
+            )
+            transcribe_response = client.post(f"/api/audio/blocks/{block_id}/transcribe")
+
+        assert transcribe_response.status_code == 200
+        data = transcribe_response.json()
+        assert data["job_id"] == "job-123"
+        assert data["status"] == "queued"
+
+        refresh_response = client.get(f"/api/audio/blocks/{block_id}")
+        assert refresh_response.status_code == 200
+        assert refresh_response.json()["status"] == "transcribing"

@@ -3,10 +3,16 @@
 import { useState, useRef, useEffect, useCallback, CSSProperties } from "react";
 
 export interface AudioRecording {
-  blob: Blob;
+  blob?: Blob;
   url: string;
   duration: number;
   createdAt: Date;
+}
+
+export interface AudioMarker {
+  id: string;
+  time: number;
+  label?: string;
 }
 
 export type RecordingStatus = "idle" | "recording" | "paused" | "completed" | "error";
@@ -14,7 +20,11 @@ export type RecordingStatus = "idle" | "recording" | "paused" | "completed" | "e
 interface AudioCaptureProps {
   onRecordingComplete?: (recording: AudioRecording) => void;
   onRecordingStart?: () => void;
+  onRecordingDeleted?: () => void;
   existingRecording?: AudioRecording | null;
+  markers?: AudioMarker[];
+  onAddMarker?: (marker: AudioMarker) => void;
+  onDeleteMarker?: (markerId: string) => void;
   disabled?: boolean;
   style?: CSSProperties;
   className?: string;
@@ -33,7 +43,11 @@ interface AudioCaptureProps {
 export function AudioCapture({
   onRecordingComplete,
   onRecordingStart,
+  onRecordingDeleted,
   existingRecording = null,
+  markers = [],
+  onAddMarker,
+  onDeleteMarker,
   disabled = false,
   style,
   className = "",
@@ -47,6 +61,9 @@ export function AudioCapture({
   const [duration, setDuration] = useState(initialDuration);
   const [recording, setRecording] = useState<AudioRecording | null>(existingRecording);
   const [error, setError] = useState<string | null>(null);
+  const [playbackTime, setPlaybackTime] = useState(0);
+  const [waveform, setWaveform] = useState<number[] | null>(null);
+  const [isWaveformLoading, setIsWaveformLoading] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -63,12 +80,37 @@ export function AudioCapture({
     };
   }, []);
 
+  // Sync existing recordings to local state
+  useEffect(() => {
+    if (status === "recording") return;
+    if (existingRecording) {
+      setRecording(existingRecording);
+      setDuration(existingRecording.duration);
+      setStatus("completed");
+      setError(null);
+      return;
+    }
+    if (!recording?.blob && status !== "error") {
+      setRecording(null);
+      setDuration(0);
+      setStatus("idle");
+    }
+  }, [existingRecording, recording?.blob, status]);
+
   // Format duration as MM:SS
   const formatDuration = (ms: number): string => {
     const totalSeconds = Math.floor(ms / 1000);
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+  };
+
+  const formatTimestamp = (seconds: number): string => {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    return `${minutes.toString().padStart(2, "0")}:${remainingSeconds
+      .toString()
+      .padStart(2, "0")}`;
   };
 
   // Start recording
@@ -149,12 +191,105 @@ export function AudioCapture({
   // Delete recording
   const deleteRecording = useCallback(() => {
     if (recording) {
-      URL.revokeObjectURL(recording.url);
+      if (recording.blob || recording.url.startsWith("blob:")) {
+        URL.revokeObjectURL(recording.url);
+      }
     }
     setRecording(null);
     setDuration(0);
     setStatus("idle");
     setError(null);
+    if (onRecordingDeleted) {
+      onRecordingDeleted();
+    }
+  }, [onRecordingDeleted, recording]);
+
+  const handleAddMarker = useCallback(() => {
+    if (!audioRef.current || !onAddMarker) return;
+    const time = audioRef.current.currentTime;
+    const id = typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const marker: AudioMarker = {
+      id,
+      time,
+      label: `Marker ${markers.length + 1}`,
+    };
+    onAddMarker(marker);
+  }, [markers.length, onAddMarker]);
+
+  const handleSeekMarker = useCallback((marker: AudioMarker) => {
+    if (!audioRef.current) return;
+    audioRef.current.currentTime = marker.time;
+  }, []);
+
+  const handleDeleteMarker = useCallback((markerId: string) => {
+    if (!onDeleteMarker) return;
+    onDeleteMarker(markerId);
+  }, [onDeleteMarker]);
+
+  useEffect(() => {
+    if (!recording) {
+      setWaveform(null);
+      return;
+    }
+
+    const AudioContextImpl =
+      typeof window !== "undefined"
+        ? (window.AudioContext || (window as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext)
+        : undefined;
+    if (!AudioContextImpl) {
+      setWaveform(null);
+      return;
+    }
+
+    let isCancelled = false;
+
+    const buildWaveform = async () => {
+      setIsWaveformLoading(true);
+      try {
+        const arrayBuffer = recording.blob
+          ? await recording.blob.arrayBuffer()
+          : await fetch(recording.url).then((response) => response.arrayBuffer());
+
+        if (isCancelled) return;
+
+        const audioContext = new AudioContextImpl();
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+        const channelData = audioBuffer.getChannelData(0);
+
+        const samples = 64;
+        const blockSize = Math.floor(channelData.length / samples);
+        const peaks = Array.from({ length: samples }, (_, index) => {
+          const start = index * blockSize;
+          let max = 0;
+          for (let i = 0; i < blockSize; i += 1) {
+            const value = Math.abs(channelData[start + i] || 0);
+            if (value > max) max = value;
+          }
+          return max;
+        });
+
+        if (!isCancelled) {
+          setWaveform(peaks);
+        }
+        await audioContext.close();
+      } catch {
+        if (!isCancelled) {
+          setWaveform(null);
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsWaveformLoading(false);
+        }
+      }
+    };
+
+    void buildWaveform();
+
+    return () => {
+      isCancelled = true;
+    };
   }, [recording]);
 
   // Get status indicator color
@@ -235,12 +370,150 @@ export function AudioCapture({
           ref={audioRef}
           src={recording.url}
           controls
+          onTimeUpdate={() => {
+            if (audioRef.current) {
+              setPlaybackTime(audioRef.current.currentTime);
+            }
+          }}
+          onLoadedMetadata={() => {
+            if (audioRef.current && Number.isFinite(audioRef.current.duration)) {
+              setDuration(Math.round(audioRef.current.duration * 1000));
+            }
+          }}
           style={{
             width: "100%",
             height: "32px",
           }}
           aria-label="Audio playback"
         />
+      )}
+
+      {recording && (
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "8px",
+          }}
+        >
+          <div
+            style={{
+              position: "relative",
+              height: "48px",
+              display: "flex",
+              alignItems: "flex-end",
+              gap: "2px",
+              padding: "6px 4px",
+              backgroundColor: "rgba(15, 23, 42, 0.6)",
+              borderRadius: "6px",
+              border: "1px solid rgba(148, 163, 184, 0.2)",
+              overflow: "hidden",
+            }}
+            aria-label="Audio waveform"
+          >
+            {waveform && waveform.length > 0 ? (
+              waveform.map((value, index) => {
+                const progressRatio = duration > 0
+                  ? playbackTime / (duration / 1000)
+                  : 0;
+                const isPlayed = index / waveform.length <= progressRatio;
+                return (
+                  <div
+                    key={`wave-${index}`}
+                    style={{
+                      width: "3px",
+                      height: `${Math.max(4, value * 40)}px`,
+                      backgroundColor: isPlayed ? "#38bdf8" : "rgba(148, 163, 184, 0.6)",
+                      borderRadius: "2px",
+                      transition: "background-color 0.2s ease",
+                    }}
+                  />
+                );
+              })
+            ) : (
+              <div
+                style={{
+                  fontSize: "11px",
+                  color: "#94a3b8",
+                }}
+              >
+                {isWaveformLoading ? "Loading waveform..." : "Waveform unavailable"}
+              </div>
+            )}
+
+            {markers.map((marker) => {
+              const left = duration > 0
+                ? `${Math.min(100, (marker.time / (duration / 1000)) * 100)}%`
+                : "0%";
+              return (
+                <div
+                  key={marker.id}
+                  style={{
+                    position: "absolute",
+                    left,
+                    bottom: 0,
+                    top: 0,
+                    width: "2px",
+                    backgroundColor: "#f97316",
+                  }}
+                />
+              );
+            })}
+          </div>
+
+          {markers.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: "6px",
+              }}
+            >
+              {markers.map((marker) => (
+                <div
+                  key={`marker-${marker.id}`}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    fontSize: "12px",
+                    color: "#e2e8f0",
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => handleSeekMarker(marker)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      color: "#38bdf8",
+                      cursor: "pointer",
+                      padding: 0,
+                    }}
+                  >
+                    {marker.label ?? "Marker"} · {formatTimestamp(marker.time)}
+                  </button>
+                  {onDeleteMarker && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteMarker(marker.id)}
+                      aria-label={`Delete marker ${marker.label ?? formatTimestamp(marker.time)}`}
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: "#f87171",
+                        cursor: "pointer",
+                        fontSize: "11px",
+                      }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Control buttons */}
@@ -333,6 +606,24 @@ export function AudioCapture({
             >
               Delete
             </button>
+            {onAddMarker && (
+              <button
+                type="button"
+                onClick={handleAddMarker}
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor: "#0ea5e9",
+                  border: "none",
+                  borderRadius: "4px",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontSize: "13px",
+                }}
+                aria-label="Add marker at current time"
+              >
+                Add marker
+              </button>
+            )}
           </>
         )}
 

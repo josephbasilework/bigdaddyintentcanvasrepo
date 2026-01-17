@@ -621,7 +621,14 @@ class TestTranscriptionJob:
         mock_repo.set_status = AsyncMock(return_value=mock_audio_block)
         mock_repo.update_transcription = AsyncMock(return_value=mock_audio_block)
 
-        with patch("app.repositories.audio_block_repo.AudioBlockRepository", return_value=mock_repo):
+        mock_storage = MagicMock()
+        mock_storage.store_artifact = AsyncMock(
+            return_value=MagicMock(id=456, artifact_type="transcription")
+        )
+
+        with patch("app.repositories.audio_block_repo.AudioBlockRepository", return_value=mock_repo), patch(
+            "app.jobs.worker.get_artifact_storage", return_value=mock_storage
+        ):
             result = await transcription_job(ctx, audio_block_id=123)
 
         assert result.success is True
@@ -693,7 +700,14 @@ class TestTranscriptionJob:
         mock_repo.set_status = mock_set_status
         mock_repo.update_transcription = AsyncMock(return_value=mock_audio_block)
 
-        with patch("app.repositories.audio_block_repo.AudioBlockRepository", return_value=mock_repo):
+        mock_storage = MagicMock()
+        mock_storage.store_artifact = AsyncMock(
+            return_value=MagicMock(id=789, artifact_type="transcription")
+        )
+
+        with patch("app.repositories.audio_block_repo.AudioBlockRepository", return_value=mock_repo), patch(
+            "app.jobs.worker.get_artifact_storage", return_value=mock_storage
+        ):
             result = await transcription_job(ctx, audio_block_id=123)
 
         assert result.success is True

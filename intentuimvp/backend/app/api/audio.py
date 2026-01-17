@@ -1,14 +1,18 @@
 """Audio block API endpoints for CRUD operations."""
 
 import logging
+import mimetypes
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import FileResponse, RedirectResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_db
-from app.models.audio_block import AudioBlock
+from app.jobs.service import JobService
+from app.models.audio_block import AudioBlock, AudioBlockStatus
 from app.repositories.audio_block_repo import AudioBlockRepository
 from app.schemas.audio_block import (
     AudioBlockCreateRequest,
@@ -263,3 +267,72 @@ async def delete_audio_block(
             detail="Audio block not found",
         )
     logger.info(f"Deleted audio block {block_id} for user {user_id}")
+
+
+@router.get("/api/audio/blocks/{block_id}/content")
+async def get_audio_block_content(
+    block_id: int,
+    db: AsyncSession = Depends(get_async_db),
+) -> FileResponse | RedirectResponse:
+    """Retrieve raw audio content for playback."""
+    repo = AudioBlockRepository(db)
+    block = await repo.get_by_id(block_id)
+    if block is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Audio block not found",
+        )
+
+    audio_uri = block.audio_uri
+    if audio_uri.startswith("http://") or audio_uri.startswith("https://"):
+        return RedirectResponse(audio_uri)
+
+    file_path = Path(audio_uri)
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Audio file not found",
+        )
+
+    mime_type, _ = mimetypes.guess_type(file_path.name)
+    if mime_type == "video/webm":
+        mime_type = "audio/webm"
+    return FileResponse(
+        path=file_path,
+        media_type=mime_type or "audio/webm",
+        filename=file_path.name,
+    )
+
+
+@router.post("/api/audio/blocks/{block_id}/transcribe")
+async def transcribe_audio_block(
+    block_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    user_id: str = Depends(get_current_user),
+) -> dict[str, str]:
+    """Enqueue transcription for an audio block."""
+    repo = AudioBlockRepository(db)
+    block = await repo.get_by_id(block_id)
+    if block is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Audio block not found",
+        )
+
+    if block.status == AudioBlockStatus.TRANSCRIBING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Audio block is already transcribing",
+        )
+
+    job_service = JobService()
+    job_id = await job_service.enqueue_transcription(
+        audio_block_id=block_id,
+        user_id=user_id,
+        workspace_id=str(block.canvas_id),
+    )
+
+    await repo.set_status(block_id, AudioBlockStatus.TRANSCRIBING)
+    logger.info(f"Queued transcription job {job_id} for audio block {block_id}")
+
+    return {"job_id": job_id, "status": "queued"}

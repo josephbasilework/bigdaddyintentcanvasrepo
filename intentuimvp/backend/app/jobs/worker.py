@@ -1436,12 +1436,10 @@ async def transcription_job(
         # Check for cancellation before starting work
         await check_job_cancelled(job_id)
 
-        from app.database import SessionLocal
         from app.repositories.audio_block_repo import AudioBlockRepository
 
         # Get the audio block from database
-        db = SessionLocal()
-        try:
+        async with AsyncSessionLocal() as db:
             repo = AudioBlockRepository(db)
             audio_block = await repo.get_by_id(audio_block_id)
 
@@ -1504,12 +1502,32 @@ async def transcription_job(
             await repo.update_transcription(audio_block_id, mock_transcription)
             logger.info(f"[{job_id}] Updated audio block {audio_block_id} with transcription")
 
+            storage = get_artifact_storage()
+            effective_user_id = user_id or DEFAULT_USER_ID
+            metadata = ArtifactMetadata(
+                artifact_type=ArtifactType.TRANSCRIPTION,
+                artifact_name=f"Audio transcription {audio_block_id}",
+                description=f"Transcription for audio block {audio_block_id}",
+                filename=f"audio_block_{audio_block_id}_transcription.txt",
+                mime_type="text/plain",
+            )
+            stored = await storage.store_artifact(
+                db,
+                job_id=job_id,
+                metadata=metadata,
+                content=mock_transcription,
+                user_id=effective_user_id,
+                workspace_id=workspace_id or str(audio_block.canvas_id),
+            )
+
             result_data = {
                 "audio_block_id": audio_block_id,
                 "transcription": mock_transcription,
                 "status": "transcribed",
                 "timestamp": datetime.now(UTC).isoformat(),
                 "job_id": job_id,
+                "artifact_id": stored.id,
+                "artifact_type": stored.artifact_type,
             }
 
             logger.info(f"[{job_id}] Transcription job completed successfully")
@@ -1519,18 +1537,14 @@ async def transcription_job(
 
             return JobResult(success=True, data=result_data)
 
-        finally:
-            db.close()
-
     except JobCancelledError:
         logger.info(f"[{job_id}] Transcription job was cancelled")
 
         # Update audio block status back to ready if cancelled
         try:
-            db = SessionLocal()
-            repo = AudioBlockRepository(db)
-            await repo.set_status(audio_block_id, AudioBlockStatus.READY)
-            db.close()
+            async with AsyncSessionLocal() as db:
+                repo = AudioBlockRepository(db)
+                await repo.set_status(audio_block_id, AudioBlockStatus.READY)
         except Exception:
             pass  # Best effort cleanup
 
@@ -1544,12 +1558,11 @@ async def transcription_job(
 
         # Update audio block with error status
         try:
-            db = SessionLocal()
-            repo = AudioBlockRepository(db)
-            await repo.set_status(
-                audio_block_id, AudioBlockStatus.ERROR, error_message=str(e)
-            )
-            db.close()
+            async with AsyncSessionLocal() as db:
+                repo = AudioBlockRepository(db)
+                await repo.set_status(
+                    audio_block_id, AudioBlockStatus.ERROR, error_message=str(e)
+                )
         except Exception:
             pass  # Best effort cleanup
 

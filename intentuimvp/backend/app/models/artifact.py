@@ -25,6 +25,7 @@ class ArtifactType(str, Enum):
     PDF_DOCUMENT = "pdf_document"
     TEXT_DOCUMENT = "text_document"
     MARKDOWN_DOCUMENT = "markdown_document"
+    TRANSCRIPTION = "transcription"
 
     # Data exports
     JSON_EXPORT = "json_export"

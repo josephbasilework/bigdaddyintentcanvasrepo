@@ -6,7 +6,7 @@ import { useTransformComponent } from "react-zoom-pan-pinch";
 import { useCanvasStore, CanvasNode, AUTO_EXPAND_ANIMATION_MS } from "../../state/canvasStore";
 import { NodeContextMenu } from "./NodeContextMenu";
 import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog";
-import { AudioCapture, AudioRecording } from "./AudioCapture";
+import { AudioBlockNode } from "./AudioBlockNode";
 import { GraphAnnotation, GraphAnnotationDisplay } from "./GraphAnnotation";
 import { DependencyEditor, DependencyDisplay } from "./DependencyEditor";
 import { PlanNode } from "./PlanNode";
@@ -83,10 +83,6 @@ export function Node({
   } | null>(null);
   const [editTitle, setEditTitle] = useState(node.title);
   const [editContent, setEditContent] = useState(node.content || "");
-  // Audio recording state for audio-type nodes
-  const [audioRecording, setAudioRecording] = useState<AudioRecording | null>(
-    node.metadata?.audioRecording as AudioRecording | null ?? null
-  );
   // Graph annotation state for graph-type nodes
   const [isEditingAnnotation, setIsEditingAnnotation] = useState(false);
   // Dependency editor state
@@ -452,23 +448,6 @@ export function Node({
     setIsEditingDependencies(false);
   };
 
-  // Handle audio recording completion
-  const handleRecordingComplete = useCallback((recording: AudioRecording) => {
-    setAudioRecording(recording);
-    // Store recording reference in node metadata
-    updateNode(node.id, {
-      metadata: {
-        ...node.metadata,
-        audioRecording: {
-          url: recording.url,
-          duration: recording.duration,
-          createdAt: recording.createdAt.toISOString(),
-        },
-      },
-      content: `Audio recording (${Math.floor(recording.duration / 1000)}s)`,
-    });
-  }, [node.id, node.metadata, updateNode]);
-
   // Get node style based on type
   const getNodeStyle = (): CSSProperties => {
     const transitionParts: string[] = [];
@@ -684,14 +663,7 @@ export function Node({
 
           {/* Node content */}
           {node.type === "audio" ? (
-            <AudioCapture
-              onRecordingComplete={handleRecordingComplete}
-              existingRecording={audioRecording}
-              style={{
-                minWidth: "280px",
-              }}
-              aria-label={`Audio capture for ${node.title}`}
-            />
+            <AudioBlockNode node={node} />
           ) : node.type === "plan" && node.planData ? (
             <PlanNode plan={node.planData} />
           ) : node.type === "dag" && node.dagData ? (
