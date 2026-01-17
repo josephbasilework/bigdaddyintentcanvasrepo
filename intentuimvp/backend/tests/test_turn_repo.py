@@ -311,6 +311,27 @@ class TestTurnRepository:
         assert turns[0].sequence_number == 3
         assert turns[2].sequence_number == 5
 
+    def test_get_turns_for_session_filter_actor(self, db_session: Session):
+        """Test filtering turns by actor in session query."""
+        repo = TurnRepository(db_session)
+
+        repo.create_turn(
+            session_id="session-1",
+            actor=TurnActor.USER,
+            turn_type=TurnType.USER_INPUT,
+            summary="User input",
+        )
+        repo.create_turn(
+            session_id="session-1",
+            actor=TurnActor.SYSTEM,
+            turn_type=TurnType.NODE_CREATED,
+            summary="System event",
+        )
+
+        user_turns = repo.get_turns_for_session("session-1", actor=TurnActor.USER)
+        assert len(user_turns) == 1
+        assert user_turns[0].actor == TurnActor.USER
+
     def test_get_turns_by_type(self, db_session: Session):
         """Test filtering turns by type."""
         repo = TurnRepository(db_session)

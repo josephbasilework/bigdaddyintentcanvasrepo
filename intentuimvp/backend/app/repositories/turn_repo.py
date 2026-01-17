@@ -100,6 +100,8 @@ class TurnRepository:
         session_id: str,
         limit: int | None = None,
         after_sequence: int | None = None,
+        actor: TurnActor | None = None,
+        turn_type: TurnType | None = None,
     ) -> list[Turn]:
         """Get turns for a session, ordered by sequence number.
 
@@ -107,6 +109,8 @@ class TurnRepository:
             session_id: The session to get turns for
             limit: Optional maximum number of turns to return
             after_sequence: Optional sequence number to start after (exclusive)
+            actor: Optional actor filter
+            turn_type: Optional type filter
 
         Returns:
             List of Turn objects ordered by sequence_number
@@ -115,6 +119,12 @@ class TurnRepository:
 
         if after_sequence is not None:
             query = query.filter(Turn.sequence_number > after_sequence)
+
+        if actor is not None:
+            query = query.filter(Turn.actor == actor)
+
+        if turn_type is not None:
+            query = query.filter(Turn.type == turn_type)
 
         query = query.order_by(Turn.sequence_number.asc())
 
@@ -281,6 +291,8 @@ class AsyncTurnRepository:
         session_id: str,
         limit: int | None = None,
         after_sequence: int | None = None,
+        actor: TurnActor | None = None,
+        turn_type: TurnType | None = None,
     ) -> list[Turn]:
         """Get turns for a session, ordered by sequence number.
 
@@ -288,6 +300,8 @@ class AsyncTurnRepository:
             session_id: The session to get turns for
             limit: Optional maximum number of turns to return
             after_sequence: Optional sequence number to start after (exclusive)
+            actor: Optional actor filter
+            turn_type: Optional type filter
 
         Returns:
             List of Turn objects ordered by sequence_number
@@ -296,6 +310,12 @@ class AsyncTurnRepository:
 
         if after_sequence is not None:
             stmt = stmt.filter(Turn.sequence_number > after_sequence)
+
+        if actor is not None:
+            stmt = stmt.filter(Turn.actor == actor)
+
+        if turn_type is not None:
+            stmt = stmt.filter(Turn.type == turn_type)
 
         stmt = stmt.order_by(Turn.sequence_number.asc())
 

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_async_db
 from app.graph_validation import DependencyCycleError, ensure_dependency_edges_acyclic
 from app.models.edge import Edge, RelationType
+from app.models.turn import TurnActor, TurnType
 from app.repositories.edge_repo import EdgeRepository
 from app.repositories.node_repo import NodeRepository
 from app.schemas.edge import (
@@ -19,6 +20,7 @@ from app.schemas.edge import (
     EdgeResponse,
     EdgeUpdateRequest,
 )
+from app.services.turns import log_turn_for_user_async
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -106,10 +108,21 @@ async def create_edge(
             label=payload.label,
             metadata=payload.metadata,
         )
+        edge_payload = _serialize_edge(edge)
+        await log_turn_for_user_async(
+            db,
+            user_id=user_id,
+            workspace_id=edge.canvas_id,
+            actor=TurnActor.USER,
+            turn_type=TurnType.EDGE_CREATED,
+            summary="Edge created",
+            payload=edge_payload,
+            related_edge_id=edge.id,
+        )
         logger.info(
             f"Created edge {edge.id} on canvas {payload.canvas_id} for user {user_id}"
         )
-        return _serialize_edge(edge)
+        return edge_payload
     except DependencyCycleError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -291,8 +304,22 @@ async def update_edge(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Edge not found",
             )
+        updated_payload = _serialize_edge(updated)
+        await log_turn_for_user_async(
+            db,
+            user_id=user_id,
+            workspace_id=updated.canvas_id,
+            actor=TurnActor.USER,
+            turn_type=TurnType.EDGE_UPDATED,
+            summary="Edge updated",
+            payload={
+                "edge": updated_payload,
+                "updates": updates,
+            },
+            related_edge_id=updated.id,
+        )
         logger.info(f"Updated edge {edge_id} for user {user_id}")
-        return _serialize_edge(updated)
+        return updated_payload
     except HTTPException:
         raise
     except Exception as e:
@@ -320,10 +347,27 @@ async def delete_edge(
         HTTPException: If edge not found
     """
     repo = EdgeRepository(db)
+    edge = await repo.get_by_id(edge_id)
+    if edge is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Edge not found",
+        )
     deleted = await repo.delete(edge_id)
     if not deleted:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Edge not found",
         )
+    deleted_payload = _serialize_edge(edge)
+    await log_turn_for_user_async(
+        db,
+        user_id=user_id,
+        workspace_id=edge.canvas_id,
+        actor=TurnActor.USER,
+        turn_type=TurnType.EDGE_DELETED,
+        summary="Edge deleted",
+        payload=deleted_payload,
+        related_edge_id=edge.id,
+    )
     logger.info(f"Deleted edge {edge_id} for user {user_id}")

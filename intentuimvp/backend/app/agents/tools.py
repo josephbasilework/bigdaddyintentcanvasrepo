@@ -29,9 +29,11 @@ from app.models.canvas import Canvas
 from app.models.edge import RelationType
 from app.models.intent import AssumptionResolutionDB
 from app.models.node import Node, NodeType
+from app.models.turn import TurnActor, TurnType
 from app.repositories.canvas_repo import CanvasRepository
 from app.repositories.edge_repo import EdgeRepository
 from app.repositories.node_repo import DuplicatePositionError, NodeRepository
+from app.services.turns import log_turn_for_user_async
 
 logger = logging.getLogger(__name__)
 
@@ -505,6 +507,18 @@ class ToolManager:
                 "Broadcast node.created",
                 extra={"node_id": node.id, "type": params.type},
             )
+            await log_turn_for_user_async(
+                session,
+                user_id=DEFAULT_USER_ID,
+                workspace_id=canvas.id,
+                actor=TurnActor.AGENT,
+                turn_type=TurnType.NODE_CREATED,
+                summary=f"Node created by agent: {params.content[:120]}"
+                if params.content
+                else "Node created by agent",
+                payload=node_data["payload"],
+                related_node_id=node.id,
+            )
 
             return {"id": node.id}
 
@@ -583,6 +597,22 @@ class ToolManager:
                 if updated_node is None:
                     raise ValueError(f"Node not found: {node_id}")
 
+                await log_turn_for_user_async(
+                    session,
+                    user_id=DEFAULT_USER_ID,
+                    workspace_id=updated_node.canvas_id,
+                    actor=TurnActor.AGENT,
+                    turn_type=TurnType.NODE_UPDATED,
+                    summary=f"Node updated by agent: {updated_node.label}"
+                    if updated_node.label
+                    else "Node updated by agent",
+                    payload={
+                        "node": updated_node.to_dict(),
+                        "updates": updates,
+                    },
+                    related_node_id=updated_node.id,
+                )
+
             return updated_node.to_dict()
 
         async def canvas_link_nodes(
@@ -629,6 +659,17 @@ class ToolManager:
                     )
                 except DependencyCycleError as e:
                     raise ValueError(str(e)) from e
+
+                await log_turn_for_user_async(
+                    session,
+                    user_id=DEFAULT_USER_ID,
+                    workspace_id=edge.canvas_id,
+                    actor=TurnActor.AGENT,
+                    turn_type=TurnType.EDGE_CREATED,
+                    summary="Edge created by agent",
+                    payload=edge.to_dict(),
+                    related_edge_id=edge.id,
+                )
 
             return {"id": edge.id}
 

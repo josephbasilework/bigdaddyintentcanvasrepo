@@ -15,7 +15,9 @@ from app.context.models import ContextPayload, parse_assumption
 from app.context.router import ContextRouter, get_context_router
 from app.database import AsyncSessionLocal, get_db
 from app.models.intent import AssumptionResolutionDB
+from app.models.turn import TurnActor, TurnType
 from app.repositories.intent_repo import IntentRepository
+from app.services.turns import log_turn_with_session_id_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -369,6 +371,27 @@ async def resolve_assumption(
         db.add(db_record)
         db.commit()
 
+        turn_type = {
+            "accept": TurnType.ASSUMPTION_CONFIRMED,
+            "reject": TurnType.ASSUMPTION_REJECTED,
+            "edit": TurnType.ASSUMPTION_MODIFIED,
+        }[request.action]
+        log_turn_with_session_id_sync(
+            db,
+            session_id=request.session_id or "default",
+            actor=TurnActor.USER,
+            turn_type=turn_type,
+            summary=f"Assumption {request.action}",
+            payload={
+                "assumption_id": resolution["assumption_id"],
+                "action": resolution["action"],
+                "original_text": resolution["original_text"],
+                "final_text": resolution["final_text"],
+                "category": resolution["category"],
+                "feedback": resolution.get("feedback"),
+            },
+        )
+
         return ResolvedAssumption(
             assumption_id=resolution["assumption_id"],
             action=resolution["action"],
@@ -442,6 +465,30 @@ async def batch_resolve_assumptions(
         if db_records:
             db.add_all(db_records)
             db.commit()
+
+        for result in results:
+            turn_type = {
+                "accept": TurnType.ASSUMPTION_CONFIRMED,
+                "reject": TurnType.ASSUMPTION_REJECTED,
+                "edit": TurnType.ASSUMPTION_MODIFIED,
+            }.get(result["action"])
+            if turn_type is None:
+                continue
+            log_turn_with_session_id_sync(
+                db,
+                session_id=session_id,
+                actor=TurnActor.USER,
+                turn_type=turn_type,
+                summary=f"Assumption {result['action']}",
+                payload={
+                    "assumption_id": result["assumption_id"],
+                    "action": result["action"],
+                    "original_text": result["original_text"],
+                    "final_text": result["final_text"],
+                    "category": result["category"],
+                    "feedback": result.get("feedback"),
+                },
+            )
 
         return {
             "session_id": session_id,

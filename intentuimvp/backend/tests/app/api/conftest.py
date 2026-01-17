@@ -20,7 +20,9 @@ import app.models.edge  # noqa: F401
 import app.models.job  # noqa: F401
 import app.models.node  # noqa: F401
 import app.models.preferences  # noqa: F401
+import app.models.session  # noqa: F401
 import app.models.telemetry_event  # noqa: F401
+import app.models.turn  # noqa: F401
 from app.api.commands import router as commands_router
 from app.api.edges import router as edges_router
 from app.api.nodes import router as nodes_router

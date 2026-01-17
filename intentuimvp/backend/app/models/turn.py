@@ -56,6 +56,7 @@ class TurnType(str, Enum):
     # Agent/system responses
     AGENT_RESPONSE = "agent_response"
     SYSTEM_MESSAGE = "system_message"
+    EXTERNAL_STATE_CHANGE = "external_state_change"
 
     # Assumption reconciliation (FR-003)
     ASSUMPTION_PRESENTED = "assumption_presented"

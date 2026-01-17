@@ -29,11 +29,66 @@ from app.config import get_settings
 from app.database import get_async_db
 from app.logging_config import get_correlation_id
 from app.repositories.session_repo import AsyncSessionRepository
+from app.models.turn import TurnActor, TurnType
+from app.services.turns import log_turn_with_new_async_session
 from app.ws.dashboard_streaming import get_dashboard_streaming_service
 from app.ws.state_manager import get_state_manager
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _truncate_summary(text: str, limit: int = 160) -> str:
+    if len(text) <= limit:
+        return text
+    return f"{text[: limit - 3]}..."
+
+
+def _build_turn_from_agui_message(
+    message: AgentToUIMessageType,
+) -> tuple[TurnActor, TurnType, str, dict[str, object]] | None:
+    message_type = getattr(message, "type", None)
+    if message_type == "notification":
+        payload = message.payload
+        if getattr(payload, "title", "") == "Heartbeat":
+            return None
+        summary = _truncate_summary(f"{payload.title}: {payload.message}")
+        return (
+            TurnActor.SYSTEM,
+            TurnType.SYSTEM_MESSAGE,
+            summary,
+            payload.model_dump(),
+        )
+    if message_type == "status":
+        payload = message.payload
+        summary = _truncate_summary(f"{payload.agent_name}: {payload.status}")
+        return (
+            TurnActor.SYSTEM,
+            TurnType.SYSTEM_MESSAGE,
+            summary,
+            payload.model_dump(),
+        )
+    if message_type == "error":
+        payload = message.payload
+        summary = _truncate_summary(f"Agent error: {payload.error}")
+        return (
+            TurnActor.SYSTEM,
+            TurnType.SYSTEM_MESSAGE,
+            summary,
+            payload.model_dump(),
+        )
+    if message_type in {"result", "run.end"}:
+        payload = message.payload
+        summary = _truncate_summary(
+            f"Agent response: {getattr(payload, 'agent_id', 'agent')}"
+        )
+        return (
+            TurnActor.AGENT,
+            TurnType.AGENT_RESPONSE,
+            summary,
+            payload.model_dump(),
+        )
+    return None
 
 
 @dataclass
@@ -191,6 +246,18 @@ class ConnectionManager:
         try:
             await websocket.send_text(message.model_dump_json())
             self._message_counts[conn_id]["sent"] += 1
+            ctx = self.get_session_context(websocket)
+            if ctx:
+                turn = _build_turn_from_agui_message(message)
+                if turn:
+                    actor, turn_type, summary, payload = turn
+                    await log_turn_with_new_async_session(
+                        session_id=ctx.session_id,
+                        actor=actor,
+                        turn_type=turn_type,
+                        summary=summary,
+                        payload=payload,
+                    )
         except Exception as e:
             logger.error(
                 "Error sending AG-UI message",
@@ -255,6 +322,13 @@ class ConnectionManager:
 
         message_json = message.model_dump_json()
         connections = list(self.active_connections)
+        turn = _build_turn_from_agui_message(message)
+        session_ids: set[str] = set()
+        if turn:
+            for connection in connections:
+                ctx = self.get_session_context(connection)
+                if ctx:
+                    session_ids.add(ctx.session_id)
         sent_count = 0
         for connection in connections:
             conn_id = self._get_connection_id(connection)
@@ -273,6 +347,16 @@ class ConnectionManager:
                     },
                 )
                 self.disconnect(connection)
+        if turn and session_ids:
+            actor, turn_type, summary, payload = turn
+            for session_id in session_ids:
+                await log_turn_with_new_async_session(
+                    session_id=session_id,
+                    actor=actor,
+                    turn_type=turn_type,
+                    summary=summary,
+                    payload=payload,
+                )
 
         # Log broadcast metrics (NFR-OBS-004)
         logger.debug(

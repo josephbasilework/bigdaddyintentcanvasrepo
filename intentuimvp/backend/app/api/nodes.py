@@ -18,6 +18,8 @@ from app.schemas.node import (
     NodeResponse,
     NodeUpdateRequest,
 )
+from app.models.turn import TurnActor, TurnType
+from app.services.turns import log_turn_for_user_async
 from app.services.dashboard_updates import publish_dashboard_update
 
 router = APIRouter()
@@ -77,15 +79,26 @@ async def create_node(
             position=payload.position.model_dump(),
             node_metadata=payload.metadata,
         )
+        node_payload = _serialize_node(node)
         await publish_dashboard_update(
             canvas_id=node.canvas_id,
             target=DashboardSubscriptionTarget.NODE,
             source_id=str(node.id),
             change_type="created",
-            data=_serialize_node(node),
+            data=node_payload,
+        )
+        await log_turn_for_user_async(
+            db,
+            user_id=user_id,
+            workspace_id=node.canvas_id,
+            actor=TurnActor.USER,
+            turn_type=TurnType.NODE_CREATED,
+            summary=f"Node created: {node.label}" if node.label else "Node created",
+            payload=node_payload,
+            related_node_id=node.id,
         )
         logger.info(f"Created node {node.id} on canvas {payload.canvas_id} for user {user_id}")
-        return _serialize_node(node)
+        return node_payload
     except IntegrityError as e:
         logger.warning(
             f"Failed to create node on canvas {payload.canvas_id}: {e}",
@@ -251,15 +264,29 @@ async def update_node(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Node not found",
             )
+        updated_payload = _serialize_node(updated)
         await publish_dashboard_update(
             canvas_id=updated.canvas_id,
             target=DashboardSubscriptionTarget.NODE,
             source_id=str(updated.id),
             change_type="updated",
-            data=_serialize_node(updated),
+            data=updated_payload,
+        )
+        await log_turn_for_user_async(
+            db,
+            user_id=user_id,
+            workspace_id=updated.canvas_id,
+            actor=TurnActor.USER,
+            turn_type=TurnType.NODE_UPDATED,
+            summary=f"Node updated: {updated.label}" if updated.label else "Node updated",
+            payload={
+                "node": updated_payload,
+                "updates": updates,
+            },
+            related_node_id=updated.id,
         )
         logger.info(f"Updated node {node_id} for user {user_id}")
-        return _serialize_node(updated)
+        return updated_payload
     except HTTPException:
         raise
     except Exception as e:
@@ -299,11 +326,22 @@ async def delete_node(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Node not found",
         )
+    deleted_payload = _serialize_node(node)
     await publish_dashboard_update(
         canvas_id=node.canvas_id,
         target=DashboardSubscriptionTarget.NODE,
         source_id=str(node.id),
         change_type="deleted",
-        data=_serialize_node(node),
+        data=deleted_payload,
+    )
+    await log_turn_for_user_async(
+        db,
+        user_id=user_id,
+        workspace_id=node.canvas_id,
+        actor=TurnActor.USER,
+        turn_type=TurnType.NODE_DELETED,
+        summary=f"Node deleted: {node.label}" if node.label else "Node deleted",
+        payload=deleted_payload,
+        related_node_id=node.id,
     )
     logger.info(f"Deleted node {node_id} for user {user_id}")

@@ -13,6 +13,8 @@ from sqlalchemy.orm import sessionmaker
 # Import models to register them with Base
 import app.models.canvas  # noqa: F401 - Side-effect import to register models
 import app.models.node  # noqa: F401 - Side-effect import to register models
+import app.models.session  # noqa: F401 - Side-effect import to register models
+import app.models.turn  # noqa: F401 - Side-effect import to register models
 from app.api.nodes import router as nodes_router
 from app.database import Base, get_async_db
 from app.models.canvas import Canvas

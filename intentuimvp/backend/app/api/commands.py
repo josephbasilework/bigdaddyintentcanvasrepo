@@ -7,11 +7,15 @@ import logging
 import uuid
 from dataclasses import dataclass
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
 from app.context.models import ContextPayload, SelectionScope
 from app.context.router import get_context_router
+from app.database import get_db
+from app.models.turn import TurnActor, TurnType
+from app.services.turns import log_turn_for_user_sync
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -27,6 +31,9 @@ class CommandSubmissionRequest(BaseModel):
     attachments: list[str] | None = Field(default=None, description="Attachment IDs")
     selection: SelectionScope | None = Field(
         default=None, description="Selection scope for the command"
+    )
+    session_id: str | None = Field(
+        default=None, description="Optional session ID for turn logging"
     )
 
 
@@ -122,6 +129,7 @@ async def _route_command_submission(submission: CommandSubmission) -> None:
 )
 async def submit_command(
     payload: CommandSubmissionRequest,
+    db: Session = Depends(get_db),
 ) -> CommandSubmissionResponse:
     """Submit a command for routing."""
     command = (payload.command or "").strip()
@@ -136,5 +144,23 @@ async def submit_command(
     )
 
     enqueue_command(submission)
+
+    summary_preview = command[:120]
+    log_turn_for_user_sync(
+        db,
+        user_id="default_user",
+        session_id=payload.session_id,
+        actor=TurnActor.USER,
+        turn_type=TurnType.USER_INPUT,
+        summary=f"User input submitted: {summary_preview}" if summary_preview else "User input submitted",
+        payload={
+            "command": command,
+            "attachments": payload.attachments or [],
+            "selection": payload.selection.model_dump()
+            if payload.selection
+            else None,
+            "correlation_id": correlation_id,
+        },
+    )
 
     return CommandSubmissionResponse(correlation_id=correlation_id, status="queued")

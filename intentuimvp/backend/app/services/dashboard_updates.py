@@ -12,7 +12,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Literal
 
+from app.database import AsyncSessionLocal
 from app.models.dashboard_subscription import DashboardSubscriptionTarget
+from app.models.turn import TurnActor, TurnType
+from app.repositories.canvas_repo import CanvasRepository
+from app.services.turns import log_turn_for_user_async
 from app.ws.dashboard_streaming import get_dashboard_streaming_service
 
 logger = logging.getLogger(__name__)
@@ -54,5 +58,32 @@ async def publish_dashboard_update(
             f"Dashboard update published: {target.value}={source_id}, "
             f"change_type={change_type}, subscribers={count}"
         )
+
+    if target in {
+        DashboardSubscriptionTarget.WORKSPACE_STATE,
+        DashboardSubscriptionTarget.TOOL_OUTPUT,
+        DashboardSubscriptionTarget.ARTIFACT,
+    }:
+        try:
+            async with AsyncSessionLocal() as session:
+                canvas_repo = CanvasRepository(session)
+                resolved_canvas = await canvas_repo.get_by_id(canvas_id)
+                user_id = resolved_canvas.user_id if resolved_canvas else "default_user"
+                await log_turn_for_user_async(
+                    session,
+                    user_id=user_id,
+                    workspace_id=canvas_id,
+                    actor=TurnActor.SYSTEM,
+                    turn_type=TurnType.EXTERNAL_STATE_CHANGE,
+                    summary=f"External state update: {target.value}",
+                    payload={
+                        "target": target.value,
+                        "source_id": source_id,
+                        "change_type": change_type,
+                        "data": data,
+                    },
+                )
+        except Exception:
+            logger.warning("Failed to log external state update turn", exc_info=True)
 
     return count

@@ -23,11 +23,44 @@ from app.database import SessionLocal
 from app.jobs.base import JobStateMachine
 from app.logging_config import get_correlation_id
 from app.models.job import Job
+from app.models.turn import TurnActor, TurnType
 from app.telemetry import emit_job_completed
+from app.services.turns import log_turn_for_user_sync
 from app.ws.websocket import manager as ws_manager
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
+def _log_job_turn_sync(
+    job: Job,
+    turn_type: TurnType,
+    summary: str,
+    payload: dict[str, Any],
+) -> None:
+    """Log a job-related turn using a standalone sync session."""
+    db = SessionLocal()
+    try:
+        log_turn_for_user_sync(
+            db,
+            user_id=job.user_id,
+            workspace_id=job.workspace_id,
+            actor=TurnActor.SYSTEM,
+            turn_type=turn_type,
+            summary=summary,
+            payload=payload,
+        )
+    finally:
+        db.close()
+
+
+async def _log_job_turn(
+    job: Job,
+    turn_type: TurnType,
+    summary: str,
+    payload: dict[str, Any],
+) -> None:
+    await asyncio.to_thread(_log_job_turn_sync, job, turn_type, summary, payload)
 
 
 def _create_job_sync(
@@ -363,6 +396,20 @@ class JobProgressTracker:
                         "correlation_id": get_correlation_id(),
                     },
                 )
+                await _log_job_turn(
+                    job,
+                    TurnType.JOB_STARTED,
+                    "Job started",
+                    {
+                        "job_id": job_id,
+                        "job_type": job.job_type,
+                        "status": job.status,
+                        "progress_percent": progress_percent,
+                        "current_step": current_step,
+                        "step_number": step_number,
+                        "steps_total": steps_total,
+                    },
+                )
 
             await self.emit_event(
                 ProgressEvent(
@@ -391,6 +438,21 @@ class JobProgressTracker:
                     "step_number": step_number,
                     "steps_total": steps_total,
                     "correlation_id": get_correlation_id(),
+                },
+            )
+            await _log_job_turn(
+                job,
+                TurnType.JOB_PROGRESS,
+                "Job progress updated",
+                {
+                    "job_id": job_id,
+                    "job_type": job.job_type,
+                    "status": job.status,
+                    "progress_percent": progress_percent,
+                    "current_step": current_step,
+                    "step_number": step_number,
+                    "steps_total": steps_total,
+                    "data": data or {},
                 },
             )
 
@@ -435,6 +497,17 @@ class JobProgressTracker:
                     "duration_ms": round(duration_ms, 2) if duration_ms else None,
                     "outcome": "success",
                     "correlation_id": get_correlation_id(),
+                },
+            )
+            await _log_job_turn(
+                job,
+                TurnType.JOB_COMPLETED,
+                "Job completed",
+                {
+                    "job_id": job_id,
+                    "job_type": job.job_type,
+                    "status": "complete",
+                    "result": result_data,
                 },
             )
 
@@ -488,6 +561,17 @@ class JobProgressTracker:
                     "outcome": "failure",
                     "error_message": error_message,
                     "correlation_id": get_correlation_id(),
+                },
+            )
+            await _log_job_turn(
+                job,
+                TurnType.JOB_FAILED,
+                "Job failed",
+                {
+                    "job_id": job_id,
+                    "job_type": job.job_type,
+                    "status": "failed",
+                    "error": error_message,
                 },
             )
 
