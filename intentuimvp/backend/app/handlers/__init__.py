@@ -476,8 +476,86 @@ class HandlerExecutor:
         if not text:
             text = "Plan"
 
-        await self._send_progress(run_id, "plan_handler", "Creating plan node...", 0.3)
-        return await self._execute_canvas_create_node(run_id, NodeType.PLAN, f"Plan: {text}")
+        await self._send_progress(run_id, "plan_handler", "Generating structured plan...", 0.25)
+
+        try:
+            from app.jobs.worker import planner_job
+
+            planner_result = await planner_job(
+                {
+                    "user_id": DEFAULT_USER_ID,
+                },
+                goal=text,
+                context="",
+            )
+        except Exception as exc:
+            logger.error("Planner job failed; falling back to plan node only", exc_info=True)
+            await self._send_progress(
+                run_id,
+                "plan_handler",
+                "Planner failed; creating basic plan node.",
+                0.4,
+            )
+            return await self._execute_canvas_create_node(
+                run_id, NodeType.PLAN, f"Plan: {text}"
+            )
+
+        if not planner_result.success or not planner_result.data:
+            await self._send_progress(
+                run_id,
+                "plan_handler",
+                "Planner returned no data; creating basic plan node.",
+                0.4,
+            )
+            return await self._execute_canvas_create_node(
+                run_id, NodeType.PLAN, f"Plan: {text}"
+            )
+
+        result_data = planner_result.data
+        plan_metadata = result_data.get("plan_metadata") or {}
+        task_dag = result_data.get("task_dag") or {}
+        execution_order = result_data.get("execution_order") or []
+        source_references = result_data.get("source_references") or []
+        reasoning = result_data.get("reasoning")
+        job_id = result_data.get("job_id") or planner_result.metadata.get("job_id")
+
+        plan_title = plan_metadata.get("goal") or text
+
+        plan_metadata_payload = {
+            "plan_metadata": plan_metadata,
+            "execution_order": execution_order,
+            "source_references": source_references,
+            "reasoning": reasoning,
+            "planner_job_id": job_id,
+        }
+
+        dag_metadata_payload = {
+            "task_dag": task_dag,
+            "execution_order": execution_order,
+            "source_references": source_references,
+            "planner_job_id": job_id,
+        }
+
+        await self._send_progress(
+            run_id,
+            "plan_handler",
+            "Creating plan and task DAG nodes...",
+            0.6,
+        )
+        plan_node = await self._execute_canvas_create_node(
+            run_id, NodeType.PLAN, f"Plan: {plan_title}", metadata=plan_metadata_payload
+        )
+        dag_node = await self._execute_canvas_create_node(
+            run_id, NodeType.DAG, f"Task DAG: {plan_title}", metadata=dag_metadata_payload
+        )
+
+        return {
+            "handler": "plan_handler",
+            "action": "plan_generated",
+            "plan_node_id": plan_node.get("node_id"),
+            "dag_node_id": dag_node.get("node_id"),
+            "planner_job_id": job_id,
+        }
 
     async def _help_handler(
         self,

@@ -3,7 +3,12 @@
 import { CSSProperties, useState, useRef, useId, useCallback } from "react";
 import Draggable, { DraggableData } from "react-draggable";
 import { useTransformComponent } from "react-zoom-pan-pinch";
-import { useCanvasStore, CanvasNode, AUTO_EXPAND_ANIMATION_MS } from "../../state/canvasStore";
+import {
+  useCanvasStore,
+  CanvasNode,
+  AUTO_EXPAND_ANIMATION_MS,
+  DAGTask,
+} from "../../state/canvasStore";
 import { NodeContextMenu } from "./NodeContextMenu";
 import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog";
 import { AudioBlockNode } from "./AudioBlockNode";
@@ -418,6 +423,34 @@ export function Node({
     [node.dagData, node.id, node.metadata, pendingCalendarApproval, updateNode]
   );
 
+  const handleDagStatusChange = useCallback(
+    (taskId: string, nextStatus: DAGTask["status"]) => {
+      if (!node.dagData) return;
+      let didChange = false;
+      const updatedTasks = node.dagData.tasks.map((task) => {
+        if (task.id !== taskId) return task;
+        if (task.status === nextStatus) return task;
+        didChange = true;
+        return { ...task, status: nextStatus };
+      });
+
+      if (!didChange) return;
+      const updatedDag = { ...node.dagData, tasks: updatedTasks };
+      const updatedMetadata = mergeDagMetadata(node.metadata, updatedDag);
+
+      updateNode(node.id, { dagData: updatedDag, metadata: updatedMetadata });
+
+      void fetch(`${API_BASE_URL}/api/nodes/${node.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ metadata: updatedMetadata }),
+      }).catch((error) => {
+        console.error("Failed to persist DAG task status change:", error);
+      });
+    },
+    [node.dagData, node.id, node.metadata, updateNode]
+  );
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -667,7 +700,7 @@ export function Node({
           ) : node.type === "plan" && node.planData ? (
             <PlanNode plan={node.planData} />
           ) : node.type === "dag" && node.dagData ? (
-            <DAGNode dag={node.dagData} />
+            <DAGNode dag={node.dagData} onTaskStatusChange={handleDagStatusChange} />
           ) : node.type === "dashboard" ? (
             <DashboardNode nodeId={node.id} />
           ) : node.type === "job" && node.jobData ? (

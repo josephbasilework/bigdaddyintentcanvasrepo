@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState, useEffect, useRef, useCallback } from "react";
 import type { DAGData, DAGTask } from "../../state/canvasStore";
 
 interface DAGNodeProps {
   dag: DAGData;
   onTaskClick?: (taskId: string) => void;
+  onTaskStatusChange?: (taskId: string, nextStatus: DAGTask["status"]) => void;
 }
 
 /**
@@ -17,14 +18,195 @@ interface DAGNodeProps {
  * - Priority indicators
  * - Click interaction for task details
  */
-export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
+export function DAGNode({ dag, onTaskClick, onTaskStatusChange }: DAGNodeProps) {
   const { tasks, dependencies = [] } = dag;
+
+  const STATUS_CYCLE: DAGTask["status"][] = [
+    "pending",
+    "in_progress",
+    "completed",
+    "blocked",
+  ];
+
+  const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
+  const prevRootIdsRef = useRef<string[]>([]);
+
+  const dagIndex = useMemo(() => {
+    const tasksById = new Map(tasks.map((task) => [task.id, task]));
+    const adjacency = new Map<string, string[]>();
+    const inDegree = new Map<string, number>();
+
+    tasks.forEach((task) => {
+      adjacency.set(task.id, []);
+      inDegree.set(task.id, 0);
+    });
+
+    dependencies.forEach((dep) => {
+      if (!adjacency.has(dep.dependsOnTaskId)) {
+        adjacency.set(dep.dependsOnTaskId, []);
+      }
+      adjacency.get(dep.dependsOnTaskId)!.push(dep.taskId);
+      inDegree.set(dep.taskId, (inDegree.get(dep.taskId) || 0) + 1);
+    });
+
+    const rootIds = tasks
+      .filter((task) => (inDegree.get(task.id) ?? 0) === 0)
+      .map((task) => task.id);
+
+    const resolvedRoots = rootIds.length > 0 ? rootIds : tasks.map((task) => task.id);
+
+    const descendantsByRoot = new Map<string, Set<string>>();
+    const taskToRoots = new Map<string, Set<string>>();
+
+    resolvedRoots.forEach((rootId) => {
+      const visited = new Set<string>();
+      const queue = [rootId];
+      visited.add(rootId);
+
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        const neighbors = adjacency.get(current) ?? [];
+        for (const next of neighbors) {
+          if (visited.has(next)) continue;
+          visited.add(next);
+          queue.push(next);
+        }
+      }
+
+      descendantsByRoot.set(rootId, visited);
+      for (const taskId of visited) {
+        const rootSet = taskToRoots.get(taskId) ?? new Set<string>();
+        rootSet.add(rootId);
+        taskToRoots.set(taskId, rootSet);
+      }
+    });
+
+    return {
+      tasksById,
+      adjacency,
+      inDegree,
+      rootIds: resolvedRoots,
+      descendantsByRoot,
+      taskToRoots,
+    };
+  }, [tasks, dependencies]);
+
+  useEffect(() => {
+    setExpandedPhases((prev) => {
+      if (prev.size === 0) {
+        return new Set(dagIndex.rootIds);
+      }
+      const prevRoots = new Set(prevRootIdsRef.current);
+      const next = new Set<string>();
+      dagIndex.rootIds.forEach((rootId) => {
+        if (prev.has(rootId)) {
+          next.add(rootId);
+          return;
+        }
+        if (!prevRoots.has(rootId)) {
+          next.add(rootId);
+        }
+      });
+      return next;
+    });
+    prevRootIdsRef.current = dagIndex.rootIds;
+  }, [dagIndex.rootIds]);
+
+  const togglePhase = useCallback((rootId: string) => {
+    setExpandedPhases((prev) => {
+      const next = new Set(prev);
+      if (next.has(rootId)) {
+        next.delete(rootId);
+      } else {
+        next.add(rootId);
+      }
+      return next;
+    });
+  }, []);
+
+  const expandAll = useCallback(() => {
+    setExpandedPhases(new Set(dagIndex.rootIds));
+  }, [dagIndex.rootIds]);
+
+  const collapseAll = useCallback(() => {
+    setExpandedPhases(new Set());
+  }, []);
+
+  const visibleTaskIds = useMemo(() => {
+    const visible = new Set<string>();
+    if (dagIndex.rootIds.length === 0) {
+      tasks.forEach((task) => visible.add(task.id));
+      return visible;
+    }
+
+    const rootSet = new Set(dagIndex.rootIds);
+    dagIndex.rootIds.forEach((rootId) => visible.add(rootId));
+
+    tasks.forEach((task) => {
+      if (rootSet.has(task.id)) return;
+      const rootIds = dagIndex.taskToRoots.get(task.id);
+      if (!rootIds || rootIds.size === 0) {
+        visible.add(task.id);
+        return;
+      }
+      for (const rootId of rootIds) {
+        if (expandedPhases.has(rootId)) {
+          visible.add(task.id);
+          break;
+        }
+      }
+    });
+
+    return visible;
+  }, [dagIndex.rootIds, dagIndex.taskToRoots, expandedPhases, tasks]);
+
+  const visibleTasks = useMemo(
+    () => tasks.filter((task) => visibleTaskIds.has(task.id)),
+    [tasks, visibleTaskIds]
+  );
+  const visibleDependencies = useMemo(
+    () =>
+      dependencies.filter(
+        (dep) => visibleTaskIds.has(dep.taskId) && visibleTaskIds.has(dep.dependsOnTaskId)
+      ),
+    [dependencies, visibleTaskIds]
+  );
+
+  const readyTaskIds = useMemo(() => {
+    const ready = new Set<string>();
+    const blockersByTask = new Map<string, string[]>();
+
+    dependencies.forEach((dep) => {
+      if (!blockersByTask.has(dep.taskId)) {
+        blockersByTask.set(dep.taskId, []);
+      }
+      blockersByTask.get(dep.taskId)!.push(dep.dependsOnTaskId);
+    });
+
+    tasks.forEach((task) => {
+      if (task.status !== "pending") return;
+      const blockers = blockersByTask.get(task.id) ?? [];
+      if (blockers.length === 0) {
+        ready.add(task.id);
+        return;
+      }
+      const allComplete = blockers.every((id) => {
+        const blocker = dagIndex.tasksById.get(id);
+        return blocker?.status === "completed";
+      });
+      if (allComplete) {
+        ready.add(task.id);
+      }
+    });
+
+    return ready;
+  }, [dependencies, dagIndex.tasksById, tasks]);
 
   const layout = useMemo(() => {
     const depMap = new Map<string, string[]>();
 
-    tasks.forEach((task) => {
-      const blockers = dependencies
+    visibleTasks.forEach((task) => {
+      const blockers = visibleDependencies
         .filter((d) => d.taskId === task.id)
         .map((d) => d.dependsOnTaskId);
       depMap.set(task.id, blockers);
@@ -33,15 +215,15 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
     const levels = new Map<string, number>();
     const inDegree = new Map<string, number>();
 
-    tasks.forEach((task) => {
+    visibleTasks.forEach((task) => {
       inDegree.set(task.id, 0);
     });
-    dependencies.forEach((dep) => {
+    visibleDependencies.forEach((dep) => {
       inDegree.set(dep.taskId, (inDegree.get(dep.taskId) || 0) + 1);
     });
 
     const queue: string[] = [];
-    tasks.forEach((task) => {
+    visibleTasks.forEach((task) => {
       if (inDegree.get(task.id) === 0) {
         queue.push(task.id);
         levels.set(task.id, 0);
@@ -52,7 +234,7 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
       const taskId = queue.shift()!;
       const currentLevel = levels.get(taskId)!;
 
-      dependencies
+      visibleDependencies
         .filter((d) => d.dependsOnTaskId === taskId)
         .forEach((dep) => {
           const newInDegree = (inDegree.get(dep.taskId) || 0) - 1;
@@ -66,7 +248,7 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
     }
 
     const levelGroups = new Map<number, string[]>();
-    tasks.forEach((task) => {
+    visibleTasks.forEach((task) => {
       const level = levels.get(task.id) ?? 0;
       if (!levelGroups.has(level)) {
         levelGroups.set(level, []);
@@ -88,7 +270,7 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
       });
     });
 
-    const connections = dependencies
+    const connections = visibleDependencies
       .map((dep) => {
         const source = positions.get(dep.dependsOnTaskId);
         const target = positions.get(dep.taskId);
@@ -116,7 +298,7 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
     const height = maxInLevel * (nodeHeight + verticalGap) + 40;
 
     return { positions, connections, width, height };
-  }, [tasks, dependencies]);
+  }, [visibleTasks, visibleDependencies]);
 
   const getStatusColor = (status: DAGTask["status"]) => {
     switch (status) {
@@ -161,6 +343,14 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
     }
   };
 
+  const getStatusText = (status: DAGTask["status"]) => status.replace("_", " ");
+
+  const getNextStatus = (status: DAGTask["status"]) => {
+    const index = STATUS_CYCLE.indexOf(status);
+    const nextIndex = index >= 0 ? (index + 1) % STATUS_CYCLE.length : 0;
+    return STATUS_CYCLE[nextIndex];
+  };
+
   const generatePath = (
     source: { x: number; y: number },
     target: { x: number; y: number }
@@ -182,6 +372,21 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
       e.preventDefault();
       onTaskClick(taskId);
     }
+  };
+
+  const handleStatusToggle = (
+    e: React.MouseEvent<SVGGElement> | React.KeyboardEvent<SVGGElement>,
+    task: DAGTask
+  ) => {
+    if (!onTaskStatusChange) return;
+    e.stopPropagation();
+    if ("type" in e && e.type === "keydown") {
+      if ("key" in e && e.key !== "Enter" && e.key !== " ") {
+        return;
+      }
+    }
+    const nextStatus = getNextStatus(task.status);
+    onTaskStatusChange(task.id, nextStatus);
   };
 
   if (tasks.length === 0) {
@@ -213,6 +418,99 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
       role="region"
       aria-label={`Task DAG with ${tasks.length} tasks`}
     >
+      <div
+        style={{
+          padding: "10px 12px 0",
+          display: "flex",
+          flexDirection: "column",
+          gap: "8px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontSize: "12px", color: "#94a3b8", fontWeight: 600 }}>
+            Phases
+          </div>
+          <div style={{ display: "flex", gap: "6px" }}>
+            <button
+              type="button"
+              onClick={expandAll}
+              style={{
+                border: "1px solid rgba(148, 163, 184, 0.4)",
+                backgroundColor: "rgba(15, 23, 42, 0.6)",
+                color: "#e2e8f0",
+                borderRadius: "999px",
+                padding: "2px 8px",
+                fontSize: "10px",
+                cursor: "pointer",
+              }}
+            >
+              Expand all
+            </button>
+            <button
+              type="button"
+              onClick={collapseAll}
+              style={{
+                border: "1px solid rgba(148, 163, 184, 0.4)",
+                backgroundColor: "rgba(15, 23, 42, 0.6)",
+                color: "#e2e8f0",
+                borderRadius: "999px",
+                padding: "2px 8px",
+                fontSize: "10px",
+                cursor: "pointer",
+              }}
+            >
+              Collapse all
+            </button>
+          </div>
+        </div>
+        <div style={{ display: "grid", gap: "6px" }}>
+          {dagIndex.rootIds.map((rootId) => {
+            const phaseTasks = dagIndex.descendantsByRoot.get(rootId) ?? new Set([rootId]);
+            const phaseTaskList = Array.from(phaseTasks)
+              .map((taskId) => dagIndex.tasksById.get(taskId))
+              .filter(Boolean) as DAGTask[];
+            const total = phaseTaskList.length;
+            const pendingCount = phaseTaskList.filter((task) => task.status === "pending").length;
+            const inProgressCount = phaseTaskList.filter((task) => task.status === "in_progress").length;
+            const completedCount = phaseTaskList.filter((task) => task.status === "completed").length;
+            const blockedCount = phaseTaskList.filter((task) => task.status === "blocked").length;
+            const rootTask = dagIndex.tasksById.get(rootId);
+            const title = rootTask?.title ?? "Phase";
+            const isExpanded = expandedPhases.has(rootId);
+
+            return (
+              <button
+                key={rootId}
+                type="button"
+                onClick={() => togglePhase(rootId)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  border: "1px solid rgba(148, 163, 184, 0.2)",
+                  backgroundColor: "rgba(15, 23, 42, 0.4)",
+                  borderRadius: "8px",
+                  padding: "6px 10px",
+                  color: "#e2e8f0",
+                  cursor: "pointer",
+                }}
+                aria-expanded={isExpanded}
+                aria-label={`${isExpanded ? "Collapse" : "Expand"} phase ${title}`}
+              >
+                <span style={{ display: "flex", alignItems: "center", gap: "6px", fontSize: "12px" }}>
+                  <span style={{ color: "#94a3b8", fontSize: "12px" }}>
+                    {isExpanded ? "▼" : "▶"}
+                  </span>
+                  <span>{title}</span>
+                </span>
+                <span style={{ fontSize: "10px", color: "#94a3b8" }}>
+                  {total} · {pendingCount}/{inProgressCount}/{completedCount}/{blockedCount}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
       <svg
         width={layout.width}
         height={layout.height}
@@ -260,7 +558,7 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
         ))}
 
         {/* Task nodes */}
-        {tasks.map((task) => {
+        {visibleTasks.map((task) => {
           const pos = layout.positions.get(task.id);
           if (!pos) return null;
           const calendarStatus =
@@ -279,6 +577,9 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
             calendarStatus === "linked"
               ? "rgba(72, 187, 120, 0.2)"
               : "rgba(99, 179, 237, 0.2)";
+          const isReady = readyTaskIds.has(task.id);
+          const nextStatus = getNextStatus(task.status);
+          const readyBadgeX = task.priority ? 92 : 120;
 
           return (
             <g
@@ -291,7 +592,7 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
               role={onTaskClick ? "button" : "group"}
               aria-label={`Task: ${task.title}, Status: ${task.status}${
                 task.priority ? `, Priority: ${task.priority}` : ""
-              }${calendarLabel ? `, ${calendarLabel}` : ""}`}
+              }${isReady ? ", Ready" : ""}${calendarLabel ? `, ${calendarLabel}` : ""}`}
             >
               {/* Node background */}
               <rect
@@ -333,6 +634,35 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
               >
                 {task.title.length > 14 ? task.title.substring(0, 14) + "…" : task.title}
               </text>
+
+              {onTaskStatusChange && (
+                <g
+                  transform="translate(132, 24)"
+                  role="button"
+                  tabIndex={0}
+                  onClick={(event) => handleStatusToggle(event, task)}
+                  onKeyDown={(event) => handleStatusToggle(event, task)}
+                  aria-label={`Advance status for ${task.title} to ${getStatusText(nextStatus)}`}
+                  style={{ cursor: "pointer" }}
+                >
+                  <rect
+                    width="18"
+                    height="18"
+                    rx="4"
+                    fill="rgba(148, 163, 184, 0.15)"
+                    stroke="rgba(148, 163, 184, 0.4)"
+                  />
+                  <text
+                    x="9"
+                    y="12"
+                    fontSize="10"
+                    fill="#cbd5f5"
+                    textAnchor="middle"
+                  >
+                    &gt;
+                  </text>
+                </g>
+              )}
 
               {/* Description (truncated) */}
               {task.description && (
@@ -390,6 +720,28 @@ export function DAGNode({ dag, onTaskClick }: DAGNodeProps) {
                     textAnchor="middle"
                   >
                     CAL
+                  </text>
+                </g>
+              )}
+
+              {isReady && (
+                <g>
+                  <rect
+                    x={readyBadgeX}
+                    y="5"
+                    width="34"
+                    height="14"
+                    rx="3"
+                    fill="rgba(251, 191, 36, 0.2)"
+                  />
+                  <text
+                    x={readyBadgeX + 17}
+                    y="15"
+                    fontSize="8"
+                    fill="#facc15"
+                    textAnchor="middle"
+                  >
+                    READY
                   </text>
                 </g>
               )}

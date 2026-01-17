@@ -150,6 +150,22 @@ describe("DAGNode", () => {
     expect(onTaskClick).toHaveBeenCalledWith("task-123");
   });
 
+  it("calls onTaskStatusChange when status toggle is activated", () => {
+    const onTaskStatusChange = vi.fn();
+    const dag: DAGData = {
+      tasks: [{ id: "task-1", title: "Toggle Task", status: "pending" }],
+    };
+
+    render(<DAGNode dag={dag} onTaskStatusChange={onTaskStatusChange} />);
+
+    const toggle = screen.getByRole("button", {
+      name: /advance status for toggle task to in progress/i,
+    });
+    fireEvent.click(toggle);
+
+    expect(onTaskStatusChange).toHaveBeenCalledWith("task-1", "in_progress");
+  });
+
   it("handles keyboard activation on task nodes", () => {
     const onTaskClick = vi.fn();
     const dag: DAGData = {
@@ -232,6 +248,20 @@ describe("DAGNode", () => {
 
     const paths = container.querySelectorAll("path");
     expect(paths.length).toBeGreaterThan(0);
+  });
+
+  it("marks tasks as ready when dependencies are completed", () => {
+    const dag: DAGData = {
+      tasks: [
+        { id: "task-a", title: "Task A", status: "completed" },
+        { id: "task-b", title: "Task B", status: "pending" },
+      ],
+      dependencies: [{ taskId: "task-b", dependsOnTaskId: "task-a", type: "hard" }],
+    };
+
+    render(<DAGNode dag={dag} />);
+
+    expect(screen.getByText("READY")).toBeInTheDocument();
   });
 
   it("renders soft dependencies with dashed style", () => {
