@@ -308,7 +308,10 @@ export function FloatingInput({
               aria-expanded={toggle.isOpen}
               aria-controls={toggle.ariaControls}
             >
-              {toggle.isOpen ? toggle.activeLabel ?? toggle.label : toggle.label}
+              <span className="panel-toggle-label">
+                {toggle.isOpen ? toggle.activeLabel ?? toggle.label : toggle.label}
+              </span>
+              {toggle.isOpen && <span className="panel-toggle-arrow" aria-hidden="true" />}
             </button>
           ))}
         </div>
@@ -357,6 +360,11 @@ export function FloatingInput({
 
         .floating-panel {
           margin-bottom: 0.75rem;
+          display: flex;
+          justify-content: center;
+          width: 100%;
+          transform-origin: bottom center;
+          animation: panel-rise 0.2s ease-out;
         }
 
         .selection-scope {
@@ -463,7 +471,7 @@ export function FloatingInput({
 
         .panel-toggle {
           display: flex;
-          justify-content: flex-start;
+          justify-content: center;
           gap: 0.4rem;
           flex-wrap: wrap;
           margin-bottom: 0.5rem;
@@ -482,6 +490,16 @@ export function FloatingInput({
           letter-spacing: 0.02em;
           text-transform: uppercase;
           cursor: pointer;
+        }
+
+        .panel-toggle-arrow {
+          width: 0;
+          height: 0;
+          border-left: 4px solid transparent;
+          border-right: 4px solid transparent;
+          border-bottom: 6px solid currentColor;
+          display: inline-block;
+          transform: translateY(-1px);
         }
 
         .panel-toggle-button.is-active {
@@ -636,6 +654,23 @@ export function FloatingInput({
           .floating-input {
             padding: 0.75rem 1rem;
             font-size: 0.9375rem;
+          }
+        }
+
+        @keyframes panel-rise {
+          from {
+            opacity: 0;
+            transform: translateY(10px) scale(0.98);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .floating-panel {
+            animation: none;
           }
         }
       `}</style>

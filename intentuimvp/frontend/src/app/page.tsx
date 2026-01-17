@@ -4,6 +4,7 @@ import { Canvas, CanvasWorkspace } from "@/components/Canvas";
 import { FloatingInput } from "@/components/ContextInput/FloatingInput";
 import { ChatViewPanel } from "@/components/ChatView";
 import { EventsViewPanel } from "@/components/EventsView";
+import { WheelViewPanel } from "@/components/WheelView";
 import { AssumptionsPanel } from "@/components/Assumptions";
 import type { Assumption, AssumptionSet } from "@/components/Assumptions";
 import { useCanvasStore, type CanvasNode } from "@/state/canvasStore";
@@ -184,7 +185,9 @@ export default function Home() {
   const [routingError, setRoutingError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("Ready for commands.");
   const [attachments, setAttachments] = useState<string[]>([]);
-  const [activeView, setActiveView] = useState<"chat" | "events" | null>(null);
+  const [activeView, setActiveView] = useState<"chat" | "wheel" | "events" | null>(
+    null
+  );
   const nodes = useCanvasStore((state) => state.nodes);
   const addNode = useCanvasStore((state) => state.addNode);
   const updateNodePosition = useCanvasStore((state) => state.updateNodePosition);
@@ -296,7 +299,9 @@ export default function Home() {
   }, [wsSessionId, assumptionSet?.sessionId]);
 
   const isChatOpen = activeView === "chat";
+  const isWheelOpen = activeView === "wheel";
   const isEventsOpen = activeView === "events";
+  const isTurnsOpen = isWheelOpen || isEventsOpen;
 
   const {
     turns: chatTurns,
@@ -308,12 +313,12 @@ export default function Home() {
   });
 
   const {
-    turns: eventTurns,
-    isLoading: isEventsLoading,
-    error: eventsError,
+    turns: timelineTurns,
+    isLoading: isTurnsLoading,
+    error: turnsError,
   } = useTurns({
     sessionIds: chatSessionIds,
-    enabled: isEventsOpen,
+    enabled: isTurnsOpen,
   });
 
   useEffect(() => {
@@ -391,6 +396,12 @@ export default function Home() {
 
   const handleCommandSubmit = async (value: string) => {
     setRoutingError(null);
+    const normalizedValue = value.trim().toLowerCase();
+    if (normalizedValue === "close all panels") {
+      setActiveView(null);
+      setStatusMessage("Panels closed.");
+      return;
+    }
     const attachmentsForSubmission = [...attachments];
     const selection = selectionScope;
 
@@ -510,7 +521,7 @@ export default function Home() {
     clearAssumptions();
   };
 
-  const handleViewToggle = (view: "chat" | "events") => {
+  const handleViewToggle = (view: "chat" | "wheel" | "events") => {
     setActiveView((prev) => (prev === view ? null : view));
   };
 
@@ -526,13 +537,28 @@ export default function Home() {
   const eventsPanel = isEventsOpen ? (
     <EventsViewPanel
       id="events-view-panel"
-      turns={eventTurns}
-      isLoading={isEventsLoading}
-      error={eventsError}
+      turns={timelineTurns}
+      isLoading={isTurnsLoading}
+      error={turnsError}
     />
   ) : null;
 
-  const panelContent = isChatOpen ? chatPanel : isEventsOpen ? eventsPanel : null;
+  const wheelPanel = isWheelOpen ? (
+    <WheelViewPanel
+      id="wheel-view-panel"
+      turns={timelineTurns}
+      isLoading={isTurnsLoading}
+      error={turnsError}
+    />
+  ) : null;
+
+  const panelContent = isChatOpen
+    ? chatPanel
+    : isWheelOpen
+      ? wheelPanel
+      : isEventsOpen
+        ? eventsPanel
+        : null;
 
   return (
     <>
@@ -603,15 +629,19 @@ export default function Home() {
         panelContent={panelContent}
         panelToggles={[
           {
-            label: "Chat view",
-            activeLabel: "Hide chat",
+            label: "Chat",
             isOpen: isChatOpen,
             onToggle: () => handleViewToggle("chat"),
             ariaControls: "chat-view-panel",
           },
           {
-            label: "Events view",
-            activeLabel: "Hide events",
+            label: "Wheel",
+            isOpen: isWheelOpen,
+            onToggle: () => handleViewToggle("wheel"),
+            ariaControls: "wheel-view-panel",
+          },
+          {
+            label: "Events",
             isOpen: isEventsOpen,
             onToggle: () => handleViewToggle("events"),
             ariaControls: "events-view-panel",

@@ -4,6 +4,10 @@ import type { MutableRefObject, ReactNode } from 'react';
 import { useCanvasStore } from '../state/canvasStore';
 import Home from '../app/page';
 
+const wsMessageHandler = vi.hoisted(() => ({
+  current: undefined as undefined | ((message: { type: string; payload?: unknown }) => void),
+}));
+
 const mockTransformRef = vi.hoisted(() => ({
   state: { scale: 1, positionX: 0, positionY: 0 },
   setTransform: vi.fn(),
@@ -66,6 +70,13 @@ vi.mock('react-draggable', () => ({
   },
 }));
 
+vi.mock('@/hooks/useWebSocketEnhanced', () => ({
+  useWebSocketEnhanced: ({ onMessage }: { onMessage?: (message: { type: string; payload?: unknown }) => void } = {}) => {
+    wsMessageHandler.current = onMessage;
+    return { sessionId: 'session-123' };
+  },
+}));
+
 describe('workspace canvas', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
@@ -81,6 +92,7 @@ describe('workspace canvas', () => {
     mockTransformRef.zoomOut.mockClear();
     mockTransformRef.resetTransform.mockClear();
     draggableProps.current = null;
+    wsMessageHandler.current = undefined;
 
     useCanvasStore.setState({
       canvasId: null,
@@ -128,6 +140,25 @@ describe('workspace canvas', () => {
     expect(screen.getByRole('textbox', { name: /command input/i })).toBeInTheDocument();
   });
 
+  it('closes view panels when the close-all command is submitted', async () => {
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const chatToggle = screen.getByRole('button', { name: 'Chat' });
+    fireEvent.click(chatToggle);
+
+    await waitFor(() => expect(screen.getByText('Chat View')).toBeInTheDocument());
+
+    const commandInput = screen.getByRole('textbox', { name: /command input/i });
+    fireEvent.change(commandInput, { target: { value: 'close all panels' } });
+    fireEvent.keyDown(commandInput, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Chat View')).not.toBeInTheDocument();
+    });
+  });
+
   it('creates a node when a command is submitted', async () => {
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input.toString();
@@ -157,6 +188,20 @@ describe('workspace canvas', () => {
     const commandInput = screen.getByRole('textbox', { name: /command input/i });
     fireEvent.change(commandInput, { target: { value: 'Outline next sprint' } });
     fireEvent.keyDown(commandInput, { key: 'Enter' });
+
+    act(() => {
+      wsMessageHandler.current?.({
+        type: 'node.created',
+        payload: {
+          id: 'node-1',
+          type: 'text',
+          title: 'Outline next sprint',
+          x: 120,
+          y: 160,
+          z: 1,
+        },
+      });
+    });
 
     await waitFor(() => expect(useCanvasStore.getState().nodes).toHaveLength(1));
 
@@ -198,6 +243,22 @@ describe('workspace canvas', () => {
     fireEvent.change(commandInput, { target: { value: '/plan Build Q1 roadmap' } });
     fireEvent.keyDown(commandInput, { key: 'Enter' });
 
+    act(() => {
+      wsMessageHandler.current?.({
+        type: 'node.created',
+        payload: {
+          id: 'node-2',
+          type: 'plan',
+          title: 'Plan: Build Q1 roadmap',
+          content: 'Build Q1 roadmap',
+          metadata: { command: '/plan' },
+          x: 140,
+          y: 180,
+          z: 1,
+        },
+      });
+    });
+
     await waitFor(() => expect(useCanvasStore.getState().nodes).toHaveLength(1));
 
     const [node] = useCanvasStore.getState().nodes;
@@ -236,6 +297,21 @@ describe('workspace canvas', () => {
     const commandInput = screen.getByRole('textbox', { name: /command input/i });
     fireEvent.change(commandInput, { target: { value: '/dashboard Sales KPIs' } });
     fireEvent.keyDown(commandInput, { key: 'Enter' });
+
+    act(() => {
+      wsMessageHandler.current?.({
+        type: 'node.created',
+        payload: {
+          id: 'node-3',
+          type: 'dashboard',
+          title: 'Dashboard: Sales KPIs',
+          metadata: { command: '/dashboard' },
+          x: 160,
+          y: 200,
+          z: 1,
+        },
+      });
+    });
 
     await waitFor(() => expect(useCanvasStore.getState().nodes).toHaveLength(1));
 

@@ -236,4 +236,24 @@ describe("FloatingInput", () => {
     const selectionScope = screen.getByRole("region", { name: /selection scope/i });
     expect(within(selectionScope).getByText("+2 more")).toBeInTheDocument();
   });
+
+  it("renders panel toggles with an active indicator", () => {
+    const handleToggle = vi.fn();
+    render(
+      <FloatingInput
+        panelToggles={[
+          { label: "Chat", isOpen: true, onToggle: handleToggle },
+          { label: "Events", isOpen: false, onToggle: handleToggle },
+        ]}
+      />
+    );
+
+    const chatButton = screen.getByRole("button", { name: "Chat" });
+    const eventsButton = screen.getByRole("button", { name: "Events" });
+
+    expect(chatButton).toBeInTheDocument();
+    expect(eventsButton).toBeInTheDocument();
+    expect(chatButton.querySelector(".panel-toggle-arrow")).not.toBeNull();
+    expect(eventsButton.querySelector(".panel-toggle-arrow")).toBeNull();
+  });
 });
