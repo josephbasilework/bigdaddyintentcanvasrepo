@@ -52,7 +52,9 @@ export type AgentToUIMessageType =
   | ToolCallMessage
   | ToolResultMessage
   | StateUpdateMessage
-  | StateSnapshotMessage;
+  | StateSnapshotMessage
+  | DashboardUpdateMessage
+  | DashboardSubscribedMessage;
 
 /**
  * Agent status update (working, idle, error)
@@ -617,6 +619,16 @@ export interface DashboardUpdatePayload {
 export interface DashboardSubscribedPayload {
   dashboard_node_id: number;
   subscriptions: DashboardSubscriptionSnapshot[];
+}
+
+export interface DashboardUpdateMessage extends AgentToUIMessage {
+  type: 'dashboard.update';
+  payload: DashboardUpdatePayload;
+}
+
+export interface DashboardSubscribedMessage extends AgentToUIMessage {
+  type: 'dashboard.subscribed';
+  payload: DashboardSubscribedPayload;
 }
 
 // ============================================================================

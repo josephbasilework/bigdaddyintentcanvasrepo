@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent } from "@testing-library/react";
 import { DashboardNode } from "../DashboardNode";
 import { useDashboardStream } from "../../../hooks/useDashboardStream";
 import { useCanvasStore } from "../../../state/canvasStore";
@@ -188,5 +188,32 @@ describe("DashboardNode", () => {
     expect(screen.getByText("Active Subscriptions")).toBeInTheDocument();
     expect(screen.getByText("Job · job-9")).toBeInTheDocument();
     expect(screen.getByText("Job · Created")).toBeInTheDocument();
+  });
+
+  it("shows external state configuration details", () => {
+    useCanvasStore.setState({
+      nodes: [
+        {
+          id: "dash",
+          type: "dashboard",
+          x: 0,
+          y: 0,
+          z: 0,
+          title: "Dashboard",
+          metadata: {
+            dashboardConfig: { type: "api", pollIntervalMs: 5000 },
+          },
+        },
+      ],
+    });
+
+    render(<DashboardNode nodeId="dash" />);
+
+    expect(screen.getByText("External State")).toBeInTheDocument();
+    expect(screen.getByText("API endpoint not set")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /configure/i }));
+    expect(screen.getByText("Source type")).toBeInTheDocument();
+    expect(screen.getByText("Poll interval (ms)")).toBeInTheDocument();
   });
 });

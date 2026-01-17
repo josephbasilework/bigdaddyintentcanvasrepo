@@ -554,3 +554,85 @@ describe('AGUIClient state sync', () => {
     expect(hasStateSyncRequest(secondSocket.sentMessages)).toBe(true);
   });
 });
+
+describe('AGUIClient dashboard streaming', () => {
+  beforeEach(() => {
+    global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+    MockWebSocket.reset();
+  });
+
+  afterEach(() => {
+    MockWebSocket.reset();
+    global.WebSocket = OriginalWebSocket;
+  });
+
+  it('dispatches dashboard update messages to listeners', async () => {
+    const client = new AGUIClient({
+      gatewayUrl: 'http://localhost:8000',
+    });
+
+    client.connect();
+    await flushMicrotasks();
+
+    const handler = vi.fn();
+    client.onDashboardUpdate(42, handler);
+
+    const ws = MockWebSocket.instances[0];
+    ws.triggerMessage(
+      JSON.stringify({
+        version: AGUI_PROTOCOL_VERSION,
+        messageId: 'msg-1',
+        timestamp: new Date().toISOString(),
+        source: 'agent',
+        target: 'ui',
+        type: 'dashboard.update',
+        payload: {
+          dashboard_node_id: 42,
+          subscription_target: 'job',
+          source_id: 'job-1',
+          change_type: 'created',
+          data: { status: 'ok' },
+          timestamp: new Date().toISOString(),
+        },
+      })
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({ dashboard_node_id: 42, subscription_target: 'job' })
+    );
+  });
+
+  it('dispatches dashboard subscribed messages to listeners', async () => {
+    const client = new AGUIClient({
+      gatewayUrl: 'http://localhost:8000',
+    });
+
+    client.connect();
+    await flushMicrotasks();
+
+    const handler = vi.fn();
+    client.onDashboardSubscribed(7, handler);
+
+    const ws = MockWebSocket.instances[0];
+    ws.triggerMessage(
+      JSON.stringify({
+        version: AGUI_PROTOCOL_VERSION,
+        messageId: 'msg-2',
+        timestamp: new Date().toISOString(),
+        source: 'agent',
+        target: 'ui',
+        type: 'dashboard.subscribed',
+        payload: {
+          dashboard_node_id: 7,
+          subscriptions: [{ id: 1, subscriptionTarget: 'job', sourceId: 'job-1' }],
+        },
+      })
+    );
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(
+      expect.objectContaining({ dashboard_node_id: 7 })
+    );
+  });
+});

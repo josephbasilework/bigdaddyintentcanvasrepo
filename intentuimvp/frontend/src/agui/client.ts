@@ -58,6 +58,8 @@ const AGENT_MESSAGE_TYPES = new Set<string>([
   "tool.result",
   "state.update",
   "state.snapshot",
+  "dashboard.update",
+  "dashboard.subscribed",
 ]);
 
 type RunStreamMode = "connect" | "run";
@@ -541,6 +543,11 @@ export class AGUIClient {
 
     if (this.isAgentMessage(message)) {
       const agentMessage = message as AgentToUIMessageType;
+      if (agentMessage.type === "dashboard.update") {
+        this.dispatchDashboardUpdate(agentMessage.payload);
+      } else if (agentMessage.type === "dashboard.subscribed") {
+        this.dispatchDashboardSubscribed(agentMessage.payload);
+      }
       this.dispatchAgentMessage(agentMessage);
 
       const event = this.mapAgentMessageToEvent(agentMessage);
