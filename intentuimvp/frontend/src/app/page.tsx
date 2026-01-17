@@ -3,11 +3,13 @@
 import { Canvas, CanvasWorkspace } from "@/components/Canvas";
 import { FloatingInput } from "@/components/ContextInput/FloatingInput";
 import { ChatViewPanel } from "@/components/ChatView";
+import { EventsViewPanel } from "@/components/EventsView";
 import { AssumptionsPanel } from "@/components/Assumptions";
 import type { Assumption, AssumptionSet } from "@/components/Assumptions";
 import { useCanvasStore, type CanvasNode } from "@/state/canvasStore";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useChatTurns } from "@/hooks/useChatTurns";
+import { useTurns } from "@/hooks/useTurns";
 import { useWebSocketEnhanced, type WebSocketMessage } from "@/hooks/useWebSocketEnhanced";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -19,76 +21,6 @@ const getWebSocketUrl = (): string => {
   return `${protocol}//${url.host}/ws`;
 };
 const WS_URL = getWebSocketUrl();
-
-const MAX_NODE_TITLE_LENGTH = 72;
-const DEFAULT_NODE_TYPE: CanvasNode["type"] = "text";
-const COMMAND_NODE_TYPES: Record<string, CanvasNode["type"]> = {
-  "/research": "document",
-  "/judge": "document",
-  "/plan": "plan",
-  "/dashboard": "dashboard",
-  "/graph": "graph",
-  "/export": "document",
-};
-const COMMAND_LABELS: Record<string, string> = {
-  "/research": "Research",
-  "/judge": "Judge",
-  "/plan": "Plan",
-  "/dashboard": "Dashboard",
-  "/graph": "Graph",
-  "/export": "Export",
-};
-
-const truncateText = (value: string, maxLength: number): string => {
-  if (value.length <= maxLength) {
-    return value;
-  }
-  const sliceLength = Math.max(0, maxLength - 3);
-  return `${value.slice(0, sliceLength).trimEnd()}...`;
-};
-
-const getViewportCenter = (): { x: number; y: number } => {
-  if (typeof window === "undefined") {
-    return { x: 160, y: 120 };
-  }
-  const x = Math.max(40, Math.round(window.innerWidth / 2) - 120);
-  const y = Math.max(40, Math.round(window.innerHeight / 2) - 80);
-  return { x, y };
-};
-
-const getNextNodePosition = (
-  nodes: CanvasNode[],
-  selectedNodeId: string | null
-): { x: number; y: number; z: number } => {
-  const maxZ = nodes.reduce((max, node) => Math.max(max, node.z), 0);
-  const selectedNode = selectedNodeId
-    ? nodes.find((node) => node.id === selectedNodeId)
-    : undefined;
-
-  if (selectedNode) {
-    return {
-      x: selectedNode.x + 240,
-      y: selectedNode.y,
-      z: maxZ + 1,
-    };
-  }
-
-  if (nodes.length > 0) {
-    const lastNode = nodes[nodes.length - 1];
-    return {
-      x: lastNode.x + 48,
-      y: lastNode.y + 48,
-      z: maxZ + 1,
-    };
-  }
-
-  const fallback = getViewportCenter();
-  return {
-    x: fallback.x,
-    y: fallback.y,
-    z: maxZ + 1,
-  };
-};
 
 type CommandSubmissionLog = {
   id: string;
@@ -252,7 +184,7 @@ export default function Home() {
   const [routingError, setRoutingError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("Ready for commands.");
   const [attachments, setAttachments] = useState<string[]>([]);
-  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [activeView, setActiveView] = useState<"chat" | "events" | null>(null);
   const nodes = useCanvasStore((state) => state.nodes);
   const addNode = useCanvasStore((state) => state.addNode);
   const updateNodePosition = useCanvasStore((state) => state.updateNodePosition);
@@ -297,6 +229,9 @@ export default function Home() {
             metadata: payload.metadata,
           });
           console.log("DEBUG: Added backend-created node:", payload.id);
+          if (!selectedNodeId && selectedNodeIds.length === 0) {
+            selectNode(nodeId);
+          }
         } else {
           console.log("DEBUG: Node already exists, skipping:", payload.id);
         }
@@ -360,6 +295,9 @@ export default function Home() {
     return Array.from(new Set(ids));
   }, [wsSessionId, assumptionSet?.sessionId]);
 
+  const isChatOpen = activeView === "chat";
+  const isEventsOpen = activeView === "events";
+
   const {
     turns: chatTurns,
     isLoading: isChatLoading,
@@ -367,6 +305,15 @@ export default function Home() {
   } = useChatTurns({
     sessionIds: chatSessionIds,
     enabled: isChatOpen,
+  });
+
+  const {
+    turns: eventTurns,
+    isLoading: isEventsLoading,
+    error: eventsError,
+  } = useTurns({
+    sessionIds: chatSessionIds,
+    enabled: isEventsOpen,
   });
 
   useEffect(() => {
@@ -407,51 +354,6 @@ export default function Home() {
     setAssumptions([]);
     setAssumptionSet(null);
     setPendingCommand(null);
-  };
-
-  const createNodeFromCommand = (value: string, attachmentsForSubmission: string[]) => {
-    console.log("DEBUG: createNodeFromCommand called with:", value);
-    const trimmed = value.trim();
-    if (!trimmed) return;
-
-    const [commandToken, ...restTokens] = trimmed.split(/\s+/);
-    const isSlashCommand = commandToken.startsWith("/");
-    const commandKey = isSlashCommand ? commandToken.toLowerCase() : null;
-    const commandLabel = commandKey ? COMMAND_LABELS[commandKey] : undefined;
-    const commandType = commandKey ? COMMAND_NODE_TYPES[commandKey] : undefined;
-    const body = isSlashCommand ? restTokens.join(" ").trim() : trimmed;
-
-    const titleBase = isSlashCommand && commandLabel
-      ? body
-        ? `${commandLabel}: ${body}`
-        : commandLabel
-      : body || trimmed;
-    const title = truncateText(titleBase, MAX_NODE_TITLE_LENGTH);
-    const content = isSlashCommand ? (body || undefined) : (
-      trimmed.length > MAX_NODE_TITLE_LENGTH ? trimmed : undefined
-    );
-
-    const metadata: Record<string, unknown> = {};
-    if (commandKey) {
-      metadata.command = commandKey;
-    }
-    if (attachmentsForSubmission.length > 0) {
-      metadata.attachments = attachmentsForSubmission;
-    }
-
-    const { x, y, z } = getNextNodePosition(nodes, selectedNodeId);
-    console.log("DEBUG: Adding node with title:", title, "at position:", { x, y, z });
-    const nodeId = addNode({
-      type: commandType ?? DEFAULT_NODE_TYPE,
-      x,
-      y,
-      z,
-      title,
-      content,
-      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
-    });
-    console.log("DEBUG: Node added with ID:", nodeId);
-    selectNode(nodeId);
   };
 
   const queueCommand = async (
@@ -608,6 +510,10 @@ export default function Home() {
     clearAssumptions();
   };
 
+  const handleViewToggle = (view: "chat" | "events") => {
+    setActiveView((prev) => (prev === view ? null : view));
+  };
+
   const chatPanel = isChatOpen ? (
     <ChatViewPanel
       id="chat-view-panel"
@@ -616,6 +522,17 @@ export default function Home() {
       error={chatError}
     />
   ) : null;
+
+  const eventsPanel = isEventsOpen ? (
+    <EventsViewPanel
+      id="events-view-panel"
+      turns={eventTurns}
+      isLoading={isEventsLoading}
+      error={eventsError}
+    />
+  ) : null;
+
+  const panelContent = isChatOpen ? chatPanel : isEventsOpen ? eventsPanel : null;
 
   return (
     <>
@@ -683,14 +600,23 @@ export default function Home() {
         selection={selectionItems}
         onRemoveAttachment={handleRemoveAttachment}
         placeholder="Type a command..."
-        panelContent={chatPanel}
-        panelToggle={{
-          label: "Chat view",
-          activeLabel: "Hide chat",
-          isOpen: isChatOpen,
-          onToggle: () => setIsChatOpen((prev) => !prev),
-          ariaControls: "chat-view-panel",
-        }}
+        panelContent={panelContent}
+        panelToggles={[
+          {
+            label: "Chat view",
+            activeLabel: "Hide chat",
+            isOpen: isChatOpen,
+            onToggle: () => handleViewToggle("chat"),
+            ariaControls: "chat-view-panel",
+          },
+          {
+            label: "Events view",
+            activeLabel: "Hide events",
+            isOpen: isEventsOpen,
+            onToggle: () => handleViewToggle("events"),
+            ariaControls: "events-view-panel",
+          },
+        ]}
       />
     </>
   );

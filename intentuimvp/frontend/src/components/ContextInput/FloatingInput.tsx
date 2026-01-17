@@ -23,6 +23,8 @@ interface FloatingInputProps {
   panelContent?: ReactNode;
   /** Optional toggle config for the panel */
   panelToggle?: PanelToggleConfig;
+  /** Optional toggle configs for multiple panels */
+  panelToggles?: PanelToggleConfig[];
 }
 
 interface SelectionScopeItem {
@@ -104,6 +106,7 @@ export function FloatingInput({
   maxLength = 1000,
   panelContent,
   panelToggle,
+  panelToggles,
 }: FloatingInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
@@ -200,6 +203,12 @@ export function FloatingInput({
         template.command.slice(1).startsWith(templateQuery)
       )
     : [];
+  const resolvedToggles =
+    panelToggles && panelToggles.length > 0
+      ? panelToggles
+      : panelToggle
+        ? [panelToggle]
+        : [];
 
   return (
     <div
@@ -288,19 +297,20 @@ export function FloatingInput({
           ))}
         </div>
       )}
-      {panelToggle && (
+      {resolvedToggles.length > 0 && (
         <div className="panel-toggle">
-          <button
-            type="button"
-            className={`panel-toggle-button${panelToggle.isOpen ? " is-active" : ""}`}
-            onClick={panelToggle.onToggle}
-            aria-expanded={panelToggle.isOpen}
-            aria-controls={panelToggle.ariaControls}
-          >
-            {panelToggle.isOpen
-              ? panelToggle.activeLabel ?? panelToggle.label
-              : panelToggle.label}
-          </button>
+          {resolvedToggles.map((toggle) => (
+            <button
+              key={toggle.label}
+              type="button"
+              className={`panel-toggle-button${toggle.isOpen ? " is-active" : ""}`}
+              onClick={toggle.onToggle}
+              aria-expanded={toggle.isOpen}
+              aria-controls={toggle.ariaControls}
+            >
+              {toggle.isOpen ? toggle.activeLabel ?? toggle.label : toggle.label}
+            </button>
+          ))}
         </div>
       )}
       <input
@@ -454,6 +464,8 @@ export function FloatingInput({
         .panel-toggle {
           display: flex;
           justify-content: flex-start;
+          gap: 0.4rem;
+          flex-wrap: wrap;
           margin-bottom: 0.5rem;
         }
 
