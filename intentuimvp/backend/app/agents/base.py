@@ -12,10 +12,20 @@ from typing import Any, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
+from app.config import get_settings
 from app.gateway.client import GatewayClient, GatewayClientError
 from app.logging_config import get_correlation_id
 
 logger = logging.getLogger(__name__)
+
+
+def get_default_model() -> str:
+    """Get the default gateway model from settings.
+
+    Uses a function to ensure settings are loaded from .env file
+    before the model is accessed (avoids module-level os.getenv timing issues).
+    """
+    return get_settings().gateway_model
 
 # Generic type for Pydantic response models
 T = TypeVar("T", bound=BaseModel)
@@ -41,14 +51,14 @@ class BaseAgent(ABC):
     def __init__(
         self,
         gateway: GatewayClient | None = None,
-        model: str = "openai/gpt-4o",
+        model: str | None = None,
         temperature: float = 0.7,
     ) -> None:
         """Initialize the agent.
 
         Args:
             gateway: Gateway client instance. If None, uses singleton.
-            model: Model identifier for Gateway (e.g., "openai/gpt-4o").
+            model: Model name for the Gateway route. Defaults to GATEWAY_MODEL env var.
             temperature: Sampling temperature (0.0 to 1.0).
         """
         if gateway is None:
@@ -57,7 +67,7 @@ class BaseAgent(ABC):
             gateway = get_gateway_client()
 
         self.gateway = gateway
-        self.model = model
+        self.model = model or get_default_model()
         self.temperature = temperature
 
     @abstractmethod
@@ -178,15 +188,28 @@ class BaseAgent(ABC):
             logger.error("Unexpected Gateway response format", extra={"response": response})
             raise AgentError(f"Invalid Gateway response format: {e}") from e
 
+        # Log raw content for debugging
+        content_preview = repr(content[:500]) if content else "EMPTY"
+        logger.info(f"Raw LLM response content: length={len(content) if content else 0}, content={content_preview}")
+
+        # Strip markdown code fences if present
+        cleaned_content = content.strip() if content else ""
+        if cleaned_content.startswith("```json"):
+            cleaned_content = cleaned_content[7:]  # Remove ```json
+        elif cleaned_content.startswith("```"):
+            cleaned_content = cleaned_content[3:]  # Remove ```
+        if cleaned_content.endswith("```"):
+            cleaned_content = cleaned_content[:-3]  # Remove trailing ```
+        cleaned_content = cleaned_content.strip()
+
         # Parse and validate against response model
         try:
-            # Assuming Gateway returns JSON in content
-            parsed = json.loads(content)
+            parsed = json.loads(cleaned_content)
             return response_model.model_validate(parsed)
 
         except (json.JSONDecodeError, ValidationError) as e:
             logger.error(
                 "Failed to validate structured response",
-                extra={"content": content[:200]},  # Truncate for logging
+                extra={"content": repr(content[:500]) if content else "EMPTY"},
             )
             raise AgentError(f"Structured response validation failed: {e}") from e

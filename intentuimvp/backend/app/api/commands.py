@@ -17,7 +17,7 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 MAX_COMMAND_LENGTH = 10000
-ROUTING_HANDOFF_TIMEOUT_S = 0.5
+ROUTING_HANDOFF_TIMEOUT_S = 30.0  # Increased for LLM-based routing
 
 
 class CommandSubmissionRequest(BaseModel):

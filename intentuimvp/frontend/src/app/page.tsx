@@ -5,9 +5,18 @@ import { FloatingInput } from "@/components/ContextInput/FloatingInput";
 import { AssumptionsPanel } from "@/components/Assumptions";
 import type { Assumption, AssumptionSet } from "@/components/Assumptions";
 import { useCanvasStore, type CanvasNode } from "@/state/canvasStore";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
+import { useWebSocket, type WebSocketMessage } from "@/hooks/useWebSocket";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+// Derive WebSocket URL from API base URL
+const getWebSocketUrl = (): string => {
+  const url = new URL(API_BASE_URL);
+  const protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${url.host}/ws`;
+};
+const WS_URL = getWebSocketUrl();
 
 const MAX_NODE_TITLE_LENGTH = 72;
 const DEFAULT_NODE_TYPE: CanvasNode["type"] = "text";
@@ -243,6 +252,8 @@ export default function Home() {
   const [attachments, setAttachments] = useState<string[]>([]);
   const nodes = useCanvasStore((state) => state.nodes);
   const addNode = useCanvasStore((state) => state.addNode);
+  const updateNodePosition = useCanvasStore((state) => state.updateNodePosition);
+  const updateNode = useCanvasStore((state) => state.updateNode);
   const selectNode = useCanvasStore((state) => state.selectNode);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
@@ -252,6 +263,94 @@ export default function Home() {
     selected_nodes: selectionIds,
     selected_edges: [],
   };
+
+  // Handle WebSocket messages for real-time node updates from backend
+  const handleWebSocketMessage = useCallback(
+    (message: WebSocketMessage) => {
+      if (message.type === "node.created" && message.payload) {
+        const payload = message.payload as {
+          id: string;
+          type: string;
+          title: string;
+          content?: string;
+          x: number;
+          y: number;
+          z: number;
+          metadata?: Record<string, unknown>;
+        };
+        const nodeId = String(payload.id);
+        console.log("DEBUG: Received node.created from backend:", payload);
+        // Check if node already exists (to avoid duplicates from local creation)
+        const existingNode = nodes.find((n) => n.id === nodeId);
+        if (!existingNode) {
+          addNode({
+            id: nodeId,
+            type: (payload.type as CanvasNode["type"]) || "text",
+            x: payload.x,
+            y: payload.y,
+            z: payload.z,
+            title: payload.title,
+            content: payload.content,
+            metadata: payload.metadata,
+          });
+          console.log("DEBUG: Added backend-created node:", payload.id);
+        } else {
+          console.log("DEBUG: Node already exists, skipping:", payload.id);
+        }
+      }
+      if (message.type === "node.updated" && message.payload) {
+        const payload = message.payload as {
+          id: string;
+          type?: string;
+          title?: string;
+          content?: string;
+          x?: number;
+          y?: number;
+          z?: number;
+          previous?: {
+            x: number;
+            y: number;
+            z?: number;
+          };
+          metadata?: Record<string, unknown>;
+        };
+        let nodeId = String(payload.id);
+        let targetNode = nodes.find((node) => node.id === nodeId);
+        if (!targetNode && payload.previous) {
+          targetNode = nodes.find((node) =>
+            node.x === payload.previous?.x &&
+            node.y === payload.previous?.y &&
+            (payload.previous?.z === undefined || node.z === payload.previous.z)
+          );
+          if (targetNode) {
+            nodeId = targetNode.id;
+          }
+        }
+        if (!targetNode) {
+          console.warn("DEBUG: node.updated for missing node:", nodeId);
+          return;
+        }
+        if (payload.x !== undefined && payload.y !== undefined) {
+          updateNodePosition(nodeId, payload.x, payload.y, payload.z);
+        }
+        const updates: Partial<CanvasNode> = {};
+        if (payload.type !== undefined) updates.type = payload.type as CanvasNode["type"];
+        if (payload.title !== undefined) updates.title = payload.title;
+        if (payload.content !== undefined) updates.content = payload.content;
+        if (payload.metadata !== undefined) updates.metadata = payload.metadata;
+        if (Object.keys(updates).length > 0) {
+          updateNode(nodeId, updates);
+        }
+      }
+    },
+    [nodes, addNode, updateNodePosition, updateNode]
+  );
+
+  // Connect to WebSocket for real-time updates
+  useWebSocket({
+    url: WS_URL,
+    onMessage: handleWebSocketMessage,
+  });
 
   useEffect(() => {
     if (routingError) {
@@ -294,6 +393,7 @@ export default function Home() {
   };
 
   const createNodeFromCommand = (value: string, attachmentsForSubmission: string[]) => {
+    console.log("DEBUG: createNodeFromCommand called with:", value);
     const trimmed = value.trim();
     if (!trimmed) return;
 
@@ -323,6 +423,7 @@ export default function Home() {
     }
 
     const { x, y, z } = getNextNodePosition(nodes, selectedNodeId);
+    console.log("DEBUG: Adding node with title:", title, "at position:", { x, y, z });
     const nodeId = addNode({
       type: commandType ?? DEFAULT_NODE_TYPE,
       x,
@@ -332,6 +433,7 @@ export default function Home() {
       content,
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     });
+    console.log("DEBUG: Node added with ID:", nodeId);
     selectNode(nodeId);
   };
 
@@ -362,7 +464,8 @@ export default function Home() {
       { id: data.correlation_id, text: value, attachments: attachmentsForSubmission },
     ]);
     setAttachments([]);
-    createNodeFromCommand(value, attachmentsForSubmission);
+    // Node creation is now handled by the backend via WebSocket broadcast
+    // The handleWebSocketMessage callback will add the node when it receives "node.created"
     console.log("Command queued:", data);
   };
 
@@ -390,9 +493,13 @@ export default function Home() {
       }
 
       const assumptionData: AssumptionSetResponse = await assumptionResponse.json();
+      console.log("DEBUG: Assumptions API response:", assumptionData);
+      console.log("DEBUG: Assumptions count:", assumptionData.assumptions?.length ?? 0);
 
       if (assumptionData.assumptions.length > 0) {
-        setAssumptions(assumptionData.assumptions.map(mapAssumptionResponse));
+        const mapped = assumptionData.assumptions.map(mapAssumptionResponse);
+        console.log("DEBUG: Setting assumptions state:", mapped);
+        setAssumptions(mapped);
         setAssumptionSet({
           intent: assumptionData.intent,
           intentDescription: assumptionData.intent_description ?? undefined,
@@ -407,6 +514,7 @@ export default function Home() {
           selection,
         });
         setAttachments([]);
+        console.log("DEBUG: State updated, returning early (should show panel)");
         return;
       }
     } catch (error) {
@@ -529,6 +637,7 @@ export default function Home() {
           </div>
         )}
       </Canvas>
+      {console.log("DEBUG: Render check - assumptions.length:", assumptions.length)}
       {assumptions.length > 0 && (
         <AssumptionsPanel
           assumptions={assumptions}

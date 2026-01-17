@@ -107,6 +107,24 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_position(self, canvas_id: int, position: dict) -> Node | None:
+        """Get a node by exact position within a canvas.
+
+        Args:
+            canvas_id: Canvas identifier
+            position: Position dict {"x": 0, "y": 0, "z": 0}
+
+        Returns:
+            Node if found, None otherwise
+        """
+        position_json = json.dumps(position)
+        stmt = select(Node).where(
+            Node.canvas_id == canvas_id,
+            Node.position == position_json,
+        )
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_by_canvas(
         self,
         canvas_id: int,

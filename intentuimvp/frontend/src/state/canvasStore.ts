@@ -148,7 +148,7 @@ interface CanvasState {
   future: CanvasSnapshot[];
 
   // Actions
-  addNode: (node: Omit<CanvasNode, 'id'>) => string;
+  addNode: (node: Omit<CanvasNode, 'id'> & { id?: string }) => string;
   setCanvasMeta: (meta: { id?: number | null; name?: string | null }) => void;
   removeNode: (nodeId: string) => void;
   removeNodes: (nodeIds: string[]) => void;
@@ -204,7 +204,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
 
     // Add a new node to the canvas
     addNode: (node) => {
-      const id = `node-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+      const id = node.id ?? `node-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
       const newNode: CanvasNode = {
         ...node,
         id,

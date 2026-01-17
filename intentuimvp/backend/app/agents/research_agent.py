@@ -145,7 +145,7 @@ class ResearchAgent(BaseAgent):
     def __init__(
         self,
         gateway: GatewayClient | None = None,
-        model: str = "openai/gpt-4o",
+        model: str | None = None,
         temperature: float = 0.4,
         config: ResearchConfig | None = None,
     ) -> None:

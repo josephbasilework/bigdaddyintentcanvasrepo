@@ -25,8 +25,12 @@ class Settings(BaseSettings):
         default="", description="Pydantic AI Gateway API key (required)"
     )
     pydantic_gateway_base_url: str = Field(
-        default="https://gateway.pydantic.dev/proxy/openai/",
-        description="Pydantic AI Gateway base URL",
+        default="https://gateway.pydantic.dev",
+        description="Pydantic AI Gateway base URL (without proxy path)",
+    )
+    gateway_route: str = Field(
+        default="vertex-test",
+        description="Gateway route slug configured in the Pydantic AI Gateway dashboard",
     )
     gateway_retry_max_attempts: int = Field(
         default=3,
@@ -49,6 +53,12 @@ class Settings(BaseSettings):
     gateway_retry_jitter: bool = Field(
         default=True,
         description="Add random jitter to retry delays to prevent thundering herd",
+    )
+
+    # Default model for all agents
+    gateway_model: str = Field(
+        default="gemini-3-flash-preview",
+        description="Default model for Gateway requests (model name only)",
     )
 
     # xAI (for fallback models)

@@ -10,7 +10,7 @@ Provides:
 
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC
 from typing import Any, Literal
@@ -18,8 +18,9 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import or_, select
 
-from app.agui import AgentRequestMessage
-from app.agui.schemas import AgentRequestPayload
+from app.agui import AgentNotificationMessage, AgentRequestMessage
+from app.agui.schemas import AgentNotificationPayload, AgentRequestPayload
+from app.ws.websocket import manager as ws_manager
 from app.api.assumption_store import get_assumption_store
 from app.context.models import parse_assumption
 from app.database import AsyncSessionLocal
@@ -30,11 +31,13 @@ from app.models.intent import AssumptionResolutionDB
 from app.models.node import Node, NodeType
 from app.repositories.canvas_repo import CanvasRepository
 from app.repositories.edge_repo import EdgeRepository
-from app.repositories.node_repo import NodeRepository
+from app.repositories.node_repo import DuplicatePositionError, NodeRepository
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_USER_ID = "default_user"
+POSITION_OFFSET_STEP = 48.0
+POSITION_OFFSET_MAX_ATTEMPTS = 49
 
 # MCP integration is optional - requires database session
 # Tools will work without MCP, just MCP-specific tools won't be available
@@ -49,6 +52,33 @@ except ImportError:
 # Type aliases
 ToolFunc = Callable[..., Any]
 AsyncToolFunc = Callable[..., Awaitable[Any]]
+
+
+def _iter_position_candidates(
+    base: "CanvasNodePosition",
+    *,
+    step: float = POSITION_OFFSET_STEP,
+    max_attempts: int = POSITION_OFFSET_MAX_ATTEMPTS,
+) -> Iterable["CanvasNodePosition"]:
+    """Yield candidate positions in expanding rings around the base."""
+    attempts = 0
+    yield CanvasNodePosition(x=base.x, y=base.y, z=base.z)
+    attempts += 1
+    ring = 1
+    while attempts < max_attempts:
+        for dx in range(-ring, ring + 1):
+            for dy in range(-ring, ring + 1):
+                if abs(dx) != ring and abs(dy) != ring:
+                    continue
+                yield CanvasNodePosition(
+                    x=base.x + (dx * step),
+                    y=base.y + (dy * step),
+                    z=base.z,
+                )
+                attempts += 1
+                if attempts >= max_attempts:
+                    return
+        ring += 1
 
 
 @dataclass
@@ -357,13 +387,124 @@ class ToolManager:
                 )
 
                 node_repo = NodeRepository(session)
-                node = await node_repo.create_node(
-                    canvas_id=canvas.id,
-                    label=params.content,
-                    type=params.type,
-                    position=params.position.model_dump(),
-                    node_metadata=params.metadata,
-                )
+                node = None
+                final_position = params.position
+                moved_node: Node | None = None
+                moved_position: CanvasNodePosition | None = None
+                last_error: DuplicatePositionError | None = None
+
+                try:
+                    node = await node_repo.create_node(
+                        canvas_id=canvas.id,
+                        label=params.content,
+                        type=params.type,
+                        position=params.position.model_dump(),
+                        node_metadata=params.metadata,
+                    )
+                except DuplicatePositionError as exc:
+                    last_error = exc
+                    existing = await node_repo.get_by_position(
+                        canvas.id,
+                        params.position.model_dump(),
+                    )
+                    if existing is not None:
+                        for candidate in _iter_position_candidates(params.position):
+                            if (
+                                candidate.x == params.position.x
+                                and candidate.y == params.position.y
+                                and candidate.z == params.position.z
+                            ):
+                                continue
+                            try:
+                                moved_node = await node_repo.update_position(
+                                    existing.id,
+                                    candidate.model_dump(),
+                                )
+                                moved_position = candidate
+                                break
+                            except DuplicatePositionError as move_error:
+                                last_error = move_error
+                                continue
+
+                    if moved_node is not None:
+                        try:
+                            node = await node_repo.create_node(
+                                canvas_id=canvas.id,
+                                label=params.content,
+                                type=params.type,
+                                position=params.position.model_dump(),
+                                node_metadata=params.metadata,
+                            )
+                            final_position = params.position
+                        except DuplicatePositionError as create_error:
+                            last_error = create_error
+
+                if node is None:
+                    for candidate in _iter_position_candidates(params.position):
+                        if (
+                            candidate.x == params.position.x
+                            and candidate.y == params.position.y
+                            and candidate.z == params.position.z
+                        ):
+                            continue
+                        try:
+                            node = await node_repo.create_node(
+                                canvas_id=canvas.id,
+                                label=params.content,
+                                type=params.type,
+                                position=candidate.model_dump(),
+                                node_metadata=params.metadata,
+                            )
+                            final_position = candidate
+                            break
+                        except DuplicatePositionError as exc:
+                            last_error = exc
+                            continue
+
+                if node is None:
+                    raise last_error or DuplicatePositionError(
+                        canvas_id=canvas.id,
+                        position=params.position.model_dump(),
+                    )
+
+            moved_payload = None
+            if moved_node is not None and moved_position is not None:
+                moved_payload = {
+                    "type": "node.updated",
+                    "payload": {
+                        "id": str(moved_node.id),
+                        "x": moved_position.x,
+                        "y": moved_position.y,
+                        "z": moved_position.z,
+                        "previous": {
+                            "x": params.position.x,
+                            "y": params.position.y,
+                            "z": params.position.z,
+                        },
+                    },
+                }
+
+            # Broadcast node creation to all connected clients
+            if moved_payload is not None:
+                await ws_manager.broadcast(json.dumps(moved_payload))
+            node_data = {
+                "type": "node.created",
+                "payload": {
+                    "id": str(node.id),
+                    "type": params.type.value if hasattr(params.type, "value") else str(params.type),
+                    "title": params.content,
+                    "content": params.content,
+                    "x": final_position.x,
+                    "y": final_position.y,
+                    "z": final_position.z,
+                    "metadata": params.metadata,
+                },
+            }
+            await ws_manager.broadcast(json.dumps(node_data))
+            logger.info(
+                "Broadcast node.created",
+                extra={"node_id": node.id, "type": params.type},
+            )
 
             return {"id": node.id}
 

@@ -7,6 +7,7 @@ Implements PRD Section 9.3 EI-004: CopilotKit Integration.
 """
 
 import logging
+import os
 from typing import Any
 
 from copilotkit import Action as CopilotAction
@@ -17,6 +18,9 @@ from fastapi import FastAPI
 from app.gateway.client import get_gateway_client
 
 logger = logging.getLogger(__name__)
+
+# Use same model as agents, configurable via env var (model name only)
+DEFAULT_GATEWAY_MODEL = os.getenv("GATEWAY_MODEL", "gemini-3-flash-preview")
 
 
 async def process_intent_handler(intent: str) -> dict[str, Any]:
@@ -39,7 +43,7 @@ async def process_intent_handler(intent: str) -> dict[str, Any]:
     try:
         gateway = get_gateway_client()
         response = await gateway.generate(
-            model="openai/gpt-4o-mini",
+            model=DEFAULT_GATEWAY_MODEL,
             messages=[
                 {
                     "role": "system",

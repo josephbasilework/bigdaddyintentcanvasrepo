@@ -1,15 +1,14 @@
 
 """Tests for Gateway retry behavior and degradation handling (NFR-REL-001)."""
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError
+from pydantic_ai.messages import ModelResponse, TextPart
 
-from app.gateway.client import (
-    GatewayClient,
-    GatewayDegradedError,
-)
+from app.gateway.client import GatewayClient, GatewayDegradedError
 
 
 class TestGatewayDegradedError:
@@ -20,21 +19,22 @@ class TestGatewayDegradedError:
         """Test that GatewayDegradedError contains degradation information."""
         client = GatewayClient(api_key="test-key", base_url="https://test.gateway.com", max_retries=2)
 
-        mock_client = AsyncMock()
-        mock_client.post.side_effect = httpx.RequestError("Network error")
+        mock_request = AsyncMock(
+            side_effect=ModelAPIError(model_name="gemini-3-flash-preview", message="Network error")
+        )
 
-        with patch.object(client, "_get_client", return_value=mock_client):
+        with patch.object(client, "_request_model", mock_request):
             with pytest.raises(GatewayDegradedError) as exc_info:
                 await client.generate(
-                    model="openai/gpt-4o",
+                    model="gemini-3-flash-preview",
                     messages=[{"role": "user", "content": "Test"}],
                 )
 
         error = exc_info.value
         assert hasattr(error, "degradation_info")
-        assert error.degradation_info.model == "openai/gpt-4o"
+        assert error.degradation_info.model == "gemini-3-flash-preview"
         assert error.degradation_info.attempts == 2
-        assert error.degradation_info.error_type == "RequestError"
+        assert error.degradation_info.error_type == "ModelAPIError"
         assert "Network error" in error.degradation_info.last_error
         assert isinstance(error.degradation_info.degraded_since, float)
 
@@ -43,19 +43,18 @@ class TestGatewayDegradedError:
         """Test GatewayDegradedError with timeout errors."""
         client = GatewayClient(api_key="test-key", base_url="https://test.gateway.com", max_retries=3)
 
-        mock_client = AsyncMock()
-        mock_client.post.side_effect = httpx.TimeoutException("Request timed out")
+        mock_request = AsyncMock(side_effect=httpx.TimeoutException("Request timed out"))
 
-        with patch.object(client, "_get_client", return_value=mock_client):
+        with patch.object(client, "_request_model", mock_request):
             with pytest.raises(GatewayDegradedError) as exc_info:
                 await client.generate(
-                    model="claude-opus-4-5-20251101",
+                    model="gemini-3-flash-preview",
                     messages=[{"role": "user", "content": "Test"}],
                 )
 
         error = exc_info.value
         assert error.degradation_info.error_type == "TimeoutException"
-        assert error.degradation_info.model == "claude-opus-4-5-20251101"
+        assert error.degradation_info.model == "gemini-3-flash-preview"
         assert error.degradation_info.attempts == 3
 
 
@@ -136,29 +135,22 @@ class TestGatewayRetryWithConfig:
         """Test that 5xx errors trigger retries with backoff."""
         client = GatewayClient(api_key="test-key", base_url="https://test.gateway.com", max_retries=3)
 
-        mock_response_500 = Mock()
-        mock_response_500.status_code = 500
-        mock_response_500.text = "Internal Server Error"
+        mock_response_success = ModelResponse(
+            parts=[TextPart(content="Success")],
+            model_name="gemini-3-flash-preview",
+        )
+        mock_request = AsyncMock(
+            side_effect=[
+                ModelHTTPError(status_code=500, model_name="gemini-3-flash-preview"),
+                mock_response_success,
+            ]
+        )
 
-        mock_response_success = Mock()
-        mock_response_success.status_code = 200
-        mock_response_success.json.return_value = {
-            "choices": [{"message": {"role": "assistant", "content": "Success"}}],
-        }
-
-        mock_client = AsyncMock()
-        # First attempt fails with 500, second succeeds
-        mock_client.post.side_effect = [
-            httpx.HTTPStatusError("Server error", request=Mock(), response=mock_response_500),
-            mock_response_success,
-        ]
-        mock_response_success.raise_for_status = Mock()
-
-        with patch.object(client, "_get_client", return_value=mock_client):
+        with patch.object(client, "_request_model", mock_request):
             result = await client.generate(
-                model="openai/gpt-4o",
+                model="gemini-3-flash-preview",
                 messages=[{"role": "user", "content": "Test"}],
             )
 
         assert result["choices"][0]["message"]["content"] == "Success"
-        assert mock_client.post.call_count == 2
+        assert mock_request.call_count == 2

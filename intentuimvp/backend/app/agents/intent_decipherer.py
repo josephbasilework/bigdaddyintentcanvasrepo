@@ -86,7 +86,7 @@ class IntentDeciphererAgent(BaseAgent):
     def __init__(
         self,
         gateway: Any | None = None,
-        model: str = "openai/gpt-4o",
+        model: str | None = None,
         temperature: float = 0.3,  # Lower temperature for more consistent classification
         confidence_threshold: float = DEFAULT_AUTO_EXECUTE_CONFIDENCE_THRESHOLD,
         assumption_confidence_threshold: float = DEFAULT_ASSUMPTION_CONFIDENCE_THRESHOLD,
@@ -164,38 +164,50 @@ class IntentDeciphererAgent(BaseAgent):
         assumption_threshold = self.assumption_confidence_threshold
         return f"""You are an Intent Decipherer for a canvas-based agentic workspace.
 
-Your task is to analyze user input and extract:
-1. **Primary Intent**: What the user wants to do (research, create, analyze, etc.)
-2. **Assumptions**: Things you're inferring that need confirmation
-3. **Parameters**: Extracted values for execution
-4. **Sub-intents**: For complex requests, break them into smaller steps
+Your task is to analyze user input and extract structured information.
 
-Categories for assumptions:
-- context: Assumptions about the user's context or workspace state
-- intent: Assumptions about what the user wants to accomplish
-- parameter: Assumptions about specific values or parameters
-- other: Other types of assumptions
+IMPORTANT: You MUST respond with ONLY valid JSON matching this exact schema:
+{{
+  "primary_intent": {{
+    "name": "string (e.g., 'research', 'create', 'analyze', 'chat')",
+    "confidence": number between 0.0 and 1.0,
+    "description": "string describing what the user wants"
+  }},
+  "alternative_intents": [
+    {{"name": "string", "confidence": number, "description": "string"}}
+  ],
+  "assumptions": [
+    {{"text": "string", "confidence": number, "category": "context|intent|parameter|other"}}
+  ],
+  "parameters": [
+    {{"name": "string", "value": "string", "confidence": number, "source": "explicit|inferred|default"}}
+  ],
+  "sub_intents": [
+    {{"id": "uuid", "description": "string", "intent_type": "string", "dependencies": [], "confidence": number}}
+  ],
+  "should_auto_execute": boolean,
+  "reasoning": "string explaining your analysis"
+}}
 
-Confidence scores:
+Confidence thresholds:
 - >= {auto_execute_threshold:.2f}: Very confident, can auto-execute
-- {assumption_threshold:.2f} to < {auto_execute_threshold:.2f}: Confident, but want confirmation for assumptions
+- {assumption_threshold:.2f} to < {auto_execute_threshold:.2f}: Confident, but confirm assumptions
 - < {assumption_threshold:.2f}: Low confidence, must ask user
 
-Auto-execution should only be recommended when:
+Set should_auto_execute to true ONLY when:
 - Primary intent confidence >= {auto_execute_threshold:.2f}
-- No high-risk assumptions (confidence < {assumption_threshold:.2f}) exist
-- Required parameters are present with good confidence
+- No assumptions with confidence < {assumption_threshold:.2f}
+- Required parameters are present
 
-Provide clear, structured output that helps the system understand and validate user intent."""
+DO NOT include any text before or after the JSON. Output ONLY the JSON object."""
 
     def _build_user_prompt(self, user_input: str) -> str:
         """Build the user prompt from the input."""
-        return f"""Analyze this user input:
+        return f"""Analyze this user input and respond with JSON only:
 
 "{user_input}"
 
-Extract the primary intent, any assumptions you're making, parameters, and sub-intents.
-Provide confidence scores and reasoning for your analysis."""
+Return the JSON object with primary_intent, assumptions, parameters, sub_intents, should_auto_execute, and reasoning."""
 
     def _fallback_result(
         self, user_input: str, error_message: str

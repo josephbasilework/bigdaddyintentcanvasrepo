@@ -7,7 +7,15 @@ import { recordWsReconnect } from "@/lib/performance";
  * WebSocket message types supported by the backend.
  */
 export interface WebSocketMessage {
-  type: "heartbeat" | "echo" | "update" | "error" | "state.update" | "state.snapshot";
+  type:
+    | "heartbeat"
+    | "echo"
+    | "update"
+    | "error"
+    | "state.update"
+    | "state.snapshot"
+    | "node.created"
+    | "node.updated";
   message?: string;
   sequence?: number;
   payload?: unknown;

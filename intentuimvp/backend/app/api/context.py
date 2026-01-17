@@ -246,6 +246,9 @@ async def generate_assumptions(
 
     try:
         result = await decipherer.decipher(payload.text)
+        
+        logger.info(f"DEBUG: Raw LLM assumptions: {result.assumptions}")
+        logger.info(f"DEBUG: Assumption threshold: {decipherer.assumption_confidence_threshold}")
 
         alternatives = [
             IntentAlternative(
@@ -276,11 +279,10 @@ async def generate_assumptions(
                 )
             )
 
-        assumptions_needing_confirmation = [
-            a
-            for a in assumption_responses
-            if a.confidence < decipherer.assumption_confidence_threshold
-        ]
+        logger.info(f"DEBUG: Parsed assumption_responses: {assumption_responses}")
+        
+        # Show ALL assumptions to user, not just low-confidence ones
+        assumptions_needing_confirmation = assumption_responses
 
         session_id = None
         if assumptions_needing_confirmation:

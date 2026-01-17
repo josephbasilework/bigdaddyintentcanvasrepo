@@ -87,7 +87,7 @@ class SynthesisAgent(BaseAgent):
     def __init__(
         self,
         gateway: Any | None = None,
-        model: str = "openai/gpt-4o",
+        model: str | None = None,
         temperature: float = 0.4,
         config: SynthesisConfig | None = None,
     ) -> None:

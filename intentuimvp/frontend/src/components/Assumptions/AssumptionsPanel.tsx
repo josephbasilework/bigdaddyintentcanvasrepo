@@ -94,7 +94,21 @@ export function AssumptionsPanel({
   }
 
   return (
-    <div className="assumptions-panel-overlay">
+    <div 
+      className="assumptions-panel-overlay"
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 9999,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: "rgba(0, 0, 0, 0.7)",
+      }}
+    >
       <div
         className="assumptions-panel"
         role="dialog"

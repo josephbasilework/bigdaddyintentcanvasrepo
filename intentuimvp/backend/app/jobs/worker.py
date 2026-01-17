@@ -7,9 +7,13 @@ Jobs are defined as async functions that receive job context and parameters.
 import asyncio
 import json
 import logging
+import os
 import uuid
 from datetime import UTC, datetime
 from typing import Any
+
+# Default model - configurable via GATEWAY_MODEL env var (model name only)
+DEFAULT_GATEWAY_MODEL = os.getenv("GATEWAY_MODEL", "gemini-3-flash-preview")
 
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -566,7 +570,7 @@ async def _generate_with_gateway(
     gateway: GatewayClient,
     system_prompt: str,
     user_prompt: str,
-    model: str = "openai/gpt-4o",
+    model: str | None = None,
     temperature: float = 0.7,
 ) -> str:
     """Generate a completion using the Gateway client.
@@ -587,7 +591,7 @@ async def _generate_with_gateway(
     ]
 
     response = await gateway.generate(
-        model=model, messages=messages, temperature=temperature
+        model=model or DEFAULT_GATEWAY_MODEL, messages=messages, temperature=temperature
     )
     return response.get("choices", [{}])[0].get("message", {}).get("content", "")
 
@@ -753,7 +757,7 @@ async def deep_research_job(
                     gateway=gateway,
                     system_prompt=persp_agent.system_prompt,
                     user_prompt=f"Analyze the following research query from your perspective: {query}\n\nProvide a comprehensive analysis including key findings, concerns, and recommendations.",
-                    model="openai/gpt-4o",
+                    model=DEFAULT_GATEWAY_MODEL,
                     temperature=persp_agent.temperature,
                 )
             finally:
@@ -1032,7 +1036,7 @@ async def perspective_gather_job(
                 gateway=gateway,
                 system_prompt=persp_agent.system_prompt,
                 user_prompt=f"Analyze the following research query from your perspective: {query}\n\nProvide a comprehensive analysis including:\n- Key findings relevant to your perspective\n- Concerns or risks\n- Recommendations\n- Related questions to consider",
-                model="openai/gpt-4o",
+                model=DEFAULT_GATEWAY_MODEL,
                 temperature=persp_agent.temperature,
             )
 

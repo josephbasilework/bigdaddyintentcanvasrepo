@@ -142,7 +142,7 @@ class JudgeAgent(BaseAgent):
     def __init__(
         self,
         gateway: GatewayClient | None = None,
-        model: str = "openai/gpt-4o",
+        model: str | None = None,
         temperature: float = 0.3,
         config: JudgeConfig | None = None,
     ) -> None:

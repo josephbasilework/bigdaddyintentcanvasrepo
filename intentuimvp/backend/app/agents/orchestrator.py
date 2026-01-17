@@ -10,6 +10,7 @@ The orchestrator provides:
 
 import asyncio
 import logging
+import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -20,6 +21,9 @@ from app.agents.base import BaseAgent
 from app.logging_config import get_correlation_id
 
 logger = logging.getLogger(__name__)
+
+# Default model - configurable via GATEWAY_MODEL env var (model name only)
+DEFAULT_GATEWAY_MODEL = os.getenv("GATEWAY_MODEL", "gemini-3-flash-preview")
 
 
 # Type aliases for hooks
@@ -35,7 +39,7 @@ class AgentMetadata:
     agent_class: type[BaseAgent]
     description: str
     capabilities: list[str] = field(default_factory=list)
-    default_model: str = "openai/gpt-4o"
+    default_model: str = field(default_factory=lambda: DEFAULT_GATEWAY_MODEL)
     default_temperature: float = 0.7
     singleton: bool = True
     requires_confirmation: bool = False

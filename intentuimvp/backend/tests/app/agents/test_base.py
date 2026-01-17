@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from pydantic_core import InitErrorDetails
 
 from app.agents.base import AgentError, BaseAgent
+from app.config import get_settings
 from app.gateway.client import GatewayClient, GatewayClientError
 
 
@@ -95,8 +96,9 @@ class TestBaseAgent:
         response = await agent.generate(messages)
 
         assert response == {"choices": [{"message": {"content": "test response"}}]}
+        expected_model = get_settings().gateway_model
         mock_gateway.generate.assert_called_once_with(
-            model="openai/gpt-4o",
+            model=expected_model,
             messages=messages,
             temperature=0.7,
         )

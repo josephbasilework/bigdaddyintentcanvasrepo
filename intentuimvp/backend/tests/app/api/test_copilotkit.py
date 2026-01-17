@@ -57,7 +57,7 @@ class TestProcessIntentHandler:
             # Verify gateway was called with correct parameters
             mock_client.generate.assert_called_once()
             call_args = mock_client.generate.call_args
-            assert call_args.kwargs["model"] == "openai/gpt-4o-mini"
+            assert call_args.kwargs["model"] == "gemini-3-flash-preview"
             assert len(call_args.kwargs["messages"]) == 2
             assert call_args.kwargs["messages"][1]["content"] == "Test my intent"
 

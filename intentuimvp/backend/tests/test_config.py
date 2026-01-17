@@ -49,7 +49,7 @@ class TestSettingsDefaultValues:
     def test_gateway_base_url_default(self):
         """Test Gateway base URL has correct default."""
         settings = Settings(pydantic_gateway_api_key="test-key")
-        assert settings.pydantic_gateway_base_url == "https://gateway.pydantic.dev/proxy/openai/"
+        assert settings.pydantic_gateway_base_url == "https://gateway.pydantic.dev"
 
     def test_app_name_default(self):
         """Test app name has correct default."""

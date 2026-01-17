@@ -18,6 +18,7 @@ from app.agents.perspective_agent import (
     PerspectiveAgent,
     PerspectiveConfig,
 )
+from app.config import get_settings
 from app.gateway.client import GatewayClient, GatewayClientError
 
 
@@ -33,7 +34,7 @@ class TestPerspectiveAgentInit:
         agent = PerspectiveAgent()
 
         assert agent.gateway is mock_gateway
-        assert agent.model == "openai/gpt-4o"
+        assert agent.model == get_settings().gateway_model
         assert agent.temperature == 0.5
         assert agent.config.num_perspectives == 3
         assert agent.config.include_bias_analysis is True
