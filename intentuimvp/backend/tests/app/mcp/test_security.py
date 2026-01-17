@@ -324,10 +324,10 @@ class TestValidateManifest:
         assert error is not None and "dangerous" in error.lower()
         assert error is not None and "shell" in error.lower()
 
-    async def test_dangerous_tool_name_delete(
+    async def test_tool_name_delete_allowed(
         self, validator: MCPSecurityValidator
     ) -> None:
-        """Test rejection of tool with 'delete' in name."""
+        """Test delete tool names are allowed (blocked by policy instead)."""
         manifest: dict = {
             "protocolVersion": "2024-11-05",
             "capabilities": {
@@ -339,9 +339,8 @@ class TestValidateManifest:
         is_valid, error = await validator.validate_manifest(
             manifest, "stdio", {"command": ["echo"]}
         )
-        assert is_valid is False
-        assert error is not None and "dangerous" in error.lower()
-        assert error is not None and "delete" in error.lower()
+        assert is_valid is True
+        assert error is None
 
     async def test_stdio_transport_requires_command(
         self, validator: MCPSecurityValidator

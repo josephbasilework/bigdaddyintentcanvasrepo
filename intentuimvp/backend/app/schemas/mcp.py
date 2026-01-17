@@ -1,6 +1,6 @@
 """Pydantic schemas for MCP API."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -182,3 +182,91 @@ class CalendarSyncResponse(BaseModel):
     created_events: list[CalendarSyncCreatedEvent] = Field(default_factory=list)
     failed_events: list[CalendarSyncFailedEvent] = Field(default_factory=list)
     pending_actions: list[dict[str, Any]] | None = None
+
+
+class MCPCredentialField(BaseModel):
+    """Credential field required for MCP installation."""
+
+    key: str
+    label: str
+    type: Literal["text", "json", "secret"] = "text"
+    description: str | None = None
+    env_key: str
+    required: bool = True
+
+
+class MCPOAuthSpec(BaseModel):
+    """OAuth configuration details for an MCP."""
+
+    provider: str
+    scopes: list[str] = Field(default_factory=list)
+    authorization_url: str | None = None
+    token_url: str | None = None
+    documentation_url: str | None = None
+
+
+class MCPCatalogEntry(BaseModel):
+    """Catalog entry describing an installable MCP."""
+
+    catalog_id: str
+    server_id: str
+    name: str
+    description: str | None = None
+    transport_type: str
+    transport_config: dict = Field(default_factory=dict)
+    manifest: dict = Field(default_factory=dict)
+    credential_fields: list[MCPCredentialField] = Field(default_factory=list)
+    oauth: MCPOAuthSpec | None = None
+
+
+class MCPCatalogResponse(BaseModel):
+    """Response body for MCP catalog listing."""
+
+    entries: list[MCPCatalogEntry]
+
+
+class MCPInstallRequest(BaseModel):
+    """Request body for installing or configuring an MCP."""
+
+    catalog_id: str | None = None
+    server_id: str | None = None
+    name: str | None = None
+    description: str | None = None
+    transport_type: str | None = None
+    transport_config: dict | None = None
+    manifest: dict | None = None
+    credentials: dict[str, str] | None = None
+    oauth: MCPOAuthSpec | None = None
+    approved_tools: list[str] | None = None
+    confirmed: bool = False
+    rate_limit: int | None = None
+
+
+class MCPInstallPreview(BaseModel):
+    """Preview payload for MCP installation."""
+
+    server_id: str
+    name: str
+    description: str | None = None
+    transport_type: str
+    transport_config: dict
+    manifest: dict
+    tools: list[dict[str, Any]] = Field(default_factory=list)
+    security_rules: dict[str, str] = Field(default_factory=dict)
+    oauth: MCPOAuthSpec | None = None
+    credential_fields: list[MCPCredentialField] = Field(default_factory=list)
+    missing_credentials: list[str] = Field(default_factory=list)
+    sandbox_issues: list[str] = Field(default_factory=list)
+    blocked_tools: list[str] = Field(default_factory=list)
+
+
+class MCPInstallResponse(BaseModel):
+    """Response body for MCP installation."""
+
+    success: bool
+    requires_confirmation: bool = False
+    review_required: bool = False
+    server: MCPServerResponse | None = None
+    preview: MCPInstallPreview | None = None
+    diff: str | None = None
+    error: str | None = None

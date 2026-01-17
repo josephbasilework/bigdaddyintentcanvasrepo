@@ -361,6 +361,32 @@ class CanvasSpawnJobParams(BaseModel):
     )
 
 
+class MCPInstallParams(BaseModel):
+    """Parameters for installing or configuring an MCP."""
+
+    catalog_id: str | None = Field(default=None, description="Catalog entry ID")
+    server_id: str | None = Field(default=None, description="Custom server identifier")
+    name: str | None = Field(default=None, description="Custom MCP name")
+    description: str | None = Field(default=None, description="Custom MCP description")
+    transport_type: str | None = Field(
+        default=None, description="Transport type (stdio or sse)"
+    )
+    transport_config: dict[str, Any] | None = Field(
+        default=None, description="Transport configuration"
+    )
+    manifest: dict[str, Any] | None = Field(
+        default=None, description="MCP manifest payload"
+    )
+    credentials: dict[str, str] | None = Field(
+        default=None, description="Credential values to inject into env"
+    )
+    approved_tools: list[str] | None = Field(
+        default=None, description="List of tool names approved to enable"
+    )
+    confirmed: bool = Field(default=False, description="Whether user confirmed install")
+    rate_limit: int | None = Field(default=None, description="Optional rate limit override")
+
+
 class ToolValidationError(Exception):
     """Exception raised when tool validation fails."""
 
@@ -1271,6 +1297,49 @@ class ToolManager:
                 "job_type": job_type,
             }
 
+        async def mcp_list_catalog() -> dict[str, Any]:
+            """List available MCP catalog entries."""
+            from app.mcp.catalog import list_mcp_catalog
+
+            return {"entries": list_mcp_catalog()}
+
+        async def mcp_install(
+            catalog_id: str | None = None,
+            server_id: str | None = None,
+            name: str | None = None,
+            description: str | None = None,
+            transport_type: str | None = None,
+            transport_config: dict[str, Any] | None = None,
+            manifest: dict[str, Any] | None = None,
+            credentials: dict[str, str] | None = None,
+            approved_tools: list[str] | None = None,
+            confirmed: bool = False,
+            rate_limit: int | None = None,
+        ) -> dict[str, Any]:
+            """Install or configure an MCP server."""
+            from app.mcp.installer import MCPInstaller
+
+            params = MCPInstallParams(
+                catalog_id=catalog_id,
+                server_id=server_id,
+                name=name,
+                description=description,
+                transport_type=transport_type,
+                transport_config=transport_config,
+                manifest=manifest,
+                credentials=credentials,
+                approved_tools=approved_tools,
+                confirmed=confirmed,
+                rate_limit=rate_limit,
+            )
+
+            async with AsyncSessionLocal() as session:
+                installer = MCPInstaller(session)
+                result = await installer.install(params)
+                if result.get("server"):
+                    await session.commit()
+            return result
+
         # Register the tools
         self.register_function(
             name="web_search",
@@ -1365,6 +1434,22 @@ class ToolManager:
             func=hitl_request_approval,
             parameters=HITLRequestApprovalParams,
             is_async=True,
+        )
+
+        self.register_function(
+            name="mcp.list_catalog",
+            description="List available MCP integrations for installation",
+            func=mcp_list_catalog,
+            is_async=True,
+        )
+
+        self.register_function(
+            name="mcp.install",
+            description="Install or configure an MCP integration",
+            func=mcp_install,
+            parameters=MCPInstallParams,
+            is_async=True,
+            requires_confirmation=True,
         )
 
     def register_function(

@@ -484,6 +484,7 @@ class SafetyGuardrails:
                 "query_": ActionApproval.SAFE,  # Prefix match for query_*
                 "write_": ActionApproval.NEEDS_CONFIRM,
                 "send_": ActionApproval.NEEDS_CONFIRM,
+                "install": ActionApproval.NEEDS_CONFIRM,
                 "configure_global": ActionApproval.BLOCKED,
             },
             ActionDomain.EXTERNAL: {

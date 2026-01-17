@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_db
 from app.mcp.calendar import GoogleCalendarMCP
+from app.mcp.catalog import list_mcp_catalog
 from app.mcp.client import MCPClient
+from app.mcp.installer import MCPInstaller
 from app.mcp.manager import ToolExecutionResult
 from app.mcp.registry import MCPServerRegistry
 from app.schemas.mcp import (
@@ -15,6 +17,9 @@ from app.schemas.mcp import (
     CalendarSyncResponse,
     GoogleCalendarEventRequest,
     GoogleCalendarEventResponse,
+    MCPCatalogResponse,
+    MCPInstallRequest,
+    MCPInstallResponse,
     MCPSecurityCheckRequest,
     MCPSecurityCheckResponse,
     MCPServerListResponse,
@@ -40,6 +45,28 @@ def get_current_user() -> str:
         User ID string
     """
     return "default_user"  # MVP: single user for now
+
+
+@router.get("/api/mcp/catalog", response_model=MCPCatalogResponse)
+async def list_mcp_catalog_entries(
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """List available MCP catalog entries for runtime installation."""
+    return {"entries": list_mcp_catalog()}
+
+
+@router.post("/api/mcp/install", response_model=MCPInstallResponse)
+async def install_mcp(
+    payload: MCPInstallRequest,
+    db: AsyncSession = Depends(get_async_db),
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Install or configure an MCP server from the catalog or custom manifest."""
+    installer = MCPInstaller(db)
+    result = await installer.install(payload)
+    if result.get("server"):
+        await db.commit()
+    return result
 
 
 @router.get("/api/mcp/servers", response_model=MCPServerListResponse)

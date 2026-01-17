@@ -78,13 +78,13 @@ class TestToolCapability:
                 description="Execute a command",
             )
 
-    def test_reject_dangerous_name_delete(self) -> None:
-        """Test rejection of tool with 'delete' in name."""
-        with pytest.raises(ValueError, match="Dangerous tool name"):
-            ToolCapability(
-                name="delete_all_files",
-                description="Delete files",
-            )
+    def test_allow_delete_name(self) -> None:
+        """Test that delete tool names are allowed for explicit blocking."""
+        tool = ToolCapability(
+            name="delete_all_files",
+            description="Delete files",
+        )
+        assert tool.name == "delete_all_files"
 
     def test_reject_dangerous_name_eval(self) -> None:
         """Test rejection of tool with 'eval' in name."""

@@ -102,6 +102,102 @@ def _attach_preview_diff(
     }
 
 
+GOOGLE_CALENDAR_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "calendar_list",
+        "description": "List events from Google Calendar",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "calendar_id": {
+                    "type": "string",
+                    "description": "Calendar ID (default: primary)",
+                },
+                "time_min": {
+                    "type": "string",
+                    "description": "Start time in ISO format",
+                },
+                "time_max": {
+                    "type": "string",
+                    "description": "End time in ISO format",
+                },
+            },
+        },
+    },
+    {
+        "name": "calendar_read",
+        "description": "Read a specific event from Google Calendar",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "calendar_id": {"type": "string"},
+                "event_id": {"type": "string"},
+            },
+            "required": ["event_id"],
+        },
+    },
+    {
+        "name": "calendar_create",
+        "description": "Create a new calendar event",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "calendar_id": {"type": "string"},
+                "summary": {"type": "string"},
+                "description": {"type": "string"},
+                "start": {"type": "string"},
+                "end": {"type": "string"},
+            },
+            "required": ["summary", "start", "end"],
+        },
+    },
+    {
+        "name": "calendar_update",
+        "description": "Update an existing calendar event",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "calendar_id": {"type": "string"},
+                "event_id": {"type": "string"},
+                "summary": {"type": "string"},
+                "description": {"type": "string"},
+                "start": {"type": "string"},
+                "end": {"type": "string"},
+            },
+            "required": ["event_id"],
+        },
+    },
+    {
+        "name": "calendar_query",
+        "description": "Query/search events from Google Calendar by text search",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "calendar_id": {
+                    "type": "string",
+                    "description": "Calendar ID (default: primary)",
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query text to match against event titles and descriptions",
+                },
+                "time_min": {
+                    "type": "string",
+                    "description": "Start time in ISO format",
+                },
+                "time_max": {
+                    "type": "string",
+                    "description": "End time in ISO format",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+]
+
+GOOGLE_CALENDAR_CAPABILITIES = {"tools": GOOGLE_CALENDAR_TOOLS}
+
+
 class GoogleCalendarMCP:
     """Google Calendar MCP integration.
 
@@ -163,100 +259,7 @@ class GoogleCalendarMCP:
                 },
             },
             version="1.0.0",
-            capabilities={
-                "tools": [
-                    {
-                        "name": "calendar_list",
-                        "description": "List events from Google Calendar",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "calendar_id": {
-                                    "type": "string",
-                                    "description": "Calendar ID (default: primary)",
-                                },
-                                "time_min": {
-                                    "type": "string",
-                                    "description": "Start time in ISO format",
-                                },
-                                "time_max": {
-                                    "type": "string",
-                                    "description": "End time in ISO format",
-                                },
-                            },
-                        },
-                    },
-                    {
-                        "name": "calendar_read",
-                        "description": "Read a specific event from Google Calendar",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "calendar_id": {"type": "string"},
-                                "event_id": {"type": "string"},
-                            },
-                            "required": ["event_id"],
-                        },
-                    },
-                    {
-                        "name": "calendar_create",
-                        "description": "Create a new calendar event",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "calendar_id": {"type": "string"},
-                                "summary": {"type": "string"},
-                                "description": {"type": "string"},
-                                "start": {"type": "string"},
-                                "end": {"type": "string"},
-                            },
-                            "required": ["summary", "start", "end"],
-                        },
-                    },
-                    {
-                        "name": "calendar_update",
-                        "description": "Update an existing calendar event",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "calendar_id": {"type": "string"},
-                                "event_id": {"type": "string"},
-                                "summary": {"type": "string"},
-                                "description": {"type": "string"},
-                                "start": {"type": "string"},
-                                "end": {"type": "string"},
-                            },
-                            "required": ["event_id"],
-                        },
-                    },
-                    {
-                        "name": "calendar_query",
-                        "description": "Query/search events from Google Calendar by text search",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {
-                                "calendar_id": {
-                                    "type": "string",
-                                    "description": "Calendar ID (default: primary)",
-                                },
-                                "query": {
-                                    "type": "string",
-                                    "description": "Search query text to match against event titles and descriptions",
-                                },
-                                "time_min": {
-                                    "type": "string",
-                                    "description": "Start time in ISO format",
-                                },
-                                "time_max": {
-                                    "type": "string",
-                                    "description": "End time in ISO format",
-                                },
-                            },
-                            "required": ["query"],
-                        },
-                    },
-                ]
-            },
+            capabilities=GOOGLE_CALENDAR_CAPABILITIES,
             security_rules={
                 tool: level.value
                 for tool, level in DEFAULT_SECURITY_RULES.get("google-calendar", {}).items()

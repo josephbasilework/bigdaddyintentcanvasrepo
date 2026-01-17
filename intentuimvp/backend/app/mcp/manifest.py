@@ -81,7 +81,6 @@ class ToolCapability(BaseModel):
             "system",
             "shell",
             "cmd",
-            "delete",
             "drop",
             "format",
         ]

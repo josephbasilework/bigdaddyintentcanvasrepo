@@ -133,7 +133,6 @@ class MCPSecurityValidator:
                     "system",
                     "shell",
                     "cmd",
-                    "delete",
                     "drop",
                     "format",
                 ]

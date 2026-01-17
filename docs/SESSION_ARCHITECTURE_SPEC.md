@@ -312,6 +312,7 @@ System: [Proposal]
 ### Manual (via configuration)
 - Robust documentation for adding MCPs manually
 - Both paths available for MVP
+  - See `docs/mcp_manual_setup.md`
 
 ### Constraints
 - MCPs must adhere to specified standards

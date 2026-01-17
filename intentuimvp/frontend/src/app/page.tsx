@@ -5,6 +5,7 @@ import { FloatingInput } from "@/components/ContextInput/FloatingInput";
 import { ChatViewPanel } from "@/components/ChatView";
 import { EventsViewPanel } from "@/components/EventsView";
 import { WheelViewPanel } from "@/components/WheelView";
+import { MCPInstallPanel } from "@/components/MCP";
 import { AssumptionsPanel } from "@/components/Assumptions";
 import type {
   Assumption,
@@ -368,9 +369,9 @@ export default function Home() {
   const [routingError, setRoutingError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("Ready for commands.");
   const [attachments, setAttachments] = useState<string[]>([]);
-  const [activeView, setActiveView] = useState<"chat" | "wheel" | "events" | null>(
-    null
-  );
+  const [activeView, setActiveView] = useState<
+    "chat" | "wheel" | "events" | "mcp" | null
+  >(null);
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
   const addNode = useCanvasStore((state) => state.addNode);
@@ -577,6 +578,7 @@ export default function Home() {
   const isChatOpen = activeView === "chat";
   const isWheelOpen = activeView === "wheel";
   const isEventsOpen = activeView === "events";
+  const isMcpOpen = activeView === "mcp";
   const isTurnsOpen = isWheelOpen || isEventsOpen;
 
   const {
@@ -916,7 +918,7 @@ export default function Home() {
     setActiveRoundId(null);
   };
 
-  const handleViewToggle = (view: "chat" | "wheel" | "events") => {
+  const handleViewToggle = (view: "chat" | "wheel" | "events" | "mcp") => {
     setActiveView((prev) => (prev === view ? null : view));
   };
 
@@ -937,6 +939,8 @@ export default function Home() {
       error={turnsError}
     />
   ) : null;
+
+  const mcpPanel = isMcpOpen ? <MCPInstallPanel id="mcp-install-panel" /> : null;
 
   const wheelPanel = isWheelOpen ? (
     <WheelViewPanel
@@ -970,11 +974,13 @@ export default function Home() {
 
   const viewPanel = isChatOpen
     ? chatPanel
-    : isWheelOpen
-      ? wheelPanel
-      : isEventsOpen
-        ? eventsPanel
-        : null;
+    : isMcpOpen
+      ? mcpPanel
+      : isWheelOpen
+        ? wheelPanel
+        : isEventsOpen
+          ? eventsPanel
+          : null;
 
   const panelContent =
     workflowPanel || viewPanel ? (
@@ -1048,6 +1054,12 @@ export default function Home() {
             isOpen: isChatOpen,
             onToggle: () => handleViewToggle("chat"),
             ariaControls: "chat-view-panel",
+          },
+          {
+            label: "MCP",
+            isOpen: isMcpOpen,
+            onToggle: () => handleViewToggle("mcp"),
+            ariaControls: "mcp-install-panel",
           },
           {
             label: "Wheel",
