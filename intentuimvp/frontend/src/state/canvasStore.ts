@@ -33,6 +33,105 @@ export interface CanvasNode {
   jobData?: JobData;
 }
 
+type NodeDimensions = {
+  width: number;
+  height: number;
+};
+
+const DEFAULT_NODE_DIMENSIONS: NodeDimensions = { width: 240, height: 140 };
+const NODE_DIMENSIONS_BY_TYPE: Record<CanvasNode['type'], NodeDimensions> = {
+  text: { width: 240, height: 140 },
+  document: { width: 260, height: 160 },
+  audio: { width: 300, height: 180 },
+  graph: { width: 280, height: 170 },
+  plan: { width: 320, height: 200 },
+  dag: { width: 360, height: 220 },
+  dashboard: { width: 360, height: 220 },
+  job: { width: 300, height: 180 },
+};
+
+const AUTO_EXPAND_PADDING = 24;
+export const AUTO_EXPAND_ANIMATION_MS = 240;
+
+const getNodeDimensions = (node: { type: CanvasNode['type'] }): NodeDimensions =>
+  NODE_DIMENSIONS_BY_TYPE[node.type] ?? DEFAULT_NODE_DIMENSIONS;
+
+type NodeBounds = {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  centerX: number;
+  centerY: number;
+};
+
+const buildNodeBounds = (node: Pick<CanvasNode, 'x' | 'y' | 'type'>): NodeBounds => {
+  const { width, height } = getNodeDimensions(node);
+  const pad = AUTO_EXPAND_PADDING / 2;
+  return {
+    x1: node.x - pad,
+    y1: node.y - pad,
+    x2: node.x + width + pad,
+    y2: node.y + height + pad,
+    centerX: node.x + width / 2,
+    centerY: node.y + height / 2,
+  };
+};
+
+const boundsOverlap = (a: NodeBounds, b: NodeBounds): boolean =>
+  !(a.x2 <= b.x1 || a.x1 >= b.x2 || a.y2 <= b.y1 || a.y1 >= b.y2);
+
+const resolveAutoExpansion = (
+  nodes: CanvasNode[],
+  newNode: CanvasNode
+): { nodes: CanvasNode[]; didExpand: boolean } => {
+  const newBounds = buildNodeBounds(newNode);
+  let didExpand = false;
+
+  const expandedNodes = nodes.map((node) => {
+    const bounds = buildNodeBounds(node);
+    if (!boundsOverlap(newBounds, bounds)) {
+      return node;
+    }
+
+    const dx = bounds.centerX - newBounds.centerX;
+    const dy = bounds.centerY - newBounds.centerY;
+    const distance = Math.hypot(dx, dy);
+    let ux = 1;
+    let uy = 0;
+    if (distance > 0) {
+      ux = dx / distance;
+      uy = dy / distance;
+    }
+
+    const overlapX = dx >= 0 ? newBounds.x2 - bounds.x1 : bounds.x2 - newBounds.x1;
+    const overlapY = dy >= 0 ? newBounds.y2 - bounds.y1 : bounds.y2 - newBounds.y1;
+    const safeOverlapX = Math.max(0, overlapX);
+    const safeOverlapY = Math.max(0, overlapY);
+
+    const tX = Math.abs(ux) < 1e-6
+      ? Number.POSITIVE_INFINITY
+      : safeOverlapX / Math.abs(ux);
+    const tY = Math.abs(uy) < 1e-6
+      ? Number.POSITIVE_INFINITY
+      : safeOverlapY / Math.abs(uy);
+    const displacement = Math.min(tX, tY);
+
+    if (!Number.isFinite(displacement) || displacement <= 0) {
+      return node;
+    }
+
+    didExpand = true;
+    return {
+      ...node,
+      x: node.x + ux * displacement,
+      y: node.y + uy * displacement,
+    };
+  });
+
+  return { nodes: expandedNodes, didExpand };
+};
+
 /**
  * Job metadata for job-type nodes.
  */
@@ -142,6 +241,7 @@ interface CanvasState {
   documents: CanvasDocument[];
   selectedNodeId: string | null;
   selectedNodeIds: string[];
+  isAutoExpanding: boolean;
 
   // History state
   past: CanvasSnapshot[];
@@ -190,6 +290,8 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     });
   };
 
+  let autoExpandTimer: ReturnType<typeof setTimeout> | null = null;
+
   return {
     // Initial state
     canvasId: null,
@@ -199,6 +301,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     documents: [],
     selectedNodeId: null,
     selectedNodeIds: [],
+    isAutoExpanding: false,
     past: [],
     future: [],
 
@@ -209,9 +312,23 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
         ...node,
         id,
       };
-      withHistory((state) => ({
-        nodes: [...state.nodes, newNode],
-      }));
+      let didExpand = false;
+      withHistory((state) => {
+        const expansion = resolveAutoExpansion(state.nodes, newNode);
+        didExpand = expansion.didExpand;
+        return {
+          nodes: [...expansion.nodes, newNode],
+          ...(didExpand ? { isAutoExpanding: true } : {}),
+        };
+      });
+      if (didExpand) {
+        if (autoExpandTimer) {
+          clearTimeout(autoExpandTimer);
+        }
+        autoExpandTimer = setTimeout(() => {
+          set({ isAutoExpanding: false });
+        }, AUTO_EXPAND_ANIMATION_MS);
+      }
       return id;
     },
 
@@ -408,6 +525,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
         nodes: previous.nodes,
         edges: previous.edges,
         documents: previous.documents,
+        isAutoExpanding: false,
         past: newPast,
         future: [currentSnapshot, ...state.future],
       });
@@ -432,6 +550,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
         nodes: next.nodes,
         edges: next.edges,
         documents: next.documents,
+        isAutoExpanding: false,
         past: [...state.past, currentSnapshot],
         future: newFuture,
       });

@@ -14,6 +14,7 @@ describe('canvasStore', () => {
       documents: [],
       selectedNodeId: null,
       selectedNodeIds: [],
+      isAutoExpanding: false,
       past: [],
       future: [],
     });
@@ -93,6 +94,71 @@ describe('canvasStore', () => {
       });
 
       expect(id1).not.toBe(id2);
+    });
+
+    it('should push colliding nodes outward from the insertion point', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      let firstId = '';
+      let secondId = '';
+
+      act(() => {
+        firstId = result.current.addNode({
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Node 1',
+        });
+      });
+
+      act(() => {
+        secondId = result.current.addNode({
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Node 2',
+        });
+      });
+
+      const movedNode = result.current.nodes.find((node) => node.id === firstId);
+      const newNode = result.current.nodes.find((node) => node.id === secondId);
+
+      expect(newNode?.x).toBe(0);
+      expect(newNode?.y).toBe(0);
+      expect(movedNode).toBeDefined();
+      expect(movedNode?.x === 0 && movedNode?.y === 0).toBe(false);
+    });
+
+    it('should not move nodes when there is no collision', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      let firstId = '';
+
+      act(() => {
+        firstId = result.current.addNode({
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Node 1',
+        });
+      });
+
+      act(() => {
+        result.current.addNode({
+          type: 'text',
+          x: 1000,
+          y: 1000,
+          z: 0,
+          title: 'Node 2',
+        });
+      });
+
+      const originalNode = result.current.nodes.find((node) => node.id === firstId);
+      expect(originalNode?.x).toBe(0);
+      expect(originalNode?.y).toBe(0);
     });
   });
 

@@ -3,7 +3,7 @@
 import { CSSProperties, useState, useRef, useId, useCallback } from "react";
 import Draggable, { DraggableData } from "react-draggable";
 import { useTransformComponent } from "react-zoom-pan-pinch";
-import { useCanvasStore, CanvasNode } from "../../state/canvasStore";
+import { useCanvasStore, CanvasNode, AUTO_EXPAND_ANIMATION_MS } from "../../state/canvasStore";
 import { NodeContextMenu } from "./NodeContextMenu";
 import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog";
 import { AudioCapture, AudioRecording } from "./AudioCapture";
@@ -74,6 +74,7 @@ export function Node({
   );
   const showCalendarSyncButton = isSelected && hasCalendarSuggestions;
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState<{
     nodeIds: string[];
@@ -100,6 +101,7 @@ export function Node({
   const nodeRef = useRef<HTMLDivElement>(null);
   const focusFromPointerRef = useRef(false);
   const scale = useTransformComponent(({ state }) => state.scale);
+  const isAutoExpanding = useCanvasStore((state) => state.isAutoExpanding);
   const descriptionId = useId();
   const editTitleId = useId();
   const editContentId = useId();
@@ -118,6 +120,10 @@ export function Node({
   ].filter(Boolean);
   const descriptionText = descriptionParts.join(" ");
 
+  const handleDragStart = () => {
+    setIsDragging(true);
+  };
+
   const handleDrag = (e: unknown, data: DraggableData) => {
     // Update node position in store when dragging
     updateNodePosition(node.id, data.x, data.y);
@@ -126,6 +132,7 @@ export function Node({
   const handleDragStop = (e: unknown, data: DraggableData) => {
     // Final position update when drag stops
     updateNodePosition(node.id, data.x, data.y);
+    setIsDragging(false);
   };
 
   const handleClick = (e?: React.MouseEvent) => {
@@ -464,6 +471,15 @@ export function Node({
 
   // Get node style based on type
   const getNodeStyle = (): CSSProperties => {
+    const transitionParts: string[] = [];
+    if (isAutoExpanding && !isDragging) {
+      transitionParts.push(`transform ${AUTO_EXPAND_ANIMATION_MS}ms ease-out`);
+    }
+    if (isSelected) {
+      transitionParts.push("box-shadow 0.2s");
+    }
+    const transition = transitionParts.length > 0 ? transitionParts.join(", ") : "none";
+
     const baseStyle: CSSProperties = {
       position: "absolute",
       left: 0,
@@ -475,7 +491,7 @@ export function Node({
       borderRadius: "8px",
       cursor: "move",
       userSelect: "none",
-      transition: isSelected ? "box-shadow 0.2s" : "none",
+      transition,
     };
 
     // Type-specific styles
@@ -569,6 +585,7 @@ export function Node({
       <Draggable
         nodeRef={nodeRef}
         position={{ x: node.x, y: node.y }}
+        onStart={handleDragStart}
         onDrag={handleDrag}
         onStop={handleDragStop}
         scale={scale}

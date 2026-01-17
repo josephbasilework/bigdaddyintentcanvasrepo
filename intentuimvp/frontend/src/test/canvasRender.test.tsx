@@ -102,6 +102,7 @@ describe('workspace canvas', () => {
       documents: [],
       selectedNodeId: null,
       selectedNodeIds: [],
+      isAutoExpanding: false,
       past: [],
       future: [],
     });

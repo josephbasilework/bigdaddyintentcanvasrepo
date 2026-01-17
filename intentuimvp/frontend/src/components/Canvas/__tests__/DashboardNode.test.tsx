@@ -41,6 +41,7 @@ describe("DashboardNode", () => {
       documents: [],
       selectedNodeId: null,
       selectedNodeIds: [],
+      isAutoExpanding: false,
       past: [],
       future: [],
     });
