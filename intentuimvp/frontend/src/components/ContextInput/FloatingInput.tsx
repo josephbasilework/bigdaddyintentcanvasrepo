@@ -13,6 +13,8 @@ interface FloatingInputProps {
   selection?: SelectionScopeItem[];
   /** Callback to remove an attachment by name */
   onRemoveAttachment?: (name: string) => void;
+  /** Callback to clear the selection scope */
+  onClearSelection?: () => void;
   /** Placeholder text for the input */
   placeholder?: string;
   /** Whether to auto-focus on mount */
@@ -101,6 +103,7 @@ export function FloatingInput({
   attachments,
   selection,
   onRemoveAttachment,
+  onClearSelection,
   placeholder = "Type a command...",
   autoFocus = true,
   maxLength = 1000,
@@ -227,9 +230,21 @@ export function FloatingInput({
         <div className="selection-scope" role="region" aria-label="Selection scope">
           <div className="selection-scope-header">
             <span className="selection-scope-title">Selection scope</span>
-            <span className="selection-scope-count">
-              {selectionCount} node{selectionCount === 1 ? "" : "s"}
-            </span>
+            <div className="selection-scope-actions">
+              <span className="selection-scope-count">
+                {selectionCount} node{selectionCount === 1 ? "" : "s"}
+              </span>
+              {onClearSelection && (
+                <button
+                  type="button"
+                  className="selection-clear"
+                  onClick={onClearSelection}
+                  aria-label="Clear selection"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
           </div>
           <div className="selection-scope-chips" role="list" aria-label="Selected nodes">
             {visibleSelection.map((item) => (
@@ -395,10 +410,37 @@ export function FloatingInput({
           color: #94a3b8;
         }
 
+        .selection-scope-actions {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+
         .selection-scope-count {
           font-size: 0.75rem;
           color: #e2e8f0;
           font-weight: 600;
+        }
+
+        .selection-clear {
+          padding: 0.2rem 0.5rem;
+          border: 1px solid rgba(71, 85, 105, 0.6);
+          border-radius: 0.35rem;
+          background: transparent;
+          color: #94a3b8;
+          font-size: 0.7rem;
+          cursor: pointer;
+          transition: all 0.15s ease-in-out;
+        }
+
+        .selection-clear:hover {
+          border-color: #64748b;
+          color: #e2e8f0;
+        }
+
+        .selection-clear:focus-visible {
+          outline: 2px solid var(--focus-ring);
+          outline-offset: 2px;
         }
 
         .selection-scope-chips {

@@ -317,6 +317,7 @@ export default function Home() {
   const updateNodePosition = useCanvasStore((state) => state.updateNodePosition);
   const updateNode = useCanvasStore((state) => state.updateNode);
   const selectNode = useCanvasStore((state) => state.selectNode);
+  const clearSelection = useCanvasStore((state) => state.clearSelection);
   const selectedNodeId = useCanvasStore((state) => state.selectedNodeId);
   const selectedNodeIds = useCanvasStore((state) => state.selectedNodeIds);
   const selectionIds = getSelectionIds(selectedNodeIds, selectedNodeId);
@@ -573,6 +574,10 @@ export default function Home() {
     }
     const attachmentsForSubmission = [...attachments];
     const selection = selectionScope;
+
+    // Clear selection immediately after capturing it for the command
+    // This allows new nodes (created via WebSocket) to be auto-selected
+    clearSelection();
 
     try {
       const assumptionResponse = await fetch(`${API_BASE_URL}/api/context/assumptions`, {
@@ -904,6 +909,7 @@ export default function Home() {
         attachments={attachments}
         selection={selectionItems}
         onRemoveAttachment={handleRemoveAttachment}
+        onClearSelection={clearSelection}
         placeholder="Type a command..."
         panelContent={panelContent}
         panelToggles={[

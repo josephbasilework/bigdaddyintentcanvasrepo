@@ -256,4 +256,43 @@ describe("FloatingInput", () => {
     expect(chatButton.querySelector(".panel-toggle-arrow")).not.toBeNull();
     expect(eventsButton.querySelector(".panel-toggle-arrow")).toBeNull();
   });
+
+  it("shows Clear button when selection and onClearSelection are provided", () => {
+    const handleClear = vi.fn();
+    render(
+      <FloatingInput
+        selection={[{ id: "node-1", label: "First node" }]}
+        onClearSelection={handleClear}
+      />
+    );
+
+    const clearButton = screen.getByRole("button", { name: /clear selection/i });
+    expect(clearButton).toBeInTheDocument();
+  });
+
+  it("does not show Clear button when onClearSelection is not provided", () => {
+    render(
+      <FloatingInput
+        selection={[{ id: "node-1", label: "First node" }]}
+      />
+    );
+
+    const clearButton = screen.queryByRole("button", { name: /clear selection/i });
+    expect(clearButton).not.toBeInTheDocument();
+  });
+
+  it("calls onClearSelection when Clear button is clicked", () => {
+    const handleClear = vi.fn();
+    render(
+      <FloatingInput
+        selection={[{ id: "node-1", label: "First node" }]}
+        onClearSelection={handleClear}
+      />
+    );
+
+    const clearButton = screen.getByRole("button", { name: /clear selection/i });
+    fireEvent.click(clearButton);
+
+    expect(handleClear).toHaveBeenCalledTimes(1);
+  });
 });
