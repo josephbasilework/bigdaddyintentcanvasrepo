@@ -51,6 +51,7 @@ from app.models.node import Node  # noqa: F401 (registers metadata)
 from app.models.dashboard_subscription import DashboardSubscription  # noqa: F401 (registers metadata)
 from app.models.job import Job  # noqa: F401 (registers metadata)
 from app.models.preferences import Preferences  # noqa: F401 (registers metadata)
+from app.models.turn import Turn  # noqa: F401 (registers metadata)
 from app.mcp.models import MCPServer, MCPExecutionLog  # noqa: F401 (registers metadata)
 
 # Intent models use a separate Base
