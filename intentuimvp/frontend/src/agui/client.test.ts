@@ -102,6 +102,16 @@ const hasStateSyncRequest = (messages: string[]): boolean => {
   });
 };
 
+const hasMessageType = (messages: string[], type: string): boolean => {
+  return messages.some((message) => {
+    try {
+      return JSON.parse(message).type === type;
+    } catch {
+      return false;
+    }
+  });
+};
+
 describe('AGUIClient reconnection', () => {
   beforeEach(() => {
     global.WebSocket = MockWebSocket as unknown as typeof WebSocket;

@@ -574,7 +574,7 @@ describe('workspace canvas', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
-    const node = screen.getByRole('button', { name: /first node/i });
+    const node = screen.getByRole('button', { name: /first node text node/i });
     fireEvent.focus(node);
 
     expect(useCanvasStore.getState().selectedNodeId).toBe('node-1');
@@ -607,7 +607,7 @@ describe('workspace canvas', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
-    const node = screen.getByRole('button', { name: /first node/i });
+    const node = screen.getByRole('button', { name: /first node text node/i });
     expect(screen.queryByText('Hello world')).not.toBeInTheDocument();
 
     const expandButton = within(node).getByRole('button', { name: /expand first node content/i });
@@ -684,8 +684,8 @@ describe('workspace canvas', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
-    const firstNode = screen.getByRole('button', { name: /first node/i });
-    const secondNode = screen.getByRole('button', { name: /second node/i });
+    const firstNode = screen.getByRole('button', { name: /first node text node/i });
+    const secondNode = screen.getByRole('button', { name: /second node text node/i });
 
     fireEvent.click(firstNode);
     expect(useCanvasStore.getState().selectedNodeIds).toEqual(['node-1']);
@@ -731,8 +731,8 @@ describe('workspace canvas', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
     const workspace = screen.getByTestId('canvas-workspace');
-    const firstNode = screen.getByRole('button', { name: /first node/i });
-    const secondNode = screen.getByRole('button', { name: /second node/i });
+    const firstNode = screen.getByRole('button', { name: /first node text node/i });
+    const secondNode = screen.getByRole('button', { name: /second node text node/i });
 
     Object.defineProperty(firstNode, 'getBoundingClientRect', {
       value: () => createRect(120, 120, 200, 100),
@@ -789,9 +789,9 @@ describe('workspace canvas', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
     const workspace = screen.getByTestId('canvas-workspace');
-    const firstNode = screen.getByRole('button', { name: /first node/i });
-    const secondNode = screen.getByRole('button', { name: /second node/i });
-    const thirdNode = screen.getByRole('button', { name: /third node/i });
+    const firstNode = screen.getByRole('button', { name: /first node text node/i });
+    const secondNode = screen.getByRole('button', { name: /second node text node/i });
+    const thirdNode = screen.getByRole('button', { name: /third node text node/i });
 
     Object.defineProperty(firstNode, 'getBoundingClientRect', {
       value: () => createRect(120, 120, 200, 100),
@@ -852,8 +852,8 @@ describe('workspace canvas', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
-    const firstNode = screen.getByRole('button', { name: /first node/i });
-    const secondNode = screen.getByRole('button', { name: /second node/i });
+    const firstNode = screen.getByRole('button', { name: /first node text node/i });
+    const secondNode = screen.getByRole('button', { name: /second node text node/i });
 
     fireEvent.click(firstNode);
     expect(useCanvasStore.getState().selectedNodeIds).toEqual(['node-1']);
@@ -896,7 +896,7 @@ describe('workspace canvas', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
-    const sourceNode = screen.getByRole('button', { name: /first node/i });
+    const sourceNode = screen.getByRole('button', { name: /first node text node/i });
     fireEvent.contextMenu(sourceNode);
 
     const connectItem = screen.getByRole('menuitem', { name: /connect node/i });
@@ -911,7 +911,7 @@ describe('workspace canvas', () => {
     expect(labelInput).toHaveValue('References');
     fireEvent.change(labelInput, { target: { value: 'Cites' } });
 
-    const targetNode = screen.getByRole('button', { name: /second node/i });
+    const targetNode = screen.getByRole('button', { name: /second node text node/i });
     fireEvent.click(targetNode);
 
     await waitFor(() => expect(useCanvasStore.getState().edges).toHaveLength(1));
@@ -963,7 +963,7 @@ describe('workspace canvas', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
     await waitFor(() => expect(useCanvasStore.getState().edges).toHaveLength(1));
 
-    const sourceNode = screen.getByRole('button', { name: /first node/i });
+    const sourceNode = screen.getByRole('button', { name: /first node text node/i });
     fireEvent.contextMenu(sourceNode);
 
     const deleteItem = screen.getByRole('menuitem', { name: /delete node/i });

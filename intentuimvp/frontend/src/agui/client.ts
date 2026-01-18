@@ -264,7 +264,8 @@ export class AGUIClient {
    */
   send(message: UIToAgentMessageType): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      throw new Error("WebSocket is not connected");
+      this.outboundQueue.push(message);
+      return;
     }
 
     const envelope: UIToAgentMessage = {
@@ -464,6 +465,10 @@ export class AGUIClient {
             }
 
             this.requestStateSync();
+            if (this.snapshotSyncPending) {
+              void this.requestSnapshotSync();
+            }
+            this.flushQueuedMessages();
             this.config.onConnect?.();
           };
 
@@ -640,6 +645,7 @@ export class AGUIClient {
 
         // Request full state sync
         this.requestStateSync();
+        void this.requestSnapshotSync();
 
         // Notify listeners about the gap
         this.notifyStateSyncListeners();
@@ -753,6 +759,47 @@ export class AGUIClient {
       console.info("Requested state sync");
     } catch (error) {
       console.error("Failed to request state sync:", error);
+    }
+  }
+
+  /**
+   * Request REST snapshot sync when available (sequence gaps).
+   */
+  private async requestSnapshotSync(): Promise<void> {
+    if (!this.config.snapshotRequest || this.snapshotSyncInFlight) {
+      return;
+    }
+
+    this.snapshotSyncInFlight = true;
+    try {
+      const snapshot = await this.config.snapshotRequest({
+        lastSequence: this.state.stateSync.lastSequence,
+      });
+      if (!snapshot) {
+        return;
+      }
+
+      const { sequence, state, checksum } = snapshot;
+      this.validateChecksum(state, checksum).catch((err) => {
+        console.error("Checksum validation failed for snapshot:", err);
+      });
+
+      this.snapshotSyncPending = false;
+      this.setState({
+        stateSync: {
+          lastSequence: sequence,
+          isSynced: true,
+          needsSync: false,
+        },
+      });
+
+      this.agent.setState(state as Record<string, unknown>);
+      this.notifyStateSyncListeners();
+      this.flushQueuedMessages();
+    } catch (error) {
+      console.error("Snapshot sync failed:", error);
+    } finally {
+      this.snapshotSyncInFlight = false;
     }
   }
 

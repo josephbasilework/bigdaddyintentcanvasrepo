@@ -766,19 +766,13 @@ export default function Home() {
     onMessage: handleWebSocketMessage,
   });
 
-  const {
-    queuedEvents,
-    updateQueuedEvent,
-    deleteQueuedEvent,
-    isFlushingQueue,
-    lastFlushedEventCount,
-  } = useOfflineQueueStore((state) => ({
-    queuedEvents: state.queue,
-    updateQueuedEvent: state.updateQueuedEvent,
-    deleteQueuedEvent: state.deleteQueuedEvent,
-    isFlushingQueue: state.isFlushingQueue,
-    lastFlushedEventCount: state.lastFlushedEventCount,
-  }));
+  const queuedEvents = useOfflineQueueStore((state) => state.queue);
+  const updateQueuedEvent = useOfflineQueueStore((state) => state.updateQueuedEvent);
+  const deleteQueuedEvent = useOfflineQueueStore((state) => state.deleteQueuedEvent);
+  const isFlushingQueue = useOfflineQueueStore((state) => state.isFlushingQueue);
+  const lastFlushedEventCount = useOfflineQueueStore(
+    (state) => state.lastFlushedEventCount
+  );
 
   useEffect(() => {
     useOfflineQueueStore.getState().setConnectionState(wsConnectionState);
@@ -849,6 +843,22 @@ export default function Home() {
     const parsed = Number(trimmed);
     return Number.isFinite(parsed) ? parsed : null;
   }, [eventsFilters.nodeFilter]);
+  const wheelTurnFilters = useMemo(
+    () => ({
+      actorGroups: wheelFilters.actorFilters,
+      categories:
+        wheelFilters.typeFilter === "all" ? [] : [wheelFilters.typeFilter],
+    }),
+    [wheelFilters.actorFilters, wheelFilters.typeFilter]
+  );
+  const eventsTurnFilters = useMemo(
+    () => ({
+      actorGroups: eventsFilters.actorFilters,
+      eventTypes: eventsFilters.typeFilters,
+      relatedNodeId: parsedEventNodeId,
+    }),
+    [eventsFilters.actorFilters, eventsFilters.typeFilters, parsedEventNodeId]
+  );
 
   const {
     turns: chatTurns,
@@ -866,11 +876,7 @@ export default function Home() {
   } = useTurns({
     sessionIds: chatSessionIds,
     enabled: isWheelOpen,
-    filters: {
-      actorGroups: wheelFilters.actorFilters,
-      categories:
-        wheelFilters.typeFilter === "all" ? [] : [wheelFilters.typeFilter],
-    },
+    filters: wheelTurnFilters,
   });
 
   const {
@@ -880,11 +886,7 @@ export default function Home() {
   } = useTurns({
     sessionIds: chatSessionIds,
     enabled: isEventsOpen,
-    filters: {
-      actorGroups: eventsFilters.actorFilters,
-      eventTypes: eventsFilters.typeFilters,
-      relatedNodeId: parsedEventNodeId,
-    },
+    filters: eventsTurnFilters,
   });
 
   const {

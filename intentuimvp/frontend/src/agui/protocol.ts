@@ -734,6 +734,14 @@ export interface AGUIClientConfig {
   onConnect?: () => void;
   onDisconnect?: () => void;
   onError?: (error: Error) => void;
+  /**
+   * Optional REST snapshot request when sequence gaps are detected.
+   */
+  snapshotRequest?: (params: { lastSequence: number | null }) => Promise<{
+    sequence: number;
+    state: Record<string, unknown>;
+    checksum: string;
+  }>;
 }
 
 // ============================================================================

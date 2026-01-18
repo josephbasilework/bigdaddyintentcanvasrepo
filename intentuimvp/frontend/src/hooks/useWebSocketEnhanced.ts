@@ -632,8 +632,6 @@ export function useWebSocketEnhanced(
         setLastSequence(null);
       }
 
-      hasSequenceGapRef.current = false;
-      setHasSequenceGap(false);
       console.info("WebSocket: Snapshot sync completed");
     } catch (error) {
       console.error("WebSocket: Snapshot sync failed", error);
