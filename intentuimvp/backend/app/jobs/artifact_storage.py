@@ -170,10 +170,11 @@ class ArtifactStorageService:
                 content.encode("utf-8") if isinstance(content, str) else content
             )
             storage_path = await self._file_storage.store(
-                user_id or "system",
-                temp_filename,
-                content_bytes,
-                mime_type,
+                user_id=user_id or "system",
+                attachment_id=None,
+                filename=temp_filename,
+                content=content_bytes,
+                mime_type=mime_type,
             )
             inline_data = None
 

@@ -102,6 +102,7 @@ class AudioBlockRepository(BaseRepository[AudioBlock, Any, Any]):
                 filename = f"{uuid.uuid4()}.webm"
                 final_uri = await self.attachment_storage.store(
                     user_id=str(canvas_id),
+                    attachment_id=None,
                     filename=filename,
                     content=audio_bytes,
                     mime_type="audio/webm",

@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
+from app.api.attachments import router as attachments_router
 from app.api.audio import router as audio_router
 from app.api.backup import router as backup_router
 from app.api.commands import router as commands_router
@@ -213,6 +214,7 @@ def create_app() -> FastAPI:
     app.include_router(nodes_router, tags=["nodes"])
     app.include_router(edges_router, tags=["edges"])
     app.include_router(audio_router, tags=["audio"])
+    app.include_router(attachments_router, tags=["attachments"])
     app.include_router(preferences_router, tags=["preferences"])
     app.include_router(backup_router, tags=["backup"])
     app.include_router(mcp_router, tags=["mcp"])

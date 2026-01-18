@@ -154,6 +154,10 @@ class AttachmentDB(Base):
     error_message = Column(Text, nullable=True)
     processed_at = Column(DateTime, nullable=True)
     context_id = Column(String, nullable=True, index=True)
+    session_id = Column(String, nullable=True, index=True)
+    turn_id = Column(Integer, nullable=True, index=True)
+    node_id = Column(Integer, nullable=True, index=True)
+    artifact_id = Column(Integer, nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     def to_dict(self) -> dict[str, Any]:
@@ -175,6 +179,10 @@ class AttachmentDB(Base):
             "error_message": self.error_message,
             "processed_at": processed_at.isoformat() if processed_at else None,
             "context_id": self.context_id,
+            "session_id": self.session_id,
+            "turn_id": self.turn_id,
+            "node_id": self.node_id,
+            "artifact_id": self.artifact_id,
             "created_at": created_at.isoformat() if created_at else None,
         }
 

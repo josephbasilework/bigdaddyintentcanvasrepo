@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from app.context.models import ContextPayload, SelectionScope
 from app.database import AsyncSessionLocal
+from app.models.intent import AttachmentDB
 from app.models.node import Node
 from app.models.turn import Turn, TurnActor, TurnType
 from app.repositories.session_repo import AsyncSessionRepository
@@ -112,13 +113,28 @@ class ContextTurn:
 
 
 @dataclass
+class ContextAttachment:
+    """Attachment metadata for routing context."""
+
+    id: str
+    filename: str
+    attachment_type: str
+    mime_type: str
+    size_bytes: int
+    text_content: str | None = None
+    transcription: str | None = None
+    description: str | None = None
+    status: str | None = None
+
+
+@dataclass
 class ContextWindow:
     """Assembled context window for a user interaction."""
 
     input_text: str
     nodes: list[ContextNode]
     turns: list[ContextTurn]
-    attachments: list[str]
+    attachments: list[ContextAttachment]
     selection: SelectionScope | None = None
     explicit_node_refs: list[str] = field(default_factory=list)
     explicit_turn_refs: list[int] = field(default_factory=list)
@@ -143,8 +159,8 @@ class ContextWindow:
             lines.extend(_format_turn_lines(self.turns, max_content_chars))
 
         if self.attachments:
-            attachment_list = ", ".join(self.attachments)
-            lines.append(f"Attachments: {attachment_list}")
+            lines.append("Attachments:")
+            lines.extend(_format_attachment_lines(self.attachments, max_content_chars))
 
         return "\n".join(lines).strip()
 
@@ -220,9 +236,15 @@ class ContextAssembler:
         recent_turns: list[Turn] = []
         explicit_turns: list[Turn] = []
         recent_node_ids: set[int] = set()
+        attachment_context: list[ContextAttachment] = []
         resolved_workspace_id = _coerce_int(workspace_id)
 
-        if session_id or node_ids_to_fetch or resolved_workspace_id is not None:
+        if (
+            session_id
+            or node_ids_to_fetch
+            or resolved_workspace_id is not None
+            or payload.attachments
+        ):
             async with AsyncSessionLocal() as session:
                 if session_id and resolved_workspace_id is None:
                     session_repo = AsyncSessionRepository(session)
@@ -260,6 +282,29 @@ class ContextAssembler:
                         limit=self._config.candidate_node_limit,
                     )
                     _merge_nodes(nodes_by_id, candidate_nodes)
+
+                if payload.attachments:
+                    attachment_rows = await _fetch_attachments_by_ids(
+                        session, payload.attachments
+                    )
+                    attachment_map = {attachment.id: attachment for attachment in attachment_rows}
+                    for attachment_id in payload.attachments:
+                        attachment = attachment_map.get(attachment_id)
+                        if attachment is None:
+                            continue
+                        attachment_context.append(
+                            ContextAttachment(
+                                id=attachment.id,
+                                filename=attachment.filename,
+                                attachment_type=attachment.attachment_type,
+                                mime_type=attachment.mime_type,
+                                size_bytes=attachment.size_bytes,
+                                text_content=attachment.text_content,
+                                transcription=attachment.transcription,
+                                description=attachment.description,
+                                status=attachment.status,
+                            )
+                        )
 
         memory_signal = self._resolve_memory_signal(
             user_id=user_id,
@@ -346,7 +391,7 @@ class ContextAssembler:
             input_text=payload.text,
             nodes=ordered_nodes,
             turns=ordered_turns,
-            attachments=payload.attachments or [],
+            attachments=attachment_context,
             selection=selection,
             explicit_node_refs=sorted(explicit_node_ids),
             explicit_turn_refs=sorted(explicit_turn_ids),
@@ -506,6 +551,17 @@ async def _fetch_turns_by_sequence(
             Turn.sequence_number.in_(sorted(sequence_numbers)),
         )
     )
+    return list(result.scalars().all())
+
+
+async def _fetch_attachments_by_ids(
+    session: Any,
+    attachment_ids: Iterable[str],
+) -> list[AttachmentDB]:
+    ids = [str(item) for item in attachment_ids if item]
+    if not ids:
+        return []
+    result = await session.execute(select(AttachmentDB).where(AttachmentDB.id.in_(ids)))
     return list(result.scalars().all())
 
 
@@ -739,6 +795,38 @@ def _format_turn_lines(turns: Iterable[ContextTurn], max_content_chars: int) -> 
         lines.append(
             f"- [turn {turn.sequence_number}] {turn.actor}/{turn.turn_type}: {summary}"
         )
+    return lines
+
+
+def _format_attachment_lines(
+    attachments: Iterable[ContextAttachment], max_content_chars: int
+) -> list[str]:
+    lines: list[str] = []
+    for attachment in attachments:
+        details: list[str] = []
+        if attachment.attachment_type:
+            details.append(attachment.attachment_type)
+        if attachment.mime_type:
+            details.append(attachment.mime_type)
+        if attachment.size_bytes:
+            details.append(f"{attachment.size_bytes} bytes")
+        detail_suffix = f" ({', '.join(details)})" if details else ""
+
+        summary_source = (
+            attachment.text_content
+            or attachment.transcription
+            or attachment.description
+            or ""
+        )
+        summary = _clip_text(summary_source, max_content_chars)
+        if summary:
+            lines.append(
+                f"- [attachment {attachment.id}] {attachment.filename}{detail_suffix}: {summary}"
+            )
+        else:
+            lines.append(
+                f"- [attachment {attachment.id}] {attachment.filename}{detail_suffix}"
+            )
     return lines
 
 

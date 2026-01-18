@@ -21,6 +21,7 @@ dependencies = [
     "google-api-python-client>=2.100.0",
     "arq>=0.26.0",
     "redis>=5.2.0",
+    "pypdf>=4.2.0",
 ]
 
 [project.optional-dependencies]

@@ -6,14 +6,16 @@ import asyncio
 import logging
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.context.models import ContextPayload, SelectionScope
 from app.context.input_router import get_input_router
+from app.context.models import ContextPayload, SelectionScope
 from app.database import get_db
+from app.models.intent import AttachmentDB
 from app.models.turn import TurnActor, TurnType
 from app.services.turns import log_turn_for_user_sync
 
@@ -161,7 +163,7 @@ async def submit_command(
     enqueue_command(submission)
 
     summary_preview = command[:120]
-    log_turn_for_user_sync(
+    turn = log_turn_for_user_sync(
         db,
         user_id="default_user",
         session_id=payload.session_id,
@@ -177,5 +179,32 @@ async def submit_command(
             "correlation_id": correlation_id,
         },
     )
+    if turn and payload.attachments:
+        try:
+            updates: dict[str, Any] = {
+                "turn_id": turn.id,
+                "session_id": turn.session_id,
+                "context_id": turn.session_id,
+            }
+            primary_node_id = (
+                payload.selection.primary_node_id
+                if payload.selection is not None
+                else None
+            )
+            if primary_node_id and str(primary_node_id).isdigit():
+                updates["node_id"] = int(str(primary_node_id))
+
+            (
+                db.query(AttachmentDB)
+                .filter(AttachmentDB.id.in_(payload.attachments))
+                .update(updates, synchronize_session=False)
+            )
+            db.commit()
+        except Exception:
+            logger.warning(
+                "Failed to link attachments to turn %s",
+                turn.id,
+                exc_info=True,
+            )
 
     return CommandSubmissionResponse(correlation_id=correlation_id, status="queued")

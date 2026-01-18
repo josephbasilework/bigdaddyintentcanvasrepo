@@ -485,10 +485,11 @@ class DocGenerationService:
             )
             content_bytes = suggestion.new_content.encode("utf-8")
             storage_path = await self.storage._file_storage.store(
-                user_id or "system",
-                temp_filename,
-                content_bytes,
-                "text/markdown",
+                user_id=user_id or "system",
+                attachment_id=None,
+                filename=temp_filename,
+                content=content_bytes,
+                mime_type="text/markdown",
             )
             artifact.storage_path = storage_path
             artifact.inline_data = None

@@ -24,6 +24,11 @@ import { useChatTurns } from "@/hooks/useChatTurns";
 import { useTurns } from "@/hooks/useTurns";
 import { useWebSocketEnhanced, type WebSocketMessage } from "@/hooks/useWebSocketEnhanced";
 import { createAGUIClient } from "@/agui/client";
+import {
+  type AttachmentItem,
+  type AttachmentListResponse,
+  normalizeAttachment,
+} from "@/lib/attachments";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -46,7 +51,7 @@ const EDGE_RELATION_TYPES: Set<CanvasEdgeRelationType> = new Set([
 type CommandSubmissionLog = {
   id: string;
   text: string;
-  attachments: string[];
+  attachments: AttachmentItem[];
 };
 
 /**
@@ -219,7 +224,7 @@ const buildClarifyingQuestions = (
 const createWorkflowRound = (
   assumptionData: AssumptionSetResponse,
   commandText: string,
-  attachments: string[],
+  attachments: AttachmentItem[],
   selection: SelectionScope,
   options: { force?: boolean } = {}
 ): WorkflowRound | null => {
@@ -371,7 +376,7 @@ export default function Home() {
   const [activeRoundId, setActiveRoundId] = useState<string | null>(null);
   const [routingError, setRoutingError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("Ready for commands.");
-  const [attachments, setAttachments] = useState<string[]>([]);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [activeView, setActiveView] = useState<
     "chat" | "wheel" | "events" | "mcp" | null
   >(null);
@@ -802,22 +807,108 @@ export default function Home() {
     }
   }, [activeRoundId, workflowRounds]);
 
-  const handleFilesDrop = (files: File[]) => {
-    const names = files.map((file) => file.name).filter(Boolean);
-    if (names.length === 0) return;
-    setAttachments((prev) => {
-      const next = [...prev];
-      for (const name of names) {
-        if (!next.includes(name)) {
-          next.push(name);
-        }
-      }
-      return next;
-    });
+  const buildSourceKey = (file: File) =>
+    `${file.name}-${file.size}-${file.lastModified}`;
+
+  const revokePreviewUrl = (url?: string) => {
+    if (url && url.startsWith("blob:")) {
+      URL.revokeObjectURL(url);
+    }
   };
 
-  const handleRemoveAttachment = (name: string) => {
-    setAttachments((prev) => prev.filter((item) => item !== name));
+  const uploadAttachments = async (files: File[]): Promise<AttachmentItem[]> => {
+    const formData = new FormData();
+    for (const file of files) {
+      formData.append("files", file);
+    }
+    if (wsSessionId) {
+      formData.append("session_id", wsSessionId);
+    }
+    const primaryNodeId = selectionScope.primary_node_id;
+    if (primaryNodeId && /^\d+$/.test(primaryNodeId)) {
+      formData.append("node_id", primaryNodeId);
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/attachments`, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Attachment upload failed: ${response.status} ${response.statusText}`);
+    }
+
+    const data: AttachmentListResponse = await response.json();
+    return data.attachments.map((attachment) =>
+      normalizeAttachment(attachment, API_BASE_URL)
+    );
+  };
+
+  const handleFilesDrop = async (files: File[]) => {
+    if (files.length === 0) return;
+    const existingKeys = new Set(attachments.map((item) => item.sourceKey));
+    const uniqueFiles = files.filter(
+      (file) => !existingKeys.has(buildSourceKey(file))
+    );
+    if (uniqueFiles.length === 0) return;
+
+    const pending = uniqueFiles.map<AttachmentItem>((file) => ({
+      id: `pending-${crypto.randomUUID()}`,
+      name: file.name,
+      mimeType: file.type || "application/octet-stream",
+      sizeBytes: file.size,
+      attachmentType: "upload",
+      status: "processing",
+      previewUrl: URL.createObjectURL(file),
+      sourceKey: buildSourceKey(file),
+    }));
+
+    setAttachments((prev) => [...prev, ...pending]);
+    setStatusMessage("Uploading attachments...");
+
+    try {
+      const uploaded = await uploadAttachments(uniqueFiles);
+      const pendingKeys = new Set(pending.map((item) => item.sourceKey));
+      pending.forEach((item) => revokePreviewUrl(item.previewUrl));
+      setAttachments((prev) => [
+        ...prev.filter((item) => !pendingKeys.has(item.sourceKey)),
+        ...uploaded,
+      ]);
+      setStatusMessage("Attachments ready.");
+    } catch (error) {
+      const pendingKeys = new Set(pending.map((item) => item.sourceKey));
+      setAttachments((prev) =>
+        prev.map((item) => {
+          if (!pendingKeys.has(item.sourceKey)) {
+            return item;
+          }
+          return {
+            ...item,
+            status: "error",
+            errorMessage:
+              error instanceof Error ? error.message : "Attachment upload failed",
+          };
+        })
+      );
+      setRoutingError(error instanceof Error ? error.message : "Attachment upload failed");
+    }
+  };
+
+  const handleRemoveAttachment = async (id: string) => {
+    const removed = attachments.find((item) => item.id === id);
+    if (removed) {
+      revokePreviewUrl(removed.previewUrl);
+    }
+    setAttachments((prev) => prev.filter((item) => item.id !== id));
+    if (removed && !removed.id.startsWith("pending-")) {
+      try {
+        await fetch(`${API_BASE_URL}/api/attachments/${removed.id}`, {
+          method: "DELETE",
+        });
+      } catch (error) {
+        console.warn("Failed to delete attachment:", error);
+      }
+    }
   };
 
   const updateRound = useCallback(
@@ -832,6 +923,7 @@ export default function Home() {
   const queueCommand = async (
     value: string,
     attachmentsForSubmission: string[],
+    attachmentsSnapshot: AttachmentItem[],
     selection: SelectionScope
   ) => {
     const response = await fetch(`${API_BASE_URL}/api/commands`, {
@@ -854,7 +946,7 @@ export default function Home() {
     const data: { correlation_id: string; status: string } = await response.json();
     setCommands((prev) => [
       ...prev,
-      { id: data.correlation_id, text: value, attachments: attachmentsForSubmission },
+      { id: data.correlation_id, text: value, attachments: attachmentsSnapshot },
     ]);
     setAttachments([]);
     // Node creation is now handled by the backend via WebSocket broadcast
@@ -869,7 +961,21 @@ export default function Home() {
       setStatusMessage("Panels closed.");
       return;
     }
-    const attachmentsForSubmission = [...attachments];
+    const hasUploadsPending = attachments.some((item) =>
+      ["pending", "processing"].includes(item.status)
+    );
+    if (hasUploadsPending) {
+      setRoutingError("Attachments are still uploading. Please wait.");
+      return;
+    }
+    const hasUploadErrors = attachments.some((item) => item.status === "error");
+    if (hasUploadErrors) {
+      setRoutingError("Remove failed attachments before submitting.");
+      return;
+    }
+
+    const attachmentsSnapshot = attachments.filter((item) => item.status === "ready");
+    const attachmentsForSubmission = attachmentsSnapshot.map((item) => item.id);
     const selection = selectionScope;
 
     // Clear selection immediately after capturing it for the command
@@ -898,7 +1004,7 @@ export default function Home() {
       const nextRound = createWorkflowRound(
         assumptionData,
         value,
-        attachmentsForSubmission,
+        attachmentsSnapshot,
         selection
       );
 
@@ -913,7 +1019,7 @@ export default function Home() {
     }
 
     try {
-      await queueCommand(value, attachmentsForSubmission, selection);
+      await queueCommand(value, attachmentsForSubmission, attachmentsSnapshot, selection);
     } catch (error) {
       console.error("Routing failed:", error);
       setRoutingError(error instanceof Error ? error.message : "Unknown error");
@@ -990,9 +1096,12 @@ export default function Home() {
     updateRound(roundId, (round) => ({ ...round, status: "resolved" }));
 
     try {
+      const attachmentsSnapshot = currentRound.attachments;
+      const attachmentsForSubmission = attachmentsSnapshot.map((item) => item.id);
       await queueCommand(
         currentRound.commandText,
-        currentRound.attachments,
+        attachmentsForSubmission,
+        attachmentsSnapshot,
         currentRound.selection
       );
       updateRound(roundId, (round) => ({ ...round, status: "executed" }));
@@ -1019,6 +1128,7 @@ export default function Home() {
       }
     }
     try {
+      const attachmentIds = currentRound.attachments.map((attachment) => attachment.id);
       const response = await fetch(`${API_BASE_URL}/api/context/assumptions`, {
         method: "POST",
         headers: {
@@ -1026,7 +1136,7 @@ export default function Home() {
         },
         body: JSON.stringify({
           text: buildRevisionPrompt(currentRound, note),
-          attachments: currentRound.attachments,
+          attachments: attachmentIds,
         }),
       });
 
@@ -1176,7 +1286,7 @@ export default function Home() {
                   </div>
                   {cmd.attachments.length > 0 && (
                     <div style={{ fontSize: "12px", color: "#94a3b8" }}>
-                      Attachments: {cmd.attachments.join(", ")}
+                      Attachments: {cmd.attachments.map((item) => item.name).join(", ")}
                     </div>
                   )}
                 </li>

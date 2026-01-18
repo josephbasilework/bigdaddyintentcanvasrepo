@@ -1,20 +1,23 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import Image from "next/image";
 import { NodeContextBanner } from "./NodeContextBanner";
 import type { ConversationScope } from "@/state/conversationStore";
+import type { AttachmentItem } from "@/lib/attachments";
+import { formatBytes } from "@/lib/attachments";
 
 interface FloatingInputProps {
   /** Callback when user submits input (pressed Enter) */
   onSubmit?: (value: string) => void;
   /** Callback when files are dropped on the input */
   onFilesDrop?: (files: File[]) => void;
-  /** Optional list of attachment names to display */
-  attachments?: string[];
+  /** Optional list of attachments to display */
+  attachments?: AttachmentItem[];
   /** Optional list of selection scope labels to display */
   selection?: SelectionScopeItem[];
-  /** Callback to remove an attachment by name */
-  onRemoveAttachment?: (name: string) => void;
+  /** Callback to remove an attachment by id */
+  onRemoveAttachment?: (id: string) => void;
   /** Callback to clear the selection scope */
   onClearSelection?: () => void;
   /** Placeholder text for the input */
@@ -216,6 +219,62 @@ export function FloatingInput({
         template.command.slice(1).startsWith(templateQuery)
       )
     : [];
+  const buildAttachmentMeta = (attachment: AttachmentItem): string => {
+    const parts = [];
+    if (attachment.attachmentType) {
+      parts.push(attachment.attachmentType);
+    }
+    if (attachment.sizeBytes) {
+      parts.push(formatBytes(attachment.sizeBytes));
+    }
+    return parts.join(" • ");
+  };
+
+  const renderAttachmentPreview = (attachment: AttachmentItem) => {
+    const previewUrl = attachment.previewUrl;
+    const mimeType = attachment.mimeType ?? "";
+    if (previewUrl && mimeType.startsWith("image/")) {
+      return (
+        <Image
+          src={previewUrl}
+          alt={attachment.name}
+          width={64}
+          height={64}
+          className="attachment-preview-image"
+          unoptimized
+        />
+      );
+    }
+    if (mimeType.startsWith("audio/")) {
+      return (
+        <div className="attachment-preview-placeholder" aria-hidden="true">
+          Audio
+        </div>
+      );
+    }
+    if (previewUrl && mimeType === "application/pdf") {
+      return (
+        <embed
+          src={previewUrl}
+          type="application/pdf"
+          className="attachment-preview-pdf"
+        />
+      );
+    }
+    if (attachment.textPreview) {
+      return <div className="attachment-preview-text">{attachment.textPreview}</div>;
+    }
+    if (attachment.descriptionPreview) {
+      return (
+        <div className="attachment-preview-text">{attachment.descriptionPreview}</div>
+      );
+    }
+    return (
+      <div className="attachment-preview-placeholder" aria-hidden="true">
+        File
+      </div>
+    );
+  };
   const resolvedToggles =
     panelToggles && panelToggles.length > 0
       ? panelToggles
@@ -288,15 +347,33 @@ export function FloatingInput({
       )}
       {attachments && attachments.length > 0 && (
         <div className="attachment-list" role="list" aria-label="Attached files">
-          {attachments.map((name) => (
-            <div key={name} className="attachment-chip" role="listitem">
-              <span className="attachment-name">{name}</span>
+          {attachments.map((attachment) => (
+            <div key={attachment.id} className="attachment-card" role="listitem">
+              <div className="attachment-preview">{renderAttachmentPreview(attachment)}</div>
+              <div className="attachment-body">
+                <div className="attachment-header">
+                  <span className="attachment-name" title={attachment.name}>
+                    {attachment.name}
+                  </span>
+                  <span className="attachment-status">{attachment.status}</span>
+                </div>
+                <div className="attachment-meta">{buildAttachmentMeta(attachment)}</div>
+                {attachment.previewUrl && attachment.mimeType.startsWith("audio/") && (
+                  <audio controls preload="metadata" className="attachment-audio-inline">
+                    <source src={attachment.previewUrl} type={attachment.mimeType} />
+                    Your browser does not support audio playback.
+                  </audio>
+                )}
+                {attachment.errorMessage && (
+                  <div className="attachment-error">{attachment.errorMessage}</div>
+                )}
+              </div>
               {onRemoveAttachment && (
                 <button
                   type="button"
                   className="attachment-remove"
-                  onClick={() => onRemoveAttachment(name)}
-                  aria-label={`Remove ${name}`}
+                  onClick={() => onRemoveAttachment(attachment.id)}
+                  aria-label={`Remove ${attachment.name}`}
                 >
                   x
                 </button>
@@ -503,28 +580,99 @@ export function FloatingInput({
 
         .attachment-list {
           display: flex;
-          flex-wrap: wrap;
-          gap: 0.4rem;
+          flex-direction: column;
+          gap: 0.6rem;
           margin-bottom: 0.5rem;
         }
 
-        .attachment-chip {
-          display: inline-flex;
+        .attachment-card {
+          display: grid;
+          grid-template-columns: 64px 1fr auto;
           align-items: center;
-          gap: 0.35rem;
-          padding: 0.35rem 0.6rem;
-          border-radius: 999px;
+          gap: 0.6rem;
+          padding: 0.5rem 0.6rem;
+          border-radius: 0.75rem;
           background-color: #111827;
           border: 1px solid #2a2a2a;
           color: #e5e5e5;
-          font-size: 0.75rem;
+          font-size: 0.78rem;
+        }
+
+        .attachment-preview {
+          width: 64px;
+          height: 64px;
+          border-radius: 0.6rem;
+          overflow: hidden;
+          background: rgba(15, 23, 42, 0.8);
+          border: 1px solid rgba(51, 65, 85, 0.6);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .attachment-preview-image,
+        .attachment-preview-pdf {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
+        .attachment-preview-text {
+          padding: 0.4rem;
+          font-size: 0.65rem;
+          color: #cbd5f5;
+          line-height: 1.3;
+          max-height: 56px;
+          overflow: hidden;
+        }
+
+        .attachment-preview-placeholder {
+          color: #94a3b8;
+          font-size: 0.7rem;
+        }
+
+        .attachment-body {
+          display: flex;
+          flex-direction: column;
+          gap: 0.2rem;
+          min-width: 0;
+        }
+
+        .attachment-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.4rem;
         }
 
         .attachment-name {
-          max-width: 220px;
+          font-weight: 600;
+          max-width: 100%;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+        }
+
+        .attachment-status {
+          text-transform: uppercase;
+          font-size: 0.6rem;
+          letter-spacing: 0.08em;
+          color: #93c5fd;
+        }
+
+        .attachment-meta {
+          color: #9ca3af;
+          font-size: 0.7rem;
+        }
+
+        .attachment-audio-inline {
+          width: 100%;
+          margin-top: 0.2rem;
+        }
+
+        .attachment-error {
+          color: #fca5a5;
+          font-size: 0.65rem;
         }
 
         .attachment-remove {
@@ -533,7 +681,7 @@ export function FloatingInput({
           color: #9ca3af;
           cursor: pointer;
           padding: 0;
-          font-size: 0.75rem;
+          font-size: 1rem;
         }
 
         .attachment-remove:hover {

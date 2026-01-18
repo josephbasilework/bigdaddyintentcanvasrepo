@@ -1,23 +1,25 @@
-"""Services module for IntentUI backend.
+"""Services module for IntentUI backend."""
 
-This module contains business logic services that provide specific functionality
-to the application layer.
-"""
+from __future__ import annotations
 
-from app.services.embedding import (
-    EMBEDDING_DIM,
-    EmbeddingService,
-    create_embedding_provider,
-    encode_text,
-    encode_texts,
-    get_embedding_service,
-)
+from typing import Any
 
-__all__ = [
+_EMBEDDING_EXPORTS = {
     "EMBEDDING_DIM",
     "EmbeddingService",
     "create_embedding_provider",
     "encode_text",
     "encode_texts",
     "get_embedding_service",
-]
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _EMBEDDING_EXPORTS:
+        from app.services import embedding as _embedding
+
+        return getattr(_embedding, name)
+    raise AttributeError(f"module {__name__} has no attribute {name}")
+
+
+__all__ = sorted(_EMBEDDING_EXPORTS)

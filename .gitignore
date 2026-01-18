@@ -40,3 +40,7 @@ Thumbs.db
 .beads/beads.db
 .beads/beads.db-shm
 .beads/beads.db-wal
+
+# Local storage
+attachments/
+user_data/

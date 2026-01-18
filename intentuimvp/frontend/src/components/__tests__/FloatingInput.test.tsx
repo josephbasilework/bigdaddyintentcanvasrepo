@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import { FloatingInput } from "../ContextInput/FloatingInput";
+import type { AttachmentItem } from "@/lib/attachments";
 
 describe("FloatingInput", () => {
   beforeEach(() => {
@@ -196,9 +197,19 @@ describe("FloatingInput", () => {
 
   it("renders attachments and allows removal", () => {
     const handleRemove = vi.fn();
+    const attachments: AttachmentItem[] = [
+      {
+        id: "att-1",
+        name: "spec.pdf",
+        mimeType: "application/pdf",
+        sizeBytes: 1200,
+        attachmentType: "document",
+        status: "ready",
+      },
+    ];
     render(
       <FloatingInput
-        attachments={["spec.pdf"]}
+        attachments={attachments}
         onRemoveAttachment={handleRemove}
       />
     );
@@ -206,7 +217,7 @@ describe("FloatingInput", () => {
     expect(screen.getByText("spec.pdf")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Remove spec.pdf" }));
 
-    expect(handleRemove).toHaveBeenCalledWith("spec.pdf");
+    expect(handleRemove).toHaveBeenCalledWith("att-1");
   });
 
   it("shows selection scope context when selection is provided", () => {

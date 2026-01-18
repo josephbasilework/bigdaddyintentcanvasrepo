@@ -1,5 +1,7 @@
 /** Types for assumptions extracted by agents. */
 
+import type { AttachmentItem } from "@/lib/attachments";
+
 export type AssumptionCategory = "context" | "intent" | "parameter" | "other";
 export type AssumptionStatus = "pending" | "accepted" | "rejected";
 
@@ -55,7 +57,7 @@ export interface IntentWorkflowRound {
   id: string;
   createdAt: string;
   commandText: string;
-  attachments: string[];
+  attachments: AttachmentItem[];
   assumptions: Assumption[];
   assumptionSet?: AssumptionSet;
   clarifyingQuestions?: string[];

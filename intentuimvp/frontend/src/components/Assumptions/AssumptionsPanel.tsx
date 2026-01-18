@@ -234,9 +234,13 @@ export function AssumptionsPanel({
               <div className="assumptions-command">{currentRound.commandText}</div>
               {currentRound.attachments.length > 0 && (
                 <div className="assumptions-attachments" role="list">
-                  {currentRound.attachments.map((name) => (
-                    <span key={name} className="assumptions-attachment" role="listitem">
-                      {name}
+                  {currentRound.attachments.map((attachment) => (
+                    <span
+                      key={attachment.id}
+                      className="assumptions-attachment"
+                      role="listitem"
+                    >
+                      {attachment.name}
                     </span>
                   ))}
                 </div>

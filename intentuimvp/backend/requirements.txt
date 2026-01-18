@@ -132,6 +132,7 @@ pydantic-graph==1.40.0
 pydantic-settings==2.12.0
 pydantic_core==2.41.5
 pydocket==0.16.5
+pypdf==4.2.0
 Pygments==2.19.2
 PyJWT==2.10.1
 pyparsing==3.3.1

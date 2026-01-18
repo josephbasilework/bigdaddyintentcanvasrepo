@@ -66,6 +66,10 @@ class Attachment(BaseModel):
 
     # Context information
     context_id: str | None = None  # Optional link to a context/session
+    session_id: str | None = None
+    turn_id: int | None = None
+    node_id: int | None = None
+    artifact_id: int | None = None
 
 
 class AttachmentStorage:
@@ -77,6 +81,7 @@ class AttachmentStorage:
     async def store(
         self,
         user_id: str,
+        attachment_id: str | None,
         filename: str,
         content: bytes,
         mime_type: str,
@@ -85,6 +90,7 @@ class AttachmentStorage:
 
         Args:
             user_id: User ID who owns the attachment.
+            attachment_id: Optional attachment ID to use for storage paths.
             filename: Original filename.
             content: File content as bytes.
             mime_type: MIME type of the file.
@@ -156,6 +162,7 @@ class LocalAttachmentStorage(AttachmentStorage):
     async def store(
         self,
         user_id: str,
+        attachment_id: str | None,
         filename: str,
         content: bytes,
         mime_type: str,
@@ -164,6 +171,7 @@ class LocalAttachmentStorage(AttachmentStorage):
 
         Args:
             user_id: User ID who owns the attachment.
+            attachment_id: Optional attachment ID to use for storage paths.
             filename: Original filename.
             content: File content as bytes.
             mime_type: MIME type of the file.
@@ -171,7 +179,8 @@ class LocalAttachmentStorage(AttachmentStorage):
         Returns:
             Storage path for the stored file.
         """
-        attachment_id = str(uuid.uuid4())
+        if attachment_id is None:
+            attachment_id = str(uuid.uuid4())
         storage_path = self._get_storage_path(user_id, attachment_id, filename)
 
         with open(storage_path, "wb") as f:
