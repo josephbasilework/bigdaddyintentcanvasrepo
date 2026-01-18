@@ -29,6 +29,8 @@ const previewPayload = {
   description: "Google Calendar integration",
   transport_type: "stdio",
   transport_config: {},
+  resources: [],
+  prompts: [],
   tools: [
     {
       name: "calendar_list",
@@ -39,10 +41,21 @@ const previewPayload = {
   security_rules: {
     calendar_list: "allowed",
   },
+  permission_scopes: ["scope-one"],
+  required_env: ["GOOGLE_CALENDAR_CREDENTIALS"],
   credential_fields: catalogEntry.credential_fields,
   missing_credentials: [],
   sandbox_issues: [],
   blocked_tools: [],
+  security_checks: [
+    {
+      id: "source_verification",
+      label: "Source verification",
+      status: "passed",
+      details: "Catalog entry verified",
+      issues: [],
+    },
+  ],
 };
 
 describe("MCPInstallPanel", () => {
@@ -124,7 +137,9 @@ describe("MCPInstallPanel", () => {
     fireEvent.click(reviewButton);
 
     expect(await screen.findByText("Capability review")).toBeInTheDocument();
+    expect(screen.getByText("Security pipeline")).toBeInTheDocument();
     expect(screen.getByText("calendar_list")).toBeInTheDocument();
+    expect(screen.getByText("Permissions requested")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /confirm install/i }));
 

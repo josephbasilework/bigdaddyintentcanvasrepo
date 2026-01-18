@@ -36,18 +36,45 @@ type MCPInstallToolPreview = {
   inputSchema?: Record<string, unknown>;
 };
 
+type MCPResourcePreview = {
+  uri: string;
+  name: string;
+  description?: string | null;
+  mime_type?: string | null;
+};
+
+type MCPPromptPreview = {
+  name: string;
+  description?: string | null;
+  arguments?: Array<Record<string, unknown>>;
+};
+
+type MCPSecurityCheck = {
+  id: string;
+  label: string;
+  status: "passed" | "pending" | "failed";
+  details?: string | null;
+  issues?: string[];
+  blocking?: boolean;
+};
+
 type MCPInstallPreview = {
   server_id: string;
   name: string;
   description?: string | null;
   transport_type: string;
   transport_config: Record<string, unknown>;
+  resources: MCPResourcePreview[];
+  prompts: MCPPromptPreview[];
   tools: MCPInstallToolPreview[];
   security_rules: Record<string, string>;
   credential_fields: MCPCredentialField[];
   missing_credentials: string[];
   sandbox_issues: string[];
   blocked_tools: string[];
+  permission_scopes: string[];
+  required_env: string[];
+  security_checks: MCPSecurityCheck[];
   oauth?: MCPOAuthSpec | null;
 };
 
@@ -80,6 +107,14 @@ export function MCPInstallPanel({ id = "mcp-install-panel" }: MCPInstallPanelPro
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  const hasBlockingChecks = useMemo(
+    () =>
+      preview?.security_checks?.some(
+        (check) => check.status === "failed" && check.blocking
+      ) ?? false,
+    [preview]
+  );
 
   const selectedEntry = useMemo(
     () => catalog.find((entry) => entry.catalog_id === selectedId) ?? null,
@@ -332,57 +367,160 @@ export function MCPInstallPanel({ id = "mcp-install-panel" }: MCPInstallPanelPro
                 Missing credentials: {preview.missing_credentials.join(", ")}
               </div>
             )}
-            <div className="mcp-approve-all">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={
-                    preview.tools.length > 0 &&
-                    preview.tools.every(
-                      (tool) =>
-                        tool.security_level === "blocked" ||
-                        approvedTools[tool.name] === true
-                    )
-                  }
-                  onChange={(event) => toggleApproveAll(event.target.checked)}
-                />
-                Approve all non-blocked tools
-              </label>
-            </div>
-            <div className="mcp-tool-list">
-              {preview.tools.map((tool) => {
-                const isBlocked = tool.security_level === "blocked";
-                return (
-                  <label key={tool.name} className={`mcp-tool ${isBlocked ? "blocked" : ""}`}>
-                    <input
-                      type="checkbox"
-                      disabled={isBlocked}
-                      checked={Boolean(approvedTools[tool.name])}
-                      onChange={(event) =>
-                        setApprovedTools((prev) => ({
-                          ...prev,
-                          [tool.name]: event.target.checked,
-                        }))
-                      }
-                    />
-                    <div>
-                      <div className="mcp-tool-name">{tool.name}</div>
-                      <div className="mcp-tool-meta">
-                        {tool.description ?? "No description"}
+            {hasBlockingChecks && (
+              <div className="mcp-panel-error">
+                Resolve blocking security issues before confirming install.
+              </div>
+            )}
+            {preview.security_checks.length > 0 && (
+              <div className="mcp-subsection">
+                <div className="mcp-subsection-title">Security pipeline</div>
+                <div className="mcp-security-checks">
+                  {preview.security_checks.map((check) => (
+                    <div key={check.id} className={`mcp-security-check ${check.status}`}>
+                      <div className="mcp-security-check-header">
+                        <span className="mcp-security-check-title">{check.label}</span>
+                        <span className={`mcp-security-tag ${check.status}`}>
+                          {check.status}
+                        </span>
                       </div>
-                      <div className={`mcp-security ${tool.security_level ?? "unknown"}`}>
-                        {tool.security_level ?? "unknown"}
-                      </div>
+                      {check.details && (
+                        <div className="mcp-security-check-details">{check.details}</div>
+                      )}
+                      {check.issues && check.issues.length > 0 && (
+                        <ul className="mcp-security-issues">
+                          {check.issues.map((issue) => (
+                            <li key={issue}>{issue}</li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
-                  </label>
-                );
-              })}
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="mcp-subsection">
+              <div className="mcp-subsection-title">Permissions requested</div>
+              {preview.permission_scopes.length === 0 && preview.required_env.length === 0 && (
+                <div className="mcp-panel-state">No permission scopes declared.</div>
+              )}
+              {preview.permission_scopes.length > 0 && (
+                <>
+                  <div className="mcp-subsection-label">OAuth scopes</div>
+                  <ul className="mcp-permissions-list">
+                    {preview.permission_scopes.map((scope) => (
+                      <li key={scope}>{scope}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {preview.required_env.length > 0 && (
+                <>
+                  <div className="mcp-subsection-label">Required environment keys</div>
+                  <ul className="mcp-permissions-list">
+                    {preview.required_env.map((envKey) => (
+                      <li key={envKey}>{envKey}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </div>
+            <div className="mcp-subsection">
+              <div className="mcp-subsection-title">Tools</div>
+              <div className="mcp-approve-all">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={
+                      preview.tools.length > 0 &&
+                      preview.tools.every(
+                        (tool) =>
+                          tool.security_level === "blocked" ||
+                          approvedTools[tool.name] === true
+                      )
+                    }
+                    onChange={(event) => toggleApproveAll(event.target.checked)}
+                  />
+                  Approve all non-blocked tools
+                </label>
+              </div>
+              <div className="mcp-tool-list">
+                {preview.tools.map((tool) => {
+                  const isBlocked = tool.security_level === "blocked";
+                  return (
+                    <label key={tool.name} className={`mcp-tool ${isBlocked ? "blocked" : ""}`}>
+                      <input
+                        type="checkbox"
+                        disabled={isBlocked}
+                        checked={Boolean(approvedTools[tool.name])}
+                        onChange={(event) =>
+                          setApprovedTools((prev) => ({
+                            ...prev,
+                            [tool.name]: event.target.checked,
+                          }))
+                        }
+                      />
+                      <div>
+                        <div className="mcp-tool-name">{tool.name}</div>
+                        <div className="mcp-tool-meta">
+                          {tool.description ?? "No description"}
+                        </div>
+                        <div className={`mcp-security ${tool.security_level ?? "unknown"}`}>
+                          {tool.security_level ?? "unknown"}
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="mcp-subsection">
+              <div className="mcp-subsection-title">Resources</div>
+              {preview.resources.length === 0 && (
+                <div className="mcp-panel-state">No resources declared.</div>
+              )}
+              {preview.resources.length > 0 && (
+                <div className="mcp-capability-list">
+                  {preview.resources.map((resource) => (
+                    <div key={resource.uri} className="mcp-capability">
+                      <div className="mcp-capability-title">{resource.name}</div>
+                      <div className="mcp-capability-meta">{resource.uri}</div>
+                      {resource.description && (
+                        <div className="mcp-capability-meta">{resource.description}</div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="mcp-subsection">
+              <div className="mcp-subsection-title">Prompts</div>
+              {preview.prompts.length === 0 && (
+                <div className="mcp-panel-state">No prompts declared.</div>
+              )}
+              {preview.prompts.length > 0 && (
+                <div className="mcp-capability-list">
+                  {preview.prompts.map((prompt) => (
+                    <div key={prompt.name} className="mcp-capability">
+                      <div className="mcp-capability-title">{prompt.name}</div>
+                      <div className="mcp-capability-meta">
+                        {prompt.description ?? "No description"}
+                      </div>
+                      {prompt.arguments && prompt.arguments.length > 0 && (
+                        <div className="mcp-capability-meta">
+                          {prompt.arguments.length} argument(s)
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <button
               type="button"
               className="mcp-button primary"
               onClick={handleConfirm}
-              disabled={isSubmitting}
+              disabled={isSubmitting || hasBlockingChecks}
             >
               Confirm install
             </button>
@@ -464,6 +602,30 @@ export function MCPInstallPanel({ id = "mcp-install-panel" }: MCPInstallPanelPro
           text-transform: uppercase;
           letter-spacing: 0.12em;
           color: #94a3b8;
+        }
+
+        .mcp-subsection {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+          padding: 0.6rem;
+          border-radius: 0.55rem;
+          border: 1px solid rgba(148, 163, 184, 0.15);
+          background: rgba(15, 23, 42, 0.35);
+        }
+
+        .mcp-subsection-title {
+          font-size: 0.7rem;
+          text-transform: uppercase;
+          letter-spacing: 0.12em;
+          color: #94a3b8;
+        }
+
+        .mcp-subsection-label {
+          font-size: 0.7rem;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: #cbd5f5;
         }
 
         .mcp-select,
@@ -565,6 +727,111 @@ export function MCPInstallPanel({ id = "mcp-install-panel" }: MCPInstallPanelPro
           display: flex;
           flex-direction: column;
           gap: 0.5rem;
+        }
+
+        .mcp-security-checks {
+          display: flex;
+          flex-direction: column;
+          gap: 0.45rem;
+        }
+
+        .mcp-security-check {
+          padding: 0.5rem;
+          border-radius: 0.45rem;
+          border: 1px solid rgba(148, 163, 184, 0.2);
+          background: rgba(15, 23, 42, 0.5);
+        }
+
+        .mcp-security-check.passed {
+          border-color: rgba(34, 197, 94, 0.5);
+        }
+
+        .mcp-security-check.pending {
+          border-color: rgba(250, 204, 21, 0.5);
+        }
+
+        .mcp-security-check.failed {
+          border-color: rgba(248, 113, 113, 0.55);
+        }
+
+        .mcp-security-check-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 0.5rem;
+        }
+
+        .mcp-security-check-title {
+          font-size: 0.8rem;
+          font-weight: 600;
+        }
+
+        .mcp-security-tag {
+          font-size: 0.65rem;
+          text-transform: uppercase;
+          letter-spacing: 0.1em;
+          padding: 0.1rem 0.4rem;
+          border-radius: 999px;
+          border: 1px solid rgba(148, 163, 184, 0.4);
+          color: #e2e8f0;
+        }
+
+        .mcp-security-tag.passed {
+          border-color: rgba(34, 197, 94, 0.6);
+          color: #86efac;
+        }
+
+        .mcp-security-tag.pending {
+          border-color: rgba(250, 204, 21, 0.6);
+          color: #fde047;
+        }
+
+        .mcp-security-tag.failed {
+          border-color: rgba(248, 113, 113, 0.6);
+          color: #fecaca;
+        }
+
+        .mcp-security-check-details {
+          font-size: 0.75rem;
+          color: #cbd5f5;
+          margin-top: 0.25rem;
+        }
+
+        .mcp-security-issues {
+          margin: 0.35rem 0 0;
+          padding-left: 1rem;
+          font-size: 0.75rem;
+          color: #fca5a5;
+        }
+
+        .mcp-permissions-list {
+          margin: 0;
+          padding-left: 1rem;
+          font-size: 0.8rem;
+          color: #cbd5f5;
+        }
+
+        .mcp-capability-list {
+          display: flex;
+          flex-direction: column;
+          gap: 0.4rem;
+        }
+
+        .mcp-capability {
+          padding: 0.45rem 0.55rem;
+          border-radius: 0.45rem;
+          border: 1px solid rgba(148, 163, 184, 0.2);
+          background: rgba(15, 23, 42, 0.55);
+        }
+
+        .mcp-capability-title {
+          font-size: 0.82rem;
+          font-weight: 600;
+        }
+
+        .mcp-capability-meta {
+          font-size: 0.74rem;
+          color: #94a3b8;
         }
 
         .mcp-tool {

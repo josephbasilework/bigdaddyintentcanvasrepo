@@ -66,6 +66,8 @@ async def test_install_preview_requires_confirmation(db_session: AsyncSession) -
     assert result["requires_confirmation"] is True
     assert result["preview"]
     assert result["preview"]["missing_credentials"]
+    assert result["preview"]["security_checks"]
+    assert result["preview"]["permission_scopes"]
 
 
 @pytest.mark.asyncio
@@ -74,7 +76,7 @@ async def test_install_missing_credentials_rejected(db_session: AsyncSession) ->
     payload = MCPInstallRequest(catalog_id="google-calendar", confirmed=True)
     result = await installer.install(payload)
     assert result["success"] is False
-    assert "Missing required credentials" in (result.get("error") or "")
+    assert "Missing credentials" in (result.get("error") or "")
 
 
 @pytest.mark.asyncio
@@ -96,3 +98,48 @@ async def test_install_with_credentials_enables_server(db_session: AsyncSession)
     server = await registry.get_server("google-calendar")
     assert server is not None
     assert server.enabled is True
+
+
+@pytest.mark.asyncio
+async def test_install_blocks_duplicate_tools(db_session: AsyncSession) -> None:
+    installer = MCPInstaller(db_session)
+    manifest = {
+        "protocolVersion": "2024-11-05",
+        "name": "dup-mcp",
+        "version": "1.0.0",
+        "description": "Duplicate tool test",
+        "capabilities": {
+            "tools": [
+                {
+                    "name": "dup_tool",
+                    "description": "First tool",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
+                },
+                {
+                    "name": "dup_tool",
+                    "description": "Second tool",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
+                },
+            ]
+        },
+    }
+    payload = MCPInstallRequest(
+        server_id="dup-mcp",
+        name="Duplicate MCP",
+        transport_type="stdio",
+        transport_config={"command": ["node", "server.js"]},
+        manifest=manifest,
+        approved_tools=["dup_tool"],
+        confirmed=True,
+    )
+    result = await installer.install(payload)
+    assert result["success"] is False
+    assert "Duplicate tool names" in (result.get("error") or "")

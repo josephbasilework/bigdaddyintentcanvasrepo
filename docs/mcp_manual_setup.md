@@ -13,6 +13,15 @@ An MCP integration consists of:
 - **Credentials/OAuth scopes** required for the server to operate.
 - **Security rules** that classify tool risk (allowed / requires_confirm / blocked).
 
+## Automatic vs Manual Installs
+
+- **Automatic (conversation)**: The agent proposes `mcp.install` with a preview payload.
+  You review security checks, capabilities, and permissions before confirming.
+- **Manual (configuration)**: Use the REST API or the MCP Setup panel in the UI
+  for full control over configuration and credentials.
+
+See `docs/SESSION_ARCHITECTURE_SPEC.md` for the self-modification flow narrative.
+
 ## Manual Install (API)
 
 1. Build a manifest (required fields):
@@ -49,6 +58,9 @@ An MCP integration consists of:
 - **sse** (remote server):
   - Provide `url` to the SSE endpoint
 
+> Note: Catalog installs only allow `env` overrides on transport config. To change
+> command, URL, or manifest, use the manual path without `catalog_id`.
+
 3. Preview the install:
 
 ```bash
@@ -70,6 +82,7 @@ The response includes:
 - A capability review list
 - Security rules applied to each tool
 - Any sandbox or credential issues
+- Security pipeline status (source verification, manifest + capability validation)
 
 4. Confirm and enable:
 
@@ -105,6 +118,18 @@ Use **Review install** to generate the preview and **Confirm install** to enable
 - Executables such as `bash`, `sh`, or `powershell` are blocked.
 - Environment keys like `PATH`, `HOME`, and `LD_PRELOAD` are blocked.
 - Tools classified as `blocked` stay disabled even after install.
+- SSE transport requires `https://` (or localhost during development).
+
+## Security Pipeline Checks
+
+Preview responses include a security pipeline with pass/pending/failed status:
+
+- **Source verification**: Catalog entry is verified or custom installs require manual review.
+- **Manifest validation**: Schema checks (protocolVersion, capabilities, tooling).
+- **Capability validation**: Detects duplicates/missing definitions before install.
+- **Permission scope review**: Lists OAuth scopes and required env keys.
+- **Sandbox validation**: Enforces stdio + SSE transport constraints.
+- **Issue scan**: Summarizes blocked tools, missing credentials, and warnings.
 
 ## Manual Enable/Disable
 
@@ -124,3 +149,8 @@ curl -X PUT http://localhost:8000/api/mcp/servers/my-mcp \
 
 - Credentials are stored in transport config and are redacted in API responses.
 - Use `GET /api/mcp/servers` to audit installed MCPs.
+
+## Additional References
+
+- Configuration reference: `docs/mcp_configuration_reference.md`
+- Troubleshooting guide: `docs/mcp_troubleshooting.md`

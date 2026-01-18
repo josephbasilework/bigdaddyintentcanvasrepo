@@ -251,13 +251,19 @@ class MCPInstallPreview(BaseModel):
     transport_type: str
     transport_config: dict
     manifest: dict
+    resources: list[dict[str, Any]] = Field(default_factory=list)
+    prompts: list[dict[str, Any]] = Field(default_factory=list)
     tools: list[dict[str, Any]] = Field(default_factory=list)
     security_rules: dict[str, str] = Field(default_factory=dict)
     oauth: MCPOAuthSpec | None = None
+    permission_scopes: list[str] = Field(default_factory=list)
+    required_env: list[str] = Field(default_factory=list)
     credential_fields: list[MCPCredentialField] = Field(default_factory=list)
     missing_credentials: list[str] = Field(default_factory=list)
     sandbox_issues: list[str] = Field(default_factory=list)
     blocked_tools: list[str] = Field(default_factory=list)
+    security_checks: list[dict[str, Any]] = Field(default_factory=list)
+    blocking_issues: list[str] = Field(default_factory=list)
 
 
 class MCPInstallResponse(BaseModel):
