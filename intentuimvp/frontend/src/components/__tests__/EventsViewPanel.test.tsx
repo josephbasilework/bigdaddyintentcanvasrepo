@@ -43,7 +43,7 @@ const baseTurns: TurnResponse[] = [
     actor: "system",
     type: "job_failed",
     summary: "Job failed",
-    payload: { job_id: "job-9" },
+    payload: { job_id: "job-9", status: "failed" },
     originSequenceNumber: null,
     relatedNodeId: null,
     relatedEdgeId: null,
@@ -91,7 +91,7 @@ describe("EventsViewPanel", () => {
 
     expect(screen.getByText("Node created")).toBeInTheDocument();
     expect(screen.queryByText("Plan sprint")).not.toBeInTheDocument();
-    expect(screen.queryByText("Job failed")).not.toBeInTheDocument();
+    expect(screen.queryByText("job-9 · failed")).not.toBeInTheDocument();
   });
 
   it("filters by actor and node scope", () => {
@@ -102,7 +102,7 @@ describe("EventsViewPanel", () => {
     });
 
     expect(screen.getByText("Node created")).toBeInTheDocument();
-    expect(screen.queryByText("Job failed")).not.toBeInTheDocument();
+    expect(screen.queryByText("job-9 · failed")).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText("Node ID"), {
       target: { value: "" },
@@ -112,7 +112,7 @@ describe("EventsViewPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "System" }));
     fireEvent.click(screen.getByRole("button", { name: "External" }));
 
-    expect(screen.getByText("Job failed")).toBeInTheDocument();
+    expect(screen.getByText("job-9 · failed")).toBeInTheDocument();
     expect(screen.queryByText("Node created")).not.toBeInTheDocument();
     expect(screen.queryByText("Plan sprint")).not.toBeInTheDocument();
   });

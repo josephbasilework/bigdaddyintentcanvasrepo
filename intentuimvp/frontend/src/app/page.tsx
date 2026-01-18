@@ -27,6 +27,7 @@ import {
   useCanvasStore,
   type CanvasEdgeRelationType,
   type CanvasNode,
+  type JobData,
 } from "@/state/canvasStore";
 import { useConversationStore } from "@/state/conversationStore";
 import { useViewFiltersStore } from "@/state/viewFiltersStore";
@@ -515,6 +516,8 @@ export default function Home() {
     (message: WebSocketMessage) => {
       const asRecord = (value: unknown): Record<string, unknown> =>
         value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+      const isRecord = (value: unknown): value is Record<string, unknown> =>
+        Boolean(value && typeof value === "object" && !Array.isArray(value));
 
       const asId = (value: unknown): string | null => {
         if (typeof value === "string") {
@@ -546,6 +549,123 @@ export default function Home() {
           z: asNumber(value.z ?? position.z),
         };
       };
+
+      const formatJobTypeLabel = (value: string) =>
+        value
+          .replace(/_/g, " ")
+          .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+          .replace(/\s+/g, " ")
+          .trim()
+          .replace(/\b\w/g, (char) => char.toUpperCase());
+
+      const getJobDescriptor = (payload: Record<string, unknown>): string | null => {
+        const data = asRecord(payload.data);
+        const candidate =
+          data.query ??
+          data.topic ??
+          data.goal ??
+          data.source_job_id ??
+          data.sourceJobId;
+        return typeof candidate === "string" && candidate.trim().length > 0
+          ? candidate.trim()
+          : null;
+      };
+
+      const findJobNode = (jobId: string): CanvasNode | undefined =>
+        nodes.find((node) => {
+          if (node.type !== "job") return false;
+          if (node.jobData?.jobId === jobId) return true;
+          const metadataJobId =
+            typeof node.metadata?.jobId === "string"
+              ? node.metadata.jobId
+              : typeof node.metadata?.job_id === "string"
+                ? node.metadata.job_id
+                : null;
+          return metadataJobId === jobId;
+        });
+
+      const resolveJobNodePosition = (): { x: number; y: number; z: number } => {
+        const anchor =
+          selectedNodeId !== null
+            ? nodes.find((node) => node.id === selectedNodeId)
+            : null;
+        if (anchor) {
+          return { x: anchor.x + 340, y: anchor.y, z: anchor.z };
+        }
+        const jobCount = nodes.filter((node) => node.type === "job").length;
+        return { x: 120, y: 80 + jobCount * 200, z: 0 };
+      };
+
+      if (message.type === "job.progress" && message.payload) {
+        const payload = asRecord(message.payload);
+        const jobId = asId(payload.job_id ?? payload.jobId);
+        if (!jobId) {
+          console.warn("DEBUG: job.progress missing job_id:", payload);
+          return;
+        }
+        const jobType =
+          (payload.job_type as string | undefined) ??
+          (payload.jobType as string | undefined) ??
+          "unknown";
+        const status =
+          (payload.status as string | undefined) ??
+          "queued";
+        const progressRaw =
+          asNumber(payload.progress_percent ?? payload.progressPercent) ?? 0;
+        const progressPercent = Math.min(100, Math.max(0, progressRaw));
+        const currentStep =
+          typeof payload.current_step === "string"
+            ? payload.current_step
+            : typeof payload.currentStep === "string"
+              ? payload.currentStep
+              : undefined;
+        const stepNumber = asNumber(payload.step_number ?? payload.stepNumber) ?? undefined;
+        const stepsTotal = asNumber(payload.steps_total ?? payload.stepsTotal) ?? undefined;
+        const data = isRecord(payload.data) ? payload.data : undefined;
+
+        const jobData: JobData = {
+          jobId,
+          jobType,
+          status,
+          progressPercent,
+          ...(currentStep ? { currentStep } : {}),
+          ...(stepNumber !== undefined ? { stepNumber } : {}),
+          ...(stepsTotal !== undefined ? { stepsTotal } : {}),
+          ...(data ? { data } : {}),
+        };
+
+        const existingNode = findJobNode(jobId);
+        if (existingNode) {
+          updateNode(
+            existingNode.id,
+            { jobData },
+            { source: "remote", log: false, recordHistory: false }
+          );
+          return;
+        }
+
+        const descriptor = getJobDescriptor(payload);
+        const titleBase = formatJobTypeLabel(jobType);
+        const title = descriptor ? `${titleBase}: ${descriptor}` : `${titleBase} job`;
+        const position = resolveJobNodePosition();
+        addNode(
+          {
+            id: `job-${jobId}`,
+            type: "job",
+            x: position.x,
+            y: position.y,
+            z: position.z,
+            title,
+            jobData,
+            metadata: {
+              jobId,
+              jobType,
+            },
+          },
+          { source: "remote", log: false }
+        );
+        return;
+      }
 
       if (message.type === "node.created" && message.payload) {
         const payload = asRecord(message.payload);

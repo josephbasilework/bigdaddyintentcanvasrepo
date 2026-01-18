@@ -115,6 +115,32 @@ const extractPayloadText = (payload: Record<string, unknown>): string | null => 
   return null;
 };
 
+const extractJobProgress = (
+  payload: Record<string, unknown>
+): { progress: number | null; status: string | null; step: string | null } => {
+  const progressValue =
+    typeof payload.progress_percent === "number"
+      ? payload.progress_percent
+      : typeof payload.progressPercent === "number"
+        ? payload.progressPercent
+        : null;
+  const status =
+    typeof payload.status === "string" ? payload.status : null;
+  const step =
+    typeof payload.current_step === "string"
+      ? payload.current_step
+      : typeof payload.currentStep === "string"
+        ? payload.currentStep
+        : null;
+  return {
+    progress: typeof progressValue === "number"
+      ? Math.min(100, Math.max(0, progressValue))
+      : null,
+    status,
+    step,
+  };
+};
+
 const extractRationale = (payload: Record<string, unknown>): string | null => {
   const candidates = [
     payload.reasoning,
@@ -132,6 +158,19 @@ const extractRationale = (payload: Record<string, unknown>): string | null => {
 
 const buildSummary = (turn: TurnResponse): string => {
   const payload = turn.payload ?? {};
+  if (JOB_TYPES.has(turn.type)) {
+    const jobId =
+      typeof payload.job_id === "string"
+        ? payload.job_id
+        : typeof payload.jobId === "string"
+          ? payload.jobId
+          : "job";
+    const { progress, status, step } = extractJobProgress(payload);
+    const statusText = status ? status.replace(/_/g, " ") : "queued";
+    const progressText = progress !== null ? ` ${Math.round(progress)}%` : "";
+    const stepText = step ? ` · ${step}` : "";
+    return `${jobId} · ${statusText}${progressText}${stepText}`.trim();
+  }
   if (turn.type === "user_input" && typeof payload.command === "string") {
     return payload.command;
   }
@@ -220,10 +259,14 @@ const TurnRow = ({
   const payload = turn.payload ?? {};
   const rationale = extractRationale(payload);
   const payloadText = extractPayloadText(payload);
+  const jobProgress = JOB_TYPES.has(turn.type) ? extractJobProgress(payload) : null;
   const formattedPayload =
     payload && Object.keys(payload).length > 0 ? JSON.stringify(payload, null, 2) : null;
   const responseType = getResponseType(turn);
   const responseLabel = responseType ? getResponseTypeLabel(responseType) : null;
+  const sequenceLabel = turn.sequenceNumber > 0 ? `#${turn.sequenceNumber}` : "LIVE";
+  const linkLabel =
+    turn.sequenceNumber > 0 ? `Jump to turn ${turn.sequenceNumber}` : "Jump to live update";
 
   return (
     <div
@@ -242,9 +285,9 @@ const TurnRow = ({
             type="button"
             className="wheel-turn-link"
             onClick={onLink}
-            aria-label={`Jump to turn ${turn.sequenceNumber}`}
+            aria-label={linkLabel}
           >
-            #{turn.sequenceNumber}
+            {sequenceLabel}
           </button>
         </div>
         <div className="wheel-turn-main">
@@ -279,6 +322,17 @@ const TurnRow = ({
           {isExpanded ? "Hide" : "Details"}
         </button>
       </div>
+      {jobProgress && jobProgress.progress !== null && (
+        <div className="wheel-job-progress">
+          <div className="wheel-job-progress-meta">
+            <span>Progress</span>
+            <span>{Math.round(jobProgress.progress)}%</span>
+          </div>
+          <div className="wheel-job-progress-bar">
+            <span style={{ width: `${jobProgress.progress}%` }} />
+          </div>
+        </div>
+      )}
       {isExpanded && (
         <div className="wheel-turn-details" id={`turn-details-${turn.id}`}>
           <div className="wheel-detail-grid">
@@ -1004,6 +1058,33 @@ export function WheelViewPanel({
           padding: 0.3rem 0.65rem;
           cursor: pointer;
           height: fit-content;
+        }
+
+        .wheel-job-progress {
+          margin-top: 0.6rem;
+          padding: 0 0.2rem 0.2rem;
+        }
+
+        .wheel-job-progress-meta {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.7rem;
+          color: #94a3b8;
+          margin-bottom: 0.25rem;
+        }
+
+        .wheel-job-progress-bar {
+          height: 6px;
+          background: rgba(148, 163, 184, 0.2);
+          border-radius: 999px;
+          overflow: hidden;
+        }
+
+        .wheel-job-progress-bar span {
+          display: block;
+          height: 100%;
+          background: linear-gradient(90deg, #22c55e, #38bdf8);
+          transition: width 0.25s ease-out;
         }
 
         .wheel-turn-details {

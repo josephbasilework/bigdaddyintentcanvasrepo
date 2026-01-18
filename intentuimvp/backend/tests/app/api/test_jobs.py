@@ -205,3 +205,142 @@ class TestPerspectiveAnalysisEndpoint:
                 workspace_id=None,
                 input_refs=None,
             )
+
+
+class TestJobRoutingEndpoint:
+    """Test suite for job routing endpoint."""
+
+    @staticmethod
+    def _build_job_dict(metadata: str | None = None) -> dict[str, object]:
+        return {
+            "id": 1,
+            "job_id": "job-123",
+            "user_id": "user-1",
+            "workspace_id": "ws-1",
+            "job_type": "deep_research",
+            "status": "in_progress",
+            "progress_percent": 50.0,
+            "current_step": "Working",
+            "steps_total": 4,
+            "step_number": 2,
+            "parameters": "{}",
+            "result_data": None,
+            "error_message": None,
+            "metadata": metadata,
+            "created_at": "2024-01-01T00:00:00Z",
+            "started_at": "2024-01-01T00:00:01Z",
+            "completed_at": None,
+            "updated_at": "2024-01-01T00:00:02Z",
+        }
+
+    def test_update_job_routing_success(self, client: testclient.TestClient) -> None:
+        """Test updating job routing destinations."""
+        mock_job = MagicMock()
+        mock_job.to_dict.return_value = self._build_job_dict()
+        mock_updated_job = MagicMock()
+        mock_updated_job.to_dict.return_value = self._build_job_dict(
+            metadata='{"result_destinations":[{"type":"canvas_node"}]}'
+        )
+
+        with patch.object(
+            jobs.progress_tracker,
+            "get_job",
+            new=AsyncMock(return_value=mock_job),
+        ), patch.object(
+            jobs.progress_tracker,
+            "update_metadata",
+            new=AsyncMock(return_value=mock_updated_job),
+        ) as mock_update:
+            response = client.post(
+                "/api/jobs/job-123/routing",
+                json={"result_destinations": [{"type": "canvas_node"}]},
+            )
+
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["job_id"] == "job-123"
+            assert payload["metadata"] is not None
+            mock_update.assert_awaited_once_with(
+                "job-123", {"result_destinations": [{"type": "canvas_node"}]}
+            )
+
+    def test_update_job_routing_single_destination(
+        self, client: testclient.TestClient
+    ) -> None:
+        """Test providing a single destination payload."""
+        mock_job = MagicMock()
+        mock_job.to_dict.return_value = self._build_job_dict()
+        mock_updated_job = MagicMock()
+        mock_updated_job.to_dict.return_value = self._build_job_dict(
+            metadata='{"result_destinations":[{"type":"user_storage"}]}'
+        )
+
+        with patch.object(
+            jobs.progress_tracker,
+            "get_job",
+            new=AsyncMock(return_value=mock_job),
+        ), patch.object(
+            jobs.progress_tracker,
+            "update_metadata",
+            new=AsyncMock(return_value=mock_updated_job),
+        ) as mock_update:
+            response = client.post(
+                "/api/jobs/job-123/routing",
+                json={"result_destination": {"type": "user_storage"}},
+            )
+
+            assert response.status_code == 200
+            mock_update.assert_awaited_once_with(
+                "job-123", {"result_destinations": [{"type": "user_storage"}]}
+            )
+
+    def test_update_job_routing_missing_job(
+        self, client: testclient.TestClient
+    ) -> None:
+        """Test job routing when job is missing."""
+        with patch.object(
+            jobs.progress_tracker, "get_job", new=AsyncMock(return_value=None)
+        ):
+            response = client.post(
+                "/api/jobs/job-123/routing",
+                json={"result_destinations": [{"type": "canvas_node"}]},
+            )
+
+            assert response.status_code == 404
+
+    def test_update_job_routing_no_destinations(
+        self, client: testclient.TestClient
+    ) -> None:
+        """Test job routing when no destinations provided."""
+        mock_job = MagicMock()
+        mock_job.to_dict.return_value = self._build_job_dict()
+
+        with patch.object(
+            jobs.progress_tracker, "get_job", new=AsyncMock(return_value=mock_job)
+        ):
+            response = client.post("/api/jobs/job-123/routing", json={})
+
+            assert response.status_code == 400
+
+    def test_update_job_routing_update_failure(
+        self, client: testclient.TestClient
+    ) -> None:
+        """Test job routing when metadata update fails."""
+        mock_job = MagicMock()
+        mock_job.to_dict.return_value = self._build_job_dict()
+
+        with patch.object(
+            jobs.progress_tracker,
+            "get_job",
+            new=AsyncMock(return_value=mock_job),
+        ), patch.object(
+            jobs.progress_tracker,
+            "update_metadata",
+            new=AsyncMock(return_value=None),
+        ):
+            response = client.post(
+                "/api/jobs/job-123/routing",
+                json={"result_destinations": [{"type": "canvas_node"}]},
+            )
+
+            assert response.status_code == 500

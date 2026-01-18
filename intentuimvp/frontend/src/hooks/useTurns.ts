@@ -25,6 +25,41 @@ const mergeTurns = (current: TurnResponse[], incoming: TurnResponse[]): TurnResp
   });
 };
 
+const JOB_EVENT_TYPE_MAP: Record<string, { type: string; eventType: string }> = {
+  job_started: { type: "job_started", eventType: "job.started" },
+  job_progress: { type: "job_progress", eventType: "job.progress" },
+  job_complete: { type: "job_completed", eventType: "job.completed" },
+  job_completed: { type: "job_completed", eventType: "job.completed" },
+  job_failed: { type: "job_failed", eventType: "job.failed" },
+  job_cancelled: { type: "job_failed", eventType: "job.failed" },
+  job_queued: { type: "job_started", eventType: "job.started" },
+};
+
+const formatJobSummary = (payload: Record<string, unknown>): string => {
+  const jobType = typeof payload.job_type === "string"
+    ? payload.job_type
+    : typeof payload.jobType === "string"
+      ? payload.jobType
+      : "job";
+  const status = typeof payload.status === "string" ? payload.status : "queued";
+  const progressValue =
+    typeof payload.progress_percent === "number"
+      ? payload.progress_percent
+      : typeof payload.progressPercent === "number"
+        ? payload.progressPercent
+        : null;
+  const currentStep =
+    typeof payload.current_step === "string"
+      ? payload.current_step
+      : typeof payload.currentStep === "string"
+        ? payload.currentStep
+        : null;
+  const progressText =
+    progressValue !== null ? ` ${Math.round(progressValue)}%` : "";
+  const stepText = currentStep ? ` · ${currentStep}` : "";
+  return `${jobType.replace(/_/g, " ")} ${status}${progressText}${stepText}`.trim();
+};
+
 export type UseTurnsOptions = {
   sessionIds: string[];
   enabled?: boolean;
@@ -84,6 +119,7 @@ export const useTurns = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastSequenceBySession = useRef<Map<string, number>>(new Map());
+  const jobTurnIdByJobId = useRef<Map<string, number>>(new Map());
   const sessionKeyRef = useRef(sessionKey);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -217,6 +253,51 @@ export const useTurns = ({
 
     const unsubscribe = client.onMessage((message) => {
       if (message.type !== "turn.created") {
+        if (message.type !== "job.progress") {
+          return;
+        }
+        if (normalizedSessionIds.length === 0) {
+          return;
+        }
+        const payload = (message.payload ?? {}) as Record<string, unknown>;
+        const jobIdRaw = payload.job_id ?? payload.jobId;
+        if (typeof jobIdRaw !== "string" || jobIdRaw.trim().length === 0) {
+          return;
+        }
+        let syntheticId = jobTurnIdByJobId.current.get(jobIdRaw);
+        if (!syntheticId) {
+          syntheticId = -(jobTurnIdByJobId.current.size + 1);
+          jobTurnIdByJobId.current.set(jobIdRaw, syntheticId);
+        }
+        const eventTypeRaw =
+          typeof payload.event_type === "string"
+            ? payload.event_type
+            : typeof payload.eventType === "string"
+              ? payload.eventType
+              : "job_progress";
+        const mapping =
+          JOB_EVENT_TYPE_MAP[eventTypeRaw] ?? JOB_EVENT_TYPE_MAP.job_progress;
+        const timestamp =
+          typeof payload.timestamp === "string"
+            ? payload.timestamp
+            : new Date().toISOString();
+        const sessionId = normalizedSessionIds[0];
+        const jobTurn: TurnResponse = {
+          id: syntheticId,
+          sessionId,
+          sequenceNumber: 0,
+          timestamp,
+          actor: "system",
+          type: mapping.type,
+          summary: formatJobSummary(payload),
+          payload,
+          eventType: mapping.eventType,
+          responseType: null,
+          originSequenceNumber: null,
+          relatedNodeId: null,
+          relatedEdgeId: null,
+        };
+        setTurns((current) => mergeTurns(current, [jobTurn]));
         return;
       }
       const payload = message.payload as TurnResponse;

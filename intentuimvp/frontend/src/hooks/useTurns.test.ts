@@ -2,14 +2,22 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useTurns } from "./useTurns";
 import type { TurnResponse } from "./turnTypes";
+import { getAGUIClient } from "../agui/client";
 
 const mockFetch = vi.fn();
 
 global.fetch = mockFetch as unknown as typeof fetch;
 
+vi.mock("../agui/client", () => ({
+  getAGUIClient: vi.fn(),
+}));
+
 describe("useTurns", () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    (getAGUIClient as ReturnType<typeof vi.fn>).mockReturnValue({
+      onMessage: vi.fn(() => () => undefined),
+    });
   });
 
   it("returns all turns in chronological order", async () => {
@@ -95,6 +103,65 @@ describe("useTurns", () => {
     expect(params.getAll("category")).toEqual(["crud"]);
     expect(params.getAll("event_type")).toEqual(["node.created"]);
     expect(params.get("related_node_id")).toBe("42");
+
+    unmount();
+  });
+
+  it("streams job progress updates from WebSocket", async () => {
+    const sessionIds = ["session-1"];
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ turns: [], count: 0 }),
+    });
+
+    let handler:
+      | ((message: { type: string; payload?: Record<string, unknown> }) => void)
+      | null = null;
+    (getAGUIClient as ReturnType<typeof vi.fn>).mockReturnValue({
+      onMessage: vi.fn(
+        (
+          cb: (message: { type: string; payload?: Record<string, unknown> }) => void
+        ) => {
+          handler = cb;
+          return () => {
+            handler = null;
+          };
+        }
+      ),
+    });
+
+    const { result, unmount } = renderHook(() =>
+      useTurns({
+        sessionIds,
+        enabled: true,
+        pollIntervalMs: 60000,
+      })
+    );
+
+    await waitFor(() => {
+      expect(handler).not.toBeNull();
+    });
+
+    handler?.({
+      type: "job.progress",
+      payload: {
+        job_id: "job-123",
+        job_type: "deep_research",
+        status: "in_progress",
+        progress_percent: 35,
+        current_step: "Synthesizing",
+      },
+    });
+
+    await waitFor(() => {
+      expect(result.current.turns.some((turn) => turn.type === "job_progress")).toBe(
+        true
+      );
+    });
+
+    const jobTurn = result.current.turns.find((turn) => turn.type === "job_progress");
+    expect(jobTurn?.eventType).toBe("job.progress");
+    expect(jobTurn?.sequenceNumber).toBe(0);
 
     unmount();
   });

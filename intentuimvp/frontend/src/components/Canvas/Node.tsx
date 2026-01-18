@@ -18,6 +18,7 @@ import { PlanNode } from "./PlanNode";
 import { DAGNode } from "./DAGNode";
 import { DashboardNode } from "./DashboardNode";
 import { JobNode } from "./JobNode";
+import { JobRoutingDialog } from "./JobRoutingDialog";
 import { DocumentBlock } from "./DocumentBlock";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { CalendarSyncDialog } from "./CalendarSyncDialog";
@@ -84,6 +85,7 @@ export function Node({
     updateNode,
     addNode,
   } = useCanvasStore();
+  const allNodes = useCanvasStore((state) => state.nodes);
   const isSelected = selectedNodeIds.length > 0
     ? selectedNodeIds.includes(node.id)
     : selectedNodeId === node.id;
@@ -124,6 +126,7 @@ export function Node({
     isFirstAction: boolean;
   } | null>(null);
   const [isPerspectiveRerunOpen, setIsPerspectiveRerunOpen] = useState(false);
+  const [isJobRoutingOpen, setIsJobRoutingOpen] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
   const focusFromPointerRef = useRef(false);
   const skipTitleCommitRef = useRef(false);
@@ -453,6 +456,46 @@ export function Node({
     console.log("Perspective analysis job created:", jobId);
     // Optionally add the new job node to the canvas here
   };
+
+  const originNodeId = useMemo(() => {
+    if (!node.jobData?.data || typeof node.jobData.data !== "object") {
+      return null;
+    }
+    const data = node.jobData.data as Record<string, unknown>;
+    const candidate =
+      data.origin_node_id ?? data.originNodeId ?? data.node_id ?? data.nodeId;
+    if (typeof candidate === "string") {
+      return candidate;
+    }
+    if (typeof candidate === "number" && Number.isFinite(candidate)) {
+      return String(candidate);
+    }
+    return null;
+  }, [node.jobData]);
+
+  const handleJobRoutingSaved = useCallback(
+    (destinations: Array<Record<string, unknown>>) => {
+      if (!node.jobData) {
+        return;
+      }
+      const existingData = node.jobData.data ?? {};
+      const nextData = {
+        ...existingData,
+        result_destinations: destinations,
+      };
+      updateNode(
+        node.id,
+        {
+          jobData: {
+            ...node.jobData,
+            data: nextData,
+          },
+        },
+        { source: "system", log: false, recordHistory: false }
+      );
+    },
+    [node, updateNode]
+  );
 
   const handleCalendarSyncConfirm = useCallback(
     async (selectedCandidates: CalendarSyncCandidate[]) => {
@@ -963,6 +1006,7 @@ export function Node({
                   ? handleRerunWithMoreCompute
                   : undefined
               }
+              onRouteResults={() => setIsJobRoutingOpen(true)}
             />
           ) : node.type === "document" ? (
             documentPreview ? (
@@ -1314,6 +1358,18 @@ export function Node({
         targetNodeId={node.id}
         onJobCreated={handlePerspectiveRerunCreated}
       />
+
+      {node.type === "job" && node.jobData && (
+        <JobRoutingDialog
+          isOpen={isJobRoutingOpen}
+          jobId={node.jobData.jobId}
+          jobType={node.jobData.jobType}
+          nodes={allNodes}
+          defaultTargetNodeId={originNodeId}
+          onClose={() => setIsJobRoutingOpen(false)}
+          onSaved={handleJobRoutingSaved}
+        />
+      )}
     </>
   );
 }

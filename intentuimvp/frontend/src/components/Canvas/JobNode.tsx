@@ -13,9 +13,14 @@ export interface JobNodeProps {
   onDoubleClick?: () => void;
   /** Callback when user wants to rerun with more compute (FR-012) */
   onRerunWithMoreCompute?: () => void;
+  /** Callback when user wants to configure result routing */
+  onRouteResults?: () => void;
 }
 
 type DisplayData = JobData | JobProgressData;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
 
 /**
  * Get job type from either camelCase or snake_case format
@@ -65,6 +70,96 @@ function getJobId(data: DisplayData): string {
   return (data as any).jobId ?? (data as any).job_id;
 }
 
+const extractResultPayload = (
+  data: Record<string, unknown> | null | undefined
+): Record<string, unknown> | null => {
+  if (!data) return null;
+  const result = data.result;
+  if (isRecord(result)) {
+    return result;
+  }
+  if (typeof result === "string" && result.trim().length > 0) {
+    return { summary: result.trim() };
+  }
+  return isRecord(data) ? data : null;
+};
+
+const getNestedText = (value: unknown): string | null => {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim();
+  }
+  return null;
+};
+
+const buildResultPreview = (
+  data: Record<string, unknown> | null | undefined,
+  jobType: string | undefined
+): string | null => {
+  const payload = extractResultPayload(data);
+  if (!payload) return null;
+
+  const summaryCandidates: Array<string | null> = [];
+  const jobTypeLower = jobType?.toLowerCase() ?? "";
+
+  if (jobTypeLower === "deep_research" || jobTypeLower === "synthesis") {
+    const synthesis = payload.judge_synthesis ?? payload.synthesis;
+    if (isRecord(synthesis)) {
+      summaryCandidates.push(getNestedText(synthesis.executive_summary));
+    }
+  }
+
+  if (jobTypeLower === "perspective_analysis") {
+    const evaluation = payload.evaluation;
+    if (isRecord(evaluation)) {
+      summaryCandidates.push(
+        getNestedText(evaluation.summary ?? evaluation.overall_assessment)
+      );
+    }
+  }
+
+  if (jobTypeLower === "planner") {
+    const planMeta = payload.plan_metadata;
+    if (isRecord(planMeta)) {
+      summaryCandidates.push(getNestedText(planMeta.goal));
+    }
+  }
+
+  if (jobTypeLower === "transcription") {
+    summaryCandidates.push(getNestedText(payload.transcription));
+  }
+
+  if (jobTypeLower === "export") {
+    const filePath = getNestedText(payload.file_path ?? payload.filePath);
+    if (filePath) {
+      summaryCandidates.push(`Exported to ${filePath}`);
+    }
+  }
+
+  if (jobTypeLower === "doc_generation") {
+    summaryCandidates.push(getNestedText(payload.content));
+  }
+
+  summaryCandidates.push(
+    getNestedText(payload.summary),
+    getNestedText(payload.message),
+    getNestedText(payload.content)
+  );
+
+  const preview = summaryCandidates.find((item) => item && item.length > 0);
+  if (!preview) {
+    const artifactId = payload.artifact_id ?? payload.artifactId;
+    if (typeof artifactId === "number" || typeof artifactId === "string") {
+      return `Artifact #${artifactId}`;
+    }
+    return null;
+  }
+
+  if (preview.length > 140) {
+    return `${preview.slice(0, 137).trimEnd()}...`;
+  }
+  return preview;
+};
+
 /**
  * JobNode component displays a job's status and progress on the canvas.
  *
@@ -83,6 +178,7 @@ export function JobNode({
   onSelect,
   onDoubleClick,
   onRerunWithMoreCompute,
+  onRouteResults,
 }: JobNodeProps) {
   const { jobData: progressData, isConnected } = useJobProgress(jobData.jobId);
 
@@ -94,6 +190,14 @@ export function JobNode({
   const stepNumber = getStepNumber(displayData);
   const stepsTotal = getStepsTotal(displayData);
   const jobType = getJobType(displayData);
+  const resultPreview = buildResultPreview(
+    isRecord((displayData as JobProgressData).data)
+      ? ((displayData as JobProgressData).data as Record<string, unknown>)
+      : isRecord((displayData as JobData).data)
+        ? ((displayData as JobData).data as Record<string, unknown>)
+        : null,
+    jobType
+  );
   const safeProgressPercent = Number.isFinite(progressPercent)
     ? Math.min(100, Math.max(0, progressPercent))
     : 0;
@@ -230,6 +334,18 @@ export function JobNode({
           </p>
         )}
 
+        {/* Result preview */}
+        {resultPreview && (
+          <div className="space-y-1">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-gray-400">
+              Result
+            </div>
+            <p className="text-xs text-gray-700 line-clamp-3">
+              {resultPreview}
+            </p>
+          </div>
+        )}
+
         {/* Job ID (for reference) */}
         <p className="text-xs text-gray-400 font-mono">
           ID: {getJobId(displayData).slice(0, 8)}...
@@ -260,6 +376,19 @@ export function JobNode({
               />
             </svg>
             Rerun with more compute
+          </button>
+        )}
+
+        {onRouteResults && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRouteResults();
+            }}
+            className="w-full mt-2 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-md hover:bg-amber-100 transition-colors"
+          >
+            Route results
           </button>
         )}
       </div>

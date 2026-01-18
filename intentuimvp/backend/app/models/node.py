@@ -29,6 +29,7 @@ class NodeType(str, Enum):
     PLAN = "plan"
     DAG = "dag"
     DASHBOARD = "dashboard"
+    JOB = "job"
     CRITIC = "critic"  # FR-012: Stores individual perspective evaluations
     SYNTHESIS = "synthesis"  # FR-012: Stores combined multi-perspective analysis
 

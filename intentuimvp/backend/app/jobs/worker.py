@@ -1633,6 +1633,7 @@ async def perspective_analysis_job(
         edge_ids: list[int] = []
         canvas_id: int | None = None
         artifact_id: int | None = None
+        custom_destinations: list[dict[str, Any]] = []
 
         if destinations:
             wants_canvas_node = any(
@@ -1850,6 +1851,8 @@ async def synthesis_job(
             node_id: int | None = None
             canvas_id: int | None = None
             custom_destinations: list[dict[str, Any]] = []
+            artifact_type = ArtifactType.JSON_EXPORT
+            artifact_type = ArtifactType.JSON_EXPORT
 
             wants_canvas_node = any(
                 _resolve_destination_type(dest) == ResultDestinationType.CANVAS_NODE
@@ -2024,7 +2027,113 @@ async def export_job(
             "format": export_format,
             "file_path": f"/exports/{workspace_id}.{export_format}",
             "timestamp": datetime.now(UTC).isoformat(),
+            "job_id": job_id,
         }
+
+        destinations = await _get_result_destinations(job_id)
+        if destinations:
+            origin_turn_id = await _get_origin_turn_id(job_id)
+            artifact_id: int | None = None
+            node_id: int | None = None
+            canvas_id: int | None = None
+            custom_destinations: list[dict[str, Any]] = []
+
+            wants_canvas_node = any(
+                _resolve_destination_type(dest) == ResultDestinationType.CANVAS_NODE
+                for dest in destinations
+            )
+            needs_artifact = any(
+                _resolve_destination_type(dest)
+                in {
+                    ResultDestinationType.CANVAS_NODE,
+                    ResultDestinationType.USER_STORAGE,
+                    ResultDestinationType.NODE_ARTIFACT,
+                }
+                for dest in destinations
+            )
+
+            if needs_artifact:
+                if export_format.lower() == "csv":
+                    artifact_type = ArtifactType.CSV_EXPORT
+                artifact_id, canvas_id = await _store_json_artifact(
+                    job_id=job_id,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    artifact_type=artifact_type,
+                    artifact_name=f"Workspace export: {workspace_id}",
+                    description=f"Exported workspace {workspace_id} ({export_format})",
+                    filename=f"workspace_export_{workspace_id}.{export_format}",
+                    payload=result_data,
+                    origin_turn_id=origin_turn_id,
+                )
+
+            if wants_canvas_node:
+                async with AsyncSessionLocal() as session:
+                    canvas = await _resolve_canvas(session, user_id, workspace_id)
+                    node_repo = NodeRepository(session)
+                    node_metadata = {
+                        "artifactId": artifact_id,
+                        "artifactType": artifact_type.value if needs_artifact else None,
+                        "jobId": job_id,
+                        "jobType": JobType.EXPORT.value,
+                        "workspaceId": workspace_id,
+                        "exportFormat": export_format,
+                        "filePath": result_data["file_path"],
+                    }
+                    node = await _create_node_with_position(
+                        node_repo=node_repo,
+                        canvas_id=canvas.id,
+                        label=_truncate_label(
+                            f"Export: {workspace_id}",
+                            limit=REPORT_LABEL_LIMIT,
+                        ),
+                        node_type=NodeType.DOCUMENT,
+                        base_position={"x": 0.0, "y": 0.0, "z": 0.0},
+                        node_metadata=node_metadata,
+                    )
+                    node_id = node.id
+                    canvas_id = canvas.id
+
+            result_text = (
+                f"Workspace {workspace_id} exported as {export_format}: "
+                f"{result_data['file_path']}"
+            )
+            for dest in destinations:
+                dest_type = _resolve_destination_type(dest)
+                if dest_type in {
+                    None,
+                    ResultDestinationType.CANVAS_NODE,
+                    ResultDestinationType.USER_STORAGE,
+                }:
+                    continue
+                if dest_type == ResultDestinationType.DOCUMENT_INSERT:
+                    target_id = _resolve_destination_node_id(dest, None)
+                    if target_id:
+                        mode = _normalize_insert_mode(
+                            dest.get("insert_mode") or dest.get("insertMode")
+                        )
+                        await _insert_result_into_document(target_id, result_text, mode)
+                elif dest_type == ResultDestinationType.NODE_ARTIFACT:
+                    target_id = _resolve_destination_node_id(dest, None)
+                    if target_id and artifact_id is not None:
+                        await _attach_artifact_to_node(
+                            target_id,
+                            artifact_id,
+                            artifact_type.value if needs_artifact else None,
+                            job_id,
+                            JobType.EXPORT,
+                        )
+                elif dest_type == ResultDestinationType.CUSTOM:
+                    custom_destinations.append(dest)
+
+            if artifact_id is not None:
+                result_data["artifact_id"] = artifact_id
+            if node_id is not None:
+                result_data["node_id"] = node_id
+            if canvas_id is not None:
+                result_data["canvas_id"] = canvas_id
+            if custom_destinations:
+                result_data["custom_destinations"] = custom_destinations
 
         logger.info(f"[{job_id}] Export completed")
 
@@ -2182,6 +2291,84 @@ async def transcription_job(
                 "artifact_id": stored.id,
                 "artifact_type": stored.artifact_type,
             }
+
+            destinations = await _get_result_destinations(job_id)
+            if destinations:
+                node_id: int | None = None
+                canvas_id = audio_block.canvas_id
+                custom_destinations: list[dict[str, Any]] = []
+
+                wants_canvas_node = any(
+                    _resolve_destination_type(dest) == ResultDestinationType.CANVAS_NODE
+                    for dest in destinations
+                )
+                if wants_canvas_node:
+                    async with AsyncSessionLocal() as session:
+                        canvas = await _resolve_canvas(
+                            session,
+                            user_id,
+                            workspace_id or str(canvas_id),
+                        )
+                        node_repo = NodeRepository(session)
+                        node_metadata = {
+                            "artifactId": stored.id,
+                            "artifactType": stored.artifact_type,
+                            "jobId": job_id,
+                            "jobType": JobType.TRANSCRIPTION.value,
+                            "audioBlockId": audio_block_id,
+                            "status": "transcribed",
+                        }
+                        node = await _create_node_with_position(
+                            node_repo=node_repo,
+                            canvas_id=canvas.id,
+                            label=_truncate_label(
+                                f"Transcription: {audio_block_id}",
+                                limit=REPORT_LABEL_LIMIT,
+                            ),
+                            node_type=NodeType.DOCUMENT,
+                            base_position={"x": 0.0, "y": 0.0, "z": 0.0},
+                            node_metadata=node_metadata,
+                        )
+                        node_id = node.id
+                        canvas_id = canvas.id
+
+                result_text = mock_transcription
+                for dest in destinations:
+                    dest_type = _resolve_destination_type(dest)
+                    if dest_type in {
+                        None,
+                        ResultDestinationType.CANVAS_NODE,
+                        ResultDestinationType.USER_STORAGE,
+                    }:
+                        continue
+                    if dest_type == ResultDestinationType.DOCUMENT_INSERT:
+                        target_id = _resolve_destination_node_id(dest, None)
+                        if target_id:
+                            mode = _normalize_insert_mode(
+                                dest.get("insert_mode") or dest.get("insertMode")
+                            )
+                            await _insert_result_into_document(
+                                target_id, result_text, mode
+                            )
+                    elif dest_type == ResultDestinationType.NODE_ARTIFACT:
+                        target_id = _resolve_destination_node_id(dest, None)
+                        if target_id:
+                            await _attach_artifact_to_node(
+                                target_id,
+                                stored.id,
+                                stored.artifact_type,
+                                job_id,
+                                JobType.TRANSCRIPTION,
+                            )
+                    elif dest_type == ResultDestinationType.CUSTOM:
+                        custom_destinations.append(dest)
+
+                if node_id is not None:
+                    result_data["node_id"] = node_id
+                if canvas_id is not None:
+                    result_data["canvas_id"] = canvas_id
+                if custom_destinations:
+                    result_data["custom_destinations"] = custom_destinations
 
             logger.info(f"[{job_id}] Transcription job completed successfully")
 
@@ -2633,6 +2820,78 @@ async def doc_generation_job(
             "generated_at": generated.generated_at,
             "job_id": job_id,
         }
+
+        destinations = await _get_result_destinations(job_id)
+        if destinations:
+            node_id: int | None = None
+            canvas_id: int | None = None
+            custom_destinations: list[dict[str, Any]] = []
+
+            wants_canvas_node = any(
+                _resolve_destination_type(dest) == ResultDestinationType.CANVAS_NODE
+                for dest in destinations
+            )
+            if wants_canvas_node:
+                async with AsyncSessionLocal() as session:
+                    canvas = await _resolve_canvas(session, user_id, workspace_id)
+                    node_repo = NodeRepository(session)
+                    node_metadata = {
+                        "artifactId": generated.artifact_id,
+                        "artifactType": ArtifactType.MARKDOWN_DOCUMENT.value,
+                        "jobId": job_id,
+                        "jobType": JobType.DOC_GENERATION.value,
+                        "sourceJobId": source_job_id,
+                        "docFormat": doc_format,
+                    }
+                    node = await _create_node_with_position(
+                        node_repo=node_repo,
+                        canvas_id=canvas.id,
+                        label=_truncate_label(
+                            f"Doc: {source_job_id}",
+                            limit=REPORT_LABEL_LIMIT,
+                        ),
+                        node_type=NodeType.DOCUMENT,
+                        base_position={"x": 0.0, "y": 0.0, "z": 0.0},
+                        node_metadata=node_metadata,
+                    )
+                    node_id = node.id
+                    canvas_id = canvas.id
+
+            result_text = generated.content
+            for dest in destinations:
+                dest_type = _resolve_destination_type(dest)
+                if dest_type in {
+                    None,
+                    ResultDestinationType.CANVAS_NODE,
+                    ResultDestinationType.USER_STORAGE,
+                }:
+                    continue
+                if dest_type == ResultDestinationType.DOCUMENT_INSERT:
+                    target_id = _resolve_destination_node_id(dest, None)
+                    if target_id:
+                        mode = _normalize_insert_mode(
+                            dest.get("insert_mode") or dest.get("insertMode")
+                        )
+                        await _insert_result_into_document(target_id, result_text, mode)
+                elif dest_type == ResultDestinationType.NODE_ARTIFACT:
+                    target_id = _resolve_destination_node_id(dest, None)
+                    if target_id and generated.artifact_id is not None:
+                        await _attach_artifact_to_node(
+                            target_id,
+                            generated.artifact_id,
+                            ArtifactType.MARKDOWN_DOCUMENT.value,
+                            job_id,
+                            JobType.DOC_GENERATION,
+                        )
+                elif dest_type == ResultDestinationType.CUSTOM:
+                    custom_destinations.append(dest)
+
+            if node_id is not None:
+                result_data["node_id"] = node_id
+            if canvas_id is not None:
+                result_data["canvas_id"] = canvas_id
+            if custom_destinations:
+                result_data["custom_destinations"] = custom_destinations
 
         logger.info(
             f"[{job_id}] Doc generation completed: artifact_id={generated.artifact_id}"

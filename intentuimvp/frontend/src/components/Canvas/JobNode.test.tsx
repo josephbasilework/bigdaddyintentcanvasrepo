@@ -342,4 +342,49 @@ describe("JobNode", () => {
       expect(screen.queryByRole("button", { name: /Rerun with more compute/i })).not.toBeInTheDocument();
     });
   });
+
+  describe("result preview and routing", () => {
+    it("should show result preview when summary is available", () => {
+      const jobData: JobData = {
+        ...mockJobData,
+        jobType: "synthesis",
+        data: {
+          result: {
+            summary: "Executive summary of results.",
+          },
+        },
+      };
+
+      render(<JobNode {...defaultProps} jobData={jobData} />);
+
+      expect(screen.getByText("Result")).toBeInTheDocument();
+      expect(screen.getByText("Executive summary of results.")).toBeInTheDocument();
+    });
+
+    it("should show route results button when configured", () => {
+      const onRouteResults = vi.fn();
+      render(<JobNode {...defaultProps} onRouteResults={onRouteResults} />);
+
+      const routeButton = screen.getByRole("button", { name: /Route results/i });
+      expect(routeButton).toBeInTheDocument();
+    });
+
+    it("should call onRouteResults without triggering selection", () => {
+      const onRouteResults = vi.fn();
+      const onSelect = vi.fn();
+      render(
+        <JobNode
+          {...defaultProps}
+          onRouteResults={onRouteResults}
+          onSelect={onSelect}
+        />
+      );
+
+      const routeButton = screen.getByRole("button", { name: /Route results/i });
+      routeButton.click();
+
+      expect(onRouteResults).toHaveBeenCalledTimes(1);
+      expect(onSelect).not.toHaveBeenCalled();
+    });
+  });
 });

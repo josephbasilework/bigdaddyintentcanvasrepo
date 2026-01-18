@@ -11,11 +11,11 @@ Provides REST endpoints for:
 
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
@@ -106,6 +106,33 @@ class RetryJobResponse(BaseModel):
     new_job_id: str | None = None
     retry_count: int
     message: str
+
+
+class ResultDestinationPayload(BaseModel):
+    """Result destination payload for routing job outputs."""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: Literal[
+        "canvas_node",
+        "document_insert",
+        "user_storage",
+        "node_artifact",
+        "custom",
+    ]
+    node_id: int | str | None = None
+    origin_node_id: int | str | None = None
+    target_node_id: int | str | None = None
+    document_node_id: int | str | None = None
+    insert_mode: Literal["append", "prepend", "replace"] | None = None
+    label: str | None = None
+
+
+class JobRoutingUpdateRequest(BaseModel):
+    """Request model for updating job result routing."""
+
+    result_destination: ResultDestinationPayload | None = None
+    result_destinations: list[ResultDestinationPayload] | None = None
 
 
 @router.get("/{job_id}", response_model=JobResponse)
@@ -218,6 +245,50 @@ async def retry_job_endpoint(job_id: str) -> RetryJobResponse:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+def _normalize_result_destinations(
+    request: JobRoutingUpdateRequest,
+) -> list[dict[str, Any]] | None:
+    if request.result_destinations is not None:
+        return [
+            dest.model_dump(exclude_none=True)
+            for dest in request.result_destinations
+        ]
+    if request.result_destination is not None:
+        return [request.result_destination.model_dump(exclude_none=True)]
+    return None
+
+
+@router.post("/{job_id}/routing", response_model=JobResponse)
+async def update_job_routing(
+    job_id: str,
+    request: JobRoutingUpdateRequest,
+) -> JobResponse:
+    """Update result routing destinations for a job."""
+    job = await progress_tracker.get_job(job_id)
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Job {job_id} not found",
+        )
+
+    destinations = _normalize_result_destinations(request)
+    if destinations is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No result destinations provided",
+        )
+
+    updates: dict[str, Any] = {"result_destinations": destinations}
+    updated = await progress_tracker.update_metadata(job_id, updates)
+    if not updated:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update job metadata",
+        )
+
+    return JobResponse.from_job(updated)
 
 
 @router.get("/stats/queue")

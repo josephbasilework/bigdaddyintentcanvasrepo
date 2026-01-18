@@ -74,6 +74,27 @@ def _parse_job_metadata_json(value: str | None) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _update_job_metadata_sync(job_id: str, updates: dict[str, Any]) -> Job | None:
+    """Synchronous helper to merge updates into job metadata."""
+    db = SessionLocal()
+    try:
+        job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
+        if not job:
+            return None
+        metadata = _parse_job_metadata_json(job.job_metadata)
+        for key, value in updates.items():
+            if value is None:
+                metadata.pop(key, None)
+            else:
+                metadata[key] = value
+        job.job_metadata = json.dumps(metadata, ensure_ascii=True) if metadata else None
+        db.commit()
+        db.refresh(job)
+        return job
+    finally:
+        db.close()
+
+
 def _create_job_sync(
     job_id: str,
     job_type: str,
@@ -727,6 +748,10 @@ class JobProgressTracker:
     async def get_job(self, job_id: str) -> Job | None:
         """Get job by ID."""
         return await asyncio.to_thread(_get_job_sync, job_id)
+
+    async def update_metadata(self, job_id: str, updates: dict[str, Any]) -> Job | None:
+        """Update job metadata."""
+        return await asyncio.to_thread(_update_job_metadata_sync, job_id, updates)
 
     async def get_user_jobs(
         self,

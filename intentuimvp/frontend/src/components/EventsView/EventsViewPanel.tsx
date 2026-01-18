@@ -200,8 +200,47 @@ const extractPayloadText = (payload: Record<string, unknown>): string | null => 
   return null;
 };
 
+const extractJobProgress = (
+  payload: Record<string, unknown>
+): { progress: number | null; status: string | null; step: string | null } => {
+  const progressValue =
+    typeof payload.progress_percent === "number"
+      ? payload.progress_percent
+      : typeof payload.progressPercent === "number"
+        ? payload.progressPercent
+        : null;
+  const status =
+    typeof payload.status === "string" ? payload.status : null;
+  const step =
+    typeof payload.current_step === "string"
+      ? payload.current_step
+      : typeof payload.currentStep === "string"
+        ? payload.currentStep
+        : null;
+  return {
+    progress: typeof progressValue === "number"
+      ? Math.min(100, Math.max(0, progressValue))
+      : null,
+    status,
+    step,
+  };
+};
+
 const buildSummary = (turn: TurnResponse): string => {
   const payload = turn.payload ?? {};
+  if (JOB_TYPES.has(turn.type)) {
+    const jobId =
+      typeof payload.job_id === "string"
+        ? payload.job_id
+        : typeof payload.jobId === "string"
+          ? payload.jobId
+          : "job";
+    const { progress, status, step } = extractJobProgress(payload);
+    const statusText = status ? status.replace(/_/g, " ") : "queued";
+    const progressText = progress !== null ? ` ${Math.round(progress)}%` : "";
+    const stepText = step ? ` · ${step}` : "";
+    return `${jobId} · ${statusText}${progressText}${stepText}`.trim();
+  }
   if (turn.type === "user_input" && typeof payload.command === "string") {
     return payload.command;
   }
@@ -522,6 +561,11 @@ export function EventsViewPanel({
                   : null;
               const badgeTone = getBadgeTone(row.eventType);
               const entityLabel = row.entity ? `${row.entity.label}:${row.entity.id}` : "--";
+              const jobProgress = JOB_TYPES.has(row.turn.type)
+                ? extractJobProgress(payload)
+                : null;
+              const sequenceLabel =
+                row.turn.sequenceNumber > 0 ? `#${row.turn.sequenceNumber}` : "LIVE";
 
               return (
                 <div key={row.id} className="events-row" role="listitem">
@@ -531,6 +575,17 @@ export function EventsViewPanel({
                         {row.eventType}
                       </span>
                       <div className="events-summary">{row.summary}</div>
+                      {jobProgress && jobProgress.progress !== null && (
+                        <div className="events-progress">
+                          <div className="events-progress-meta">
+                            <span>Progress</span>
+                            <span>{Math.round(jobProgress.progress)}%</span>
+                          </div>
+                          <div className="events-progress-bar">
+                            <span style={{ width: `${jobProgress.progress}%` }} />
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className="events-cell events-cell-actor">
                       {ACTOR_LABELS[row.actor]}
@@ -546,7 +601,7 @@ export function EventsViewPanel({
                         onClick={() => toggleExpanded(row.id)}
                         aria-expanded={isExpanded}
                         aria-controls={`event-details-${row.id}`}
-                        aria-label={`Toggle details for ${row.eventType} event ${row.turn.sequenceNumber}`}
+                        aria-label={`Toggle details for ${row.eventType} event ${sequenceLabel}`}
                       >
                         {isExpanded ? "Hide" : "Details"}
                       </button>
@@ -561,7 +616,7 @@ export function EventsViewPanel({
                         </div>
                         <div className="events-detail">
                           <div className="events-detail-label">Sequence</div>
-                          <div className="events-detail-value">#{row.turn.sequenceNumber}</div>
+                          <div className="events-detail-value">{sequenceLabel}</div>
                         </div>
                         <div className="events-detail">
                           <div className="events-detail-label">Actor</div>
@@ -850,6 +905,34 @@ export function EventsViewPanel({
           font-size: 0.85rem;
           color: #e2e8f0;
           line-height: 1.45;
+        }
+
+        .events-progress {
+          margin-top: 0.4rem;
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+        }
+
+        .events-progress-meta {
+          display: flex;
+          justify-content: space-between;
+          font-size: 0.7rem;
+          color: #94a3b8;
+        }
+
+        .events-progress-bar {
+          height: 6px;
+          background: rgba(148, 163, 184, 0.2);
+          border-radius: 999px;
+          overflow: hidden;
+        }
+
+        .events-progress-bar span {
+          display: block;
+          height: 100%;
+          background: linear-gradient(90deg, #f97316, #38bdf8);
+          transition: width 0.25s ease-out;
         }
 
         .events-cell-entity {
