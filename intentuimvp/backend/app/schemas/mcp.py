@@ -4,6 +4,124 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+# -----------------------------------------------------------------------------
+# Capability Registry Schemas
+# -----------------------------------------------------------------------------
+
+
+class CapabilityResponse(BaseModel):
+    """Response schema for a single capability."""
+
+    id: str = Field(..., description="Unique capability ID (server:type:name)")
+    name: str = Field(..., description="Capability name")
+    type: str = Field(..., description="Capability type (tool/resource/prompt)")
+    server_id: str = Field(..., description="Server providing this capability")
+    description: str | None = Field(None, description="Capability description")
+    category: str | None = Field(None, description="Security category")
+    security_level: str = Field(..., description="Security level (allowed/requires_confirm/blocked)")
+    server_name: str | None = Field(None, description="Human-readable server name")
+    server_enabled: bool = Field(..., description="Whether server is enabled")
+    input_schema: dict | None = Field(None, description="Input schema for tools")
+    uri: str | None = Field(None, description="URI for resources")
+    mime_type: str | None = Field(None, description="MIME type for resources")
+    arguments: list[dict] = Field(default_factory=list, description="Arguments for prompts")
+    usage_count: int = Field(default=0, description="Usage count")
+    last_used: str | None = Field(None, description="Last used timestamp")
+
+
+class CapabilityListResponse(BaseModel):
+    """Response for listing capabilities."""
+
+    capabilities: list[CapabilityResponse] = Field(..., description="List of capabilities")
+    total: int = Field(..., description="Total number of capabilities")
+
+
+class CapabilitySearchRequest(BaseModel):
+    """Request for searching capabilities."""
+
+    query: str | None = Field(None, description="Text search query")
+    type: str | None = Field(None, description="Filter by type (tool/resource/prompt)")
+    security_level: str | None = Field(None, description="Filter by security level")
+    category: str | None = Field(None, description="Filter by category")
+    server_id: str | None = Field(None, description="Filter by server")
+    include_disabled: bool = Field(default=False, description="Include disabled servers")
+
+
+class CapabilityStatsResponse(BaseModel):
+    """Response for capability statistics."""
+
+    total_capabilities: int = Field(..., description="Total capabilities")
+    total_tools: int = Field(..., description="Total tools")
+    total_resources: int = Field(..., description="Total resources")
+    total_prompts: int = Field(..., description="Total prompts")
+    total_servers: int = Field(..., description="Total servers")
+    enabled_servers: int = Field(..., description="Enabled servers")
+    by_security_level: dict[str, int] = Field(..., description="Count by security level")
+    by_category: dict[str, int] = Field(..., description="Count by category")
+    by_server: dict[str, int] = Field(..., description="Count by server")
+
+
+class UnavailableCapabilityResponse(BaseModel):
+    """Response for unavailable capability with reason."""
+
+    capability: CapabilityResponse = Field(..., description="The capability")
+    reason: str = Field(..., description="Reason for unavailability")
+    can_be_enabled: bool = Field(..., description="Whether it can be enabled")
+    how_to_enable: str | None = Field(None, description="Instructions to enable")
+
+
+class UnavailableCapabilitiesResponse(BaseModel):
+    """Response for listing unavailable capabilities."""
+
+    unavailable: list[UnavailableCapabilityResponse] = Field(
+        ..., description="List of unavailable capabilities"
+    )
+
+
+class CanPerformActionRequest(BaseModel):
+    """Request to check if an action can be performed."""
+
+    action_description: str = Field(..., description="Natural language description of action")
+
+
+class CanPerformActionResponse(BaseModel):
+    """Response for action possibility check."""
+
+    possible: bool = Field(..., description="Whether the action is possible")
+    capabilities: list[CapabilityResponse] = Field(
+        default_factory=list, description="Matching capabilities"
+    )
+    blocked_reason: str | None = Field(None, description="Reason if not possible")
+    blocked_capabilities: list[CapabilityResponse] = Field(
+        default_factory=list, description="Blocked capabilities that match"
+    )
+
+
+class IntegrationStatusResponse(BaseModel):
+    """Response for integration status."""
+
+    server_id: str
+    name: str
+    description: str | None = None
+    enabled: bool
+    version: str | None = None
+    capabilities: dict[str, int] = Field(..., description="Capability counts")
+    rate_limit: int
+    created_at: str
+    updated_at: str
+
+
+class IntegrationStatusListResponse(BaseModel):
+    """Response for listing integration statuses."""
+
+    integrations: list[IntegrationStatusResponse]
+
+
+class UsageStatsResponse(BaseModel):
+    """Response for usage statistics."""
+
+    usage: dict[str, dict[str, Any]] = Field(..., description="Usage by server:tool key")
+
 
 class MCPServerRegisterRequest(BaseModel):
     """Request body for registering an MCP server."""
