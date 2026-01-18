@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.agents.intent_decipherer import IntentDeciphererAgent, get_intent_decipherer
 from app.api.assumption_store import get_assumption_store
-from app.context.models import ContextPayload, parse_assumption
+from app.context.assembly import get_context_assembler
+from app.context.models import ContextPayload, SelectionScope, parse_assumption
 from app.context.router import ContextRouter, get_context_router
 from app.database import AsyncSessionLocal, get_db
 from app.models.intent import AssumptionResolutionDB
@@ -45,6 +46,19 @@ def _validate_text(text: str) -> None:
             status_code=400,
             detail=f"Text exceeds maximum length of {max_text_length} characters",
         )
+
+
+def _validate_preview_text(text: str | None) -> str:
+    """Validate preview text payloads (allowing empty input)."""
+    if text is None:
+        return ""
+    max_text_length = 10000
+    if len(text) > max_text_length:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Text exceeds maximum length of {max_text_length} characters",
+        )
+    return text
 
 
 def _raise_internal_error(message: str, error: Exception) -> NoReturn:
@@ -81,6 +95,75 @@ class ContextResponse(BaseModel):
     status: str
     session_id: str | None = None
     should_auto_execute: bool = False
+
+
+class ContextPreviewRequest(BaseModel):
+    """Request model for context preview."""
+
+    text: str | None = None
+    attachments: list[str] | None = None
+    selection: SelectionScope | None = None
+    session_id: str | None = None
+    workspace_id: int | str | None = None
+
+
+class ContextNodeResponse(BaseModel):
+    """Response model for a scored context node."""
+
+    id: str
+    title: str
+    node_type: str
+    score: float
+    reasons: list[str]
+    is_primary: bool
+    similarity: float | None = None
+    recency: float | None = None
+    reason_scores: dict[str, float] | None = None
+    content: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class ContextTurnResponse(BaseModel):
+    """Response model for a scored context turn."""
+
+    id: int
+    sequence_number: int
+    summary: str
+    actor: str
+    turn_type: str
+    timestamp: str
+    score: float
+    reasons: list[str]
+    similarity: float | None = None
+    recency: float | None = None
+    reason_scores: dict[str, float] | None = None
+
+
+class ContextAttachmentResponse(BaseModel):
+    """Response model for attachment metadata in context preview."""
+
+    id: str
+    filename: str
+    attachment_type: str
+    mime_type: str
+    size_bytes: int
+    text_content: str | None = None
+    transcription: str | None = None
+    description: str | None = None
+    status: str | None = None
+
+
+class ContextPreviewResponse(BaseModel):
+    """Response model for context preview."""
+
+    input_text: str
+    prompt: str
+    nodes: list[ContextNodeResponse]
+    turns: list[ContextTurnResponse]
+    attachments: list[ContextAttachmentResponse]
+    selection: dict[str, Any] | None = None
+    explicit_node_refs: list[str]
+    explicit_turn_refs: list[int]
 
 
 class AssumptionGenerationRequest(BaseModel):
@@ -239,6 +322,30 @@ async def submit_context(payload: ContextPayload) -> ContextResponse:
     except Exception as e:
         logger.error(f"Context routing failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal routing error") from e
+
+
+@router.post("/api/context/preview", response_model=ContextPreviewResponse)
+async def preview_context(request: ContextPreviewRequest) -> ContextPreviewResponse:
+    """Preview the assembled context window with explainability data."""
+    try:
+        text = _validate_preview_text(request.text)
+        payload = ContextPayload(
+            text=text,
+            attachments=request.attachments,
+            selection=request.selection,
+        )
+        assembler = get_context_assembler()
+        window = await assembler.assemble(
+            payload,
+            user_id="default_user",
+            session_id=request.session_id,
+            workspace_id=request.workspace_id,
+        )
+        return ContextPreviewResponse(**window.to_dict())
+    except HTTPException:
+        raise
+    except Exception as e:
+        _raise_internal_error("Failed to assemble context preview", e)
 
 
 @router.post("/api/context/assumptions", response_model=AssumptionSetResponse)

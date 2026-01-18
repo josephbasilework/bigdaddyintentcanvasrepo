@@ -257,6 +257,34 @@ class TestContextEndpoint:
         assert data["handler"] == "clear_handler"
         assert data["confidence"] == 1.0
 
+    def test_preview_context_returns_nodes(self, client: testclient.TestClient) -> None:
+        """Previewing context returns scored nodes with reasons."""
+        response = client.post(
+            "/api/context/preview",
+            json={
+                "text": "plan next steps",
+                "selection": {
+                    "selected_nodes": ["node-1"],
+                    "selected_edges": [],
+                    "node_context": [
+                        {
+                            "id": "node-1",
+                            "title": "alpha",
+                            "node_type": "text",
+                            "content": "alpha details",
+                        }
+                    ],
+                    "primary_node_id": "node-1",
+                },
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["input_text"] == "plan next steps"
+        assert data["nodes"]
+        assert data["nodes"][0]["id"] == "node-1"
+        assert "selected" in data["nodes"][0]["reasons"]
+
 
 class TestAssumptionEndpoints:
     """Test suite for assumption generation and resolution endpoints."""

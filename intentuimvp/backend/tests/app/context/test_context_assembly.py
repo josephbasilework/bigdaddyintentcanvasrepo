@@ -8,6 +8,7 @@ from app.context.assembly import ContextAssembler, ContextAssemblyConfig
 from app.context.models import ContextPayload, NodeContext, SelectionScope
 from app.database import AsyncSessionLocal
 from app.models.canvas import Canvas
+from app.models.edge import Edge, RelationType
 from app.models.node import Node, NodeType
 from app.models.session import WorkspaceSession
 from app.models.turn import TurnActor, TurnType
@@ -171,3 +172,74 @@ async def test_context_assembly_resolves_handle_and_named_entity_refs() -> None:
     plan_context = next(node for node in window.nodes if node.id == str(plan_node.id))
     assert "explicit_reference" in alpha_context.reasons
     assert "explicit_reference" in plan_context.reasons
+
+
+@pytest.mark.asyncio
+async def test_context_assembly_expands_adjacent_nodes() -> None:
+    session_id = "session-ctx-expand"
+    async with AsyncSessionLocal() as session:
+        canvas = Canvas(user_id="user", name="Expand Canvas")
+        session.add(canvas)
+        await session.commit()
+        await session.refresh(canvas)
+
+        workspace_session = WorkspaceSession(
+            session_id=session_id,
+            workspace_id=canvas.id,
+            user_id="user",
+        )
+        session.add(workspace_session)
+        await session.commit()
+
+        root_node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.TEXT,
+            label="Root Node",
+            position=json.dumps({"x": 0, "y": 0, "z": 0}),
+            node_metadata=json.dumps({"content": "Root content"}),
+        )
+        neighbor_node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.TEXT,
+            label="Neighbor Node",
+            position=json.dumps({"x": 120, "y": 50, "z": 0}),
+            node_metadata=json.dumps({"content": "Neighbor content"}),
+        )
+        session.add_all([root_node, neighbor_node])
+        await session.commit()
+        await session.refresh(root_node)
+        await session.refresh(neighbor_node)
+
+        edge = Edge(
+            canvas_id=canvas.id,
+            from_node_id=root_node.id,
+            to_node_id=neighbor_node.id,
+            relation_type=RelationType.REFERENCES,
+        )
+        session.add(edge)
+        await session.commit()
+
+    selection = SelectionScope(
+        selected_nodes=[str(root_node.id)],
+        node_context=[
+            NodeContext(
+                id=str(root_node.id),
+                title=root_node.label,
+                node_type="text",
+            )
+        ],
+        primary_node_id=str(root_node.id),
+    )
+    payload = ContextPayload(text="Review adjacent notes", selection=selection)
+
+    assembler = ContextAssembler(
+        config=ContextAssemblyConfig(max_nodes=3, max_turns=0, expansion_limit=4),
+        embedding_provider=None,
+        intent_memory_store=None,
+    )
+    window = await assembler.assemble(payload, user_id="user", session_id=session_id)
+
+    node_ids = {node.id for node in window.nodes}
+    assert str(neighbor_node.id) in node_ids
+    expanded_node = next(node for node in window.nodes if node.id == str(neighbor_node.id))
+    assert "expanded" in expanded_node.reasons

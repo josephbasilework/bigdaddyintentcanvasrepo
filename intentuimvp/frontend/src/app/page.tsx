@@ -8,6 +8,7 @@ import { WheelViewPanel } from "@/components/WheelView";
 import { MCPInstallPanel } from "@/components/MCP";
 import { AssumptionsPanel } from "@/components/Assumptions";
 import { OfflineQueuePanel } from "@/components/OfflineQueue/OfflineQueuePanel";
+import { ContextPreviewPanel } from "@/components/ContextPreview";
 import type {
   Assumption,
   AssumptionSet,
@@ -23,8 +24,10 @@ import { useViewFiltersStore } from "@/state/viewFiltersStore";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useChatTurns } from "@/hooks/useChatTurns";
 import { useTurns } from "@/hooks/useTurns";
+import { useContextPreview } from "@/hooks/useContextPreview";
 import { useWebSocketEnhanced, type WebSocketMessage } from "@/hooks/useWebSocketEnhanced";
 import { createAGUIClient } from "@/agui/client";
+import type { NodeContext, SelectionScope } from "@/types/contextPreview";
 import {
   type AttachmentItem,
   type AttachmentListResponse,
@@ -53,25 +56,6 @@ type CommandSubmissionLog = {
   id: string;
   text: string;
   attachments: AttachmentItem[];
-};
-
-/**
- * Node context for contextual conversation.
- * When a node is selected, its content becomes primary context for agent interaction.
- */
-type NodeContext = {
-  id: string;
-  title: string;
-  node_type: string;
-  content?: string;
-  metadata?: Record<string, unknown>;
-};
-
-type SelectionScope = {
-  selected_nodes: string[];
-  selected_edges: string[];
-  node_context?: NodeContext[];
-  primary_node_id?: string;
 };
 
 type WorkflowRound = IntentWorkflowRound & {
@@ -378,8 +362,9 @@ export default function Home() {
   const [routingError, setRoutingError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState("Ready for commands.");
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
+  const [draftCommand, setDraftCommand] = useState("");
   const [activeView, setActiveView] = useState<
-    "chat" | "wheel" | "events" | "mcp" | null
+    "chat" | "wheel" | "events" | "mcp" | "context" | null
   >(null);
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
@@ -397,15 +382,31 @@ export default function Home() {
   const conversationScope = useConversationStore((state) => state.scope);
   const setNodeScope = useConversationStore((state) => state.setNodeScope);
   const setGlobalScope = useConversationStore((state) => state.setGlobalScope);
-  const selectionIds = getSelectionIds(selectedNodeIds, selectedNodeId);
-  const selectionItems = getSelectionScopeItems(selectionIds, nodes);
-  const nodeContext = buildNodeContext(selectionIds, nodes);
-  const selectionScope: SelectionScope = {
-    selected_nodes: selectionIds,
-    selected_edges: [],
-    node_context: nodeContext.length > 0 ? nodeContext : undefined,
-    primary_node_id: selectedNodeId ?? undefined,
-  };
+  const selectionIds = useMemo(
+    () => getSelectionIds(selectedNodeIds, selectedNodeId),
+    [selectedNodeIds, selectedNodeId]
+  );
+  const selectionItems = useMemo(
+    () => getSelectionScopeItems(selectionIds, nodes),
+    [selectionIds, nodes]
+  );
+  const nodeContext = useMemo(
+    () => buildNodeContext(selectionIds, nodes),
+    [selectionIds, nodes]
+  );
+  const selectionScope = useMemo<SelectionScope>(
+    () => ({
+      selected_nodes: selectionIds,
+      selected_edges: [],
+      node_context: nodeContext.length > 0 ? nodeContext : undefined,
+      primary_node_id: selectedNodeId ?? undefined,
+    }),
+    [selectionIds, nodeContext, selectedNodeId]
+  );
+  const previewAttachmentIds = useMemo(
+    () => attachments.filter((item) => item.status === "ready").map((item) => item.id),
+    [attachments]
+  );
 
   // Sync conversation scope with primary selected node
   useEffect(() => {
@@ -752,6 +753,7 @@ export default function Home() {
   const isWheelOpen = activeView === "wheel";
   const isEventsOpen = activeView === "events";
   const isMcpOpen = activeView === "mcp";
+  const isContextOpen = activeView === "context";
 
   const wheelFilters = useViewFiltersStore((state) => state.wheel);
   const eventsFilters = useViewFiltersStore((state) => state.events);
@@ -799,6 +801,19 @@ export default function Home() {
       eventTypes: eventsFilters.typeFilters,
       relatedNodeId: parsedEventNodeId,
     },
+  });
+
+  const {
+    preview: contextPreview,
+    isLoading: isContextLoading,
+    error: contextError,
+    refresh: refreshContextPreview,
+  } = useContextPreview({
+    enabled: isContextOpen,
+    text: draftCommand,
+    attachments: previewAttachmentIds,
+    selection: selectionScope,
+    sessionId: wsSessionId,
   });
 
   useEffect(() => {
@@ -1225,7 +1240,9 @@ export default function Home() {
     setActiveRoundId(null);
   };
 
-  const handleViewToggle = (view: "chat" | "wheel" | "events" | "mcp") => {
+  const handleViewToggle = (
+    view: "chat" | "wheel" | "events" | "mcp" | "context"
+  ) => {
     setActiveView((prev) => (prev === view ? null : view));
   };
 
@@ -1248,6 +1265,16 @@ export default function Home() {
   ) : null;
 
   const mcpPanel = isMcpOpen ? <MCPInstallPanel id="mcp-install-panel" /> : null;
+
+  const contextPanel = isContextOpen ? (
+    <ContextPreviewPanel
+      id="context-preview-panel"
+      preview={contextPreview}
+      isLoading={isContextLoading}
+      error={contextError}
+      onRefresh={refreshContextPreview}
+    />
+  ) : null;
 
   const wheelPanel = isWheelOpen ? (
     <WheelViewPanel
@@ -1283,11 +1310,13 @@ export default function Home() {
     ? chatPanel
     : isMcpOpen
       ? mcpPanel
-      : isWheelOpen
-        ? wheelPanel
-        : isEventsOpen
-          ? eventsPanel
-          : null;
+      : isContextOpen
+        ? contextPanel
+        : isWheelOpen
+          ? wheelPanel
+          : isEventsOpen
+            ? eventsPanel
+            : null;
 
   const panelContent =
     workflowPanel || viewPanel ? (
@@ -1355,6 +1384,7 @@ export default function Home() {
       <FloatingInput
         onSubmit={handleCommandSubmit}
         onFilesDrop={handleFilesDrop}
+        onValueChange={setDraftCommand}
         attachments={attachments}
         selection={selectionItems}
         onRemoveAttachment={handleRemoveAttachment}
@@ -1375,6 +1405,12 @@ export default function Home() {
             isOpen: isMcpOpen,
             onToggle: () => handleViewToggle("mcp"),
             ariaControls: "mcp-install-panel",
+          },
+          {
+            label: "Context",
+            isOpen: isContextOpen,
+            onToggle: () => handleViewToggle("context"),
+            ariaControls: "context-preview-panel",
           },
           {
             label: "Wheel",

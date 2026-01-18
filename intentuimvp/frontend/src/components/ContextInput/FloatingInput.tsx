@@ -12,6 +12,8 @@ interface FloatingInputProps {
   onSubmit?: (value: string) => void;
   /** Callback when files are dropped on the input */
   onFilesDrop?: (files: File[]) => void;
+  /** Callback when input value changes */
+  onValueChange?: (value: string) => void;
   /** Optional list of attachments to display */
   attachments?: AttachmentItem[];
   /** Optional list of selection scope labels to display */
@@ -111,6 +113,7 @@ const SLASH_TEMPLATES: SlashTemplate[] = [
 export function FloatingInput({
   onSubmit,
   onFilesDrop,
+  onValueChange,
   attachments,
   selection,
   onRemoveAttachment,
@@ -171,12 +174,14 @@ export function FloatingInput({
     if (sanitized) {
       onSubmit?.(sanitized);
       setValue("");
+      onValueChange?.("");
     }
   };
 
   const applyTemplate = (template: SlashTemplate) => {
     const nextValue = template.stub.slice(0, maxLength);
     setValue(nextValue);
+    onValueChange?.(nextValue);
     inputRef.current?.focus();
   };
 
@@ -429,7 +434,11 @@ export function FloatingInput({
         ref={inputRef}
         type="text"
         value={value}
-        onChange={(e) => setValue(e.target.value)}
+        onChange={(e) => {
+          const nextValue = e.target.value;
+          setValue(nextValue);
+          onValueChange?.(nextValue);
+        }}
         onKeyDown={handleKeyDown}
         placeholder={placeholder}
         maxLength={maxLength}

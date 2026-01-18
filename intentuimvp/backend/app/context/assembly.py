@@ -8,12 +8,13 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.context.models import ContextPayload, SelectionScope
 from app.context.references import parse_references
 from app.database import AsyncSessionLocal
 from app.models.intent import AttachmentDB
+from app.models.edge import Edge
 from app.models.node import Node
 from app.models.turn import Turn, TurnActor, TurnType
 from app.repositories.session_repo import AsyncSessionRepository
@@ -45,12 +46,14 @@ class ContextAssemblyConfig:
     max_turns: int = 8
     candidate_node_limit: int = 200
     recent_turn_limit: int = 20
+    expansion_limit: int = 10
     similarity_threshold: float = 0.2
     recency_decay: float = 0.9
 
     selection_weight: float = 0.6
     primary_weight: float = 0.3
     explicit_weight: float = 0.55
+    expansion_weight: float = 0.25
     recency_weight: float = 0.35
     similarity_weight: float = 0.5
     memory_weight: float = 0.3
@@ -66,7 +69,10 @@ class ContextNode:
     content: str | None = None
     metadata: dict[str, Any] | None = None
     score: float = 0.0
+    similarity: float | None = None
+    recency: float | None = None
     reasons: list[str] = field(default_factory=list)
+    reason_scores: dict[str, float] = field(default_factory=dict)
     is_primary: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,6 +84,12 @@ class ContextNode:
             "reasons": list(self.reasons),
             "is_primary": self.is_primary,
         }
+        if self.similarity is not None:
+            payload["similarity"] = self.similarity
+        if self.recency is not None:
+            payload["recency"] = self.recency
+        if self.reason_scores:
+            payload["reason_scores"] = dict(self.reason_scores)
         if self.content is not None:
             payload["content"] = self.content
         if self.metadata is not None:
@@ -96,10 +108,13 @@ class ContextTurn:
     turn_type: TurnType | str
     timestamp: str
     score: float = 0.0
+    similarity: float | None = None
+    recency: float | None = None
     reasons: list[str] = field(default_factory=list)
+    reason_scores: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "id": self.id,
             "sequence_number": self.sequence_number,
             "summary": self.summary,
@@ -109,6 +124,13 @@ class ContextTurn:
             "score": self.score,
             "reasons": list(self.reasons),
         }
+        if self.similarity is not None:
+            payload["similarity"] = self.similarity
+        if self.recency is not None:
+            payload["recency"] = self.recency
+        if self.reason_scores:
+            payload["reason_scores"] = dict(self.reason_scores)
+        return payload
 
 
 @dataclass
@@ -124,6 +146,24 @@ class ContextAttachment:
     transcription: str | None = None
     description: str | None = None
     status: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "id": self.id,
+            "filename": self.filename,
+            "attachment_type": self.attachment_type,
+            "mime_type": self.mime_type,
+            "size_bytes": self.size_bytes,
+        }
+        if self.text_content is not None:
+            payload["text_content"] = self.text_content
+        if self.transcription is not None:
+            payload["transcription"] = self.transcription
+        if self.description is not None:
+            payload["description"] = self.description
+        if self.status is not None:
+            payload["status"] = self.status
+        return payload
 
 
 @dataclass
@@ -162,6 +202,21 @@ class ContextWindow:
             lines.extend(_format_attachment_lines(self.attachments, max_content_chars))
 
         return "\n".join(lines).strip()
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize context window for debugging or preview."""
+        payload: dict[str, Any] = {
+            "input_text": self.input_text,
+            "prompt": self.to_prompt(),
+            "nodes": [node.to_dict() for node in self.nodes],
+            "turns": [turn.to_dict() for turn in self.turns],
+            "attachments": [attachment.to_dict() for attachment in self.attachments],
+            "explicit_node_refs": list(self.explicit_node_refs),
+            "explicit_turn_refs": list(self.explicit_turn_refs),
+        }
+        if self.selection is not None:
+            payload["selection"] = self.selection.to_dict()
+        return payload
 
 
 @dataclass(frozen=True)
@@ -202,9 +257,21 @@ class ContextAssembler:
         selected_ids = list(selection.selected_nodes)
         if not selected_ids and selection.node_context:
             selected_ids = [node.id for node in selection.node_context if node.id]
+        selected_edge_ids = list(selection.selected_edges)
         primary_id = selection.primary_node_id
         if primary_id is None and selected_ids:
             primary_id = selected_ids[-1]
+
+        selected_node_ids_int: set[int] = set()
+        for node_id in selected_ids:
+            parsed = _coerce_int(node_id)
+            if parsed is not None:
+                selected_node_ids_int.add(parsed)
+        selected_edge_ids_int: set[int] = set()
+        for edge_id in selected_edge_ids:
+            parsed = _coerce_int(edge_id)
+            if parsed is not None:
+                selected_edge_ids_int.add(parsed)
 
         nodes_by_id: dict[str, ContextNode] = {}
         for node_ctx in selection.node_context:
@@ -238,6 +305,7 @@ class ContextAssembler:
         recent_turns: list[Turn] = []
         explicit_turns: list[Turn] = []
         recent_node_ids: set[int] = set()
+        expanded_node_ids: set[int] = set()
         attachment_context: list[ContextAttachment] = []
         resolved_workspace_id = _coerce_int(workspace_id)
 
@@ -274,6 +342,19 @@ class ContextAssembler:
                     }
 
                 node_ids_to_fetch.update(recent_node_ids)
+                if (
+                    resolved_workspace_id is not None
+                    and (selected_node_ids_int or selected_edge_ids_int)
+                    and self._config.expansion_limit > 0
+                ):
+                    expanded_node_ids = await _fetch_expanded_node_ids(
+                        session,
+                        resolved_workspace_id,
+                        selected_node_ids_int,
+                        selected_edge_ids_int,
+                        limit=self._config.expansion_limit,
+                    )
+                    node_ids_to_fetch.update(expanded_node_ids)
                 if node_ids_to_fetch:
                     fetched_nodes = await _fetch_nodes_by_ids(session, node_ids_to_fetch)
                     _merge_nodes(nodes_by_id, fetched_nodes)
@@ -324,6 +405,7 @@ class ContextAssembler:
                             )
                         )
 
+        expanded_node_refs = {str(node_id) for node_id in expanded_node_ids}
         memory_signal = self._resolve_memory_signal(
             user_id=user_id,
             text=payload.text,
@@ -395,8 +477,15 @@ class ContextAssembler:
                 _apply_reason(node, self._config.primary_weight, "primary")
             if node_id in explicit_node_ids:
                 _apply_reason(node, self._config.explicit_weight, "explicit_reference")
+            if (
+                node_id in expanded_node_refs
+                and node_id not in selected_ids
+                and node_id not in explicit_node_ids
+            ):
+                _apply_reason(node, self._config.expansion_weight, "expanded")
 
             similarity = node_similarity.get(node_id, 0.0)
+            node.similarity = similarity
             if similarity >= self._config.similarity_threshold:
                 _apply_reason(
                     node,
@@ -405,6 +494,7 @@ class ContextAssembler:
                 )
 
             recency = node_recency.get(node_id)
+            node.recency = recency
             if recency is not None:
                 _apply_reason(
                     node,
@@ -630,6 +720,46 @@ async def _fetch_nodes_by_compact_labels(
     return list(result.scalars().all())
 
 
+async def _fetch_expanded_node_ids(
+    session: Any,
+    canvas_id: int,
+    selected_node_ids: Iterable[int],
+    selected_edge_ids: Iterable[int],
+    *,
+    limit: int,
+) -> set[int]:
+    if limit <= 0:
+        return set()
+    node_ids = {int(node_id) for node_id in selected_node_ids if node_id is not None}
+    edge_ids = {int(edge_id) for edge_id in selected_edge_ids if edge_id is not None}
+    if not node_ids and not edge_ids:
+        return set()
+    filters = []
+    if edge_ids:
+        filters.append(Edge.id.in_(sorted(edge_ids)))
+    if node_ids:
+        filters.append(Edge.from_node_id.in_(sorted(node_ids)))
+        filters.append(Edge.to_node_id.in_(sorted(node_ids)))
+    if not filters:
+        return set()
+    result = await session.execute(
+        select(Edge)
+        .where(Edge.canvas_id == canvas_id, or_(*filters))
+        .order_by(Edge.id.desc())
+    )
+    expanded: list[int] = []
+    seen: set[int] = set(node_ids)
+    for edge in result.scalars().all():
+        for node_id in (edge.from_node_id, edge.to_node_id):
+            if node_id in seen:
+                continue
+            seen.add(node_id)
+            expanded.append(node_id)
+            if len(expanded) >= limit:
+                return set(expanded)
+    return set(expanded)
+
+
 async def _fetch_candidate_nodes(
     session: Any,
     canvas_id: int,
@@ -775,6 +905,7 @@ def _score_turns(
 
         steps = max(0, latest_seq - turn.sequence_number)
         recency = config.recency_decay**steps
+        context_turn.recency = recency
         _apply_reason(
             context_turn,
             recency * config.recency_weight,
@@ -793,6 +924,7 @@ def _score_turns(
             similarity = _cosine_similarity(input_embedding, embedding)
         if similarity <= 0.0 and input_tokens:
             similarity = _token_similarity(input_tokens, _tokenize(summary_text))
+        context_turn.similarity = similarity
         if similarity >= config.similarity_threshold:
             _apply_reason(
                 context_turn,
@@ -886,6 +1018,9 @@ def _apply_reason(target: Any, score: float, reason: str) -> None:
     target.score += score
     if reason not in target.reasons:
         target.reasons.append(reason)
+    reason_scores = getattr(target, "reason_scores", None)
+    if isinstance(reason_scores, dict):
+        reason_scores[reason] = reason_scores.get(reason, 0.0) + score
 
 
 def _node_text(node: ContextNode) -> str:
