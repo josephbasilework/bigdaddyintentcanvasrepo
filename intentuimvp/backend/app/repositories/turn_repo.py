@@ -7,14 +7,70 @@ This repository provides CRUD operations and session-scoped queries.
 from logging import getLogger
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, false, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.models.turn import Turn, TurnActor, TurnType
+from app.services.turn_filters import JOB_TURN_TYPES
 
 logger = getLogger(__name__)
+
+
+def _normalize_actor_groups(actor_groups: list[str] | None) -> list[str]:
+    if not actor_groups:
+        return []
+    normalized: list[str] = []
+    for group in actor_groups:
+        if not group:
+            continue
+        cleaned = group.strip().lower()
+        if cleaned:
+            normalized.append(cleaned)
+    return sorted(set(normalized))
+
+
+def _apply_actor_group_filters(
+    query,
+    actor_groups: list[str] | None,
+):
+    normalized = _normalize_actor_groups(actor_groups)
+    if actor_groups is None:
+        return query
+    if not normalized:
+        return query.filter(false())
+
+    conditions = []
+    for group in normalized:
+        if group == "job":
+            conditions.append(Turn.type.in_(JOB_TURN_TYPES))
+        elif group == "user":
+            conditions.append(
+                and_(
+                    Turn.actor == TurnActor.USER,
+                    ~Turn.type.in_(JOB_TURN_TYPES),
+                )
+            )
+        elif group == "external":
+            conditions.append(
+                and_(
+                    Turn.actor == TurnActor.MCP,
+                    ~Turn.type.in_(JOB_TURN_TYPES),
+                )
+            )
+        elif group == "system":
+            conditions.append(
+                and_(
+                    Turn.actor.in_([TurnActor.SYSTEM, TurnActor.AGENT]),
+                    ~Turn.type.in_(JOB_TURN_TYPES),
+                )
+            )
+
+    if not conditions:
+        return query.filter(false())
+
+    return query.filter(or_(*conditions))
 
 
 class TurnRepository:
@@ -138,6 +194,11 @@ class TurnRepository:
         after_sequence: int | None = None,
         actor: TurnActor | None = None,
         turn_type: TurnType | None = None,
+        actors: list[TurnActor] | None = None,
+        turn_types: list[TurnType] | None = None,
+        actor_groups: list[str] | None = None,
+        related_node_id: int | None = None,
+        related_edge_id: int | None = None,
     ) -> list[Turn]:
         """Get turns for a session, ordered by sequence number.
 
@@ -147,6 +208,11 @@ class TurnRepository:
             after_sequence: Optional sequence number to start after (exclusive)
             actor: Optional actor filter
             turn_type: Optional type filter
+            actors: Optional actor list filter
+            turn_types: Optional list of types filter
+            actor_groups: Optional actor group filters
+            related_node_id: Optional node scope filter
+            related_edge_id: Optional edge scope filter
 
         Returns:
             List of Turn objects ordered by sequence_number
@@ -156,11 +222,27 @@ class TurnRepository:
         if after_sequence is not None:
             query = query.filter(Turn.sequence_number > after_sequence)
 
+        query = _apply_actor_group_filters(query, actor_groups)
+
         if actor is not None:
+            if actors is not None and actor not in actors:
+                return []
             query = query.filter(Turn.actor == actor)
+        elif actors:
+            query = query.filter(Turn.actor.in_(actors))
 
         if turn_type is not None:
+            if turn_types is not None and turn_type not in turn_types:
+                return []
             query = query.filter(Turn.type == turn_type)
+        elif turn_types:
+            query = query.filter(Turn.type.in_(turn_types))
+
+        if related_node_id is not None:
+            query = query.filter(Turn.related_node_id == related_node_id)
+
+        if related_edge_id is not None:
+            query = query.filter(Turn.related_edge_id == related_edge_id)
 
         query = query.order_by(Turn.sequence_number.asc())
 
@@ -399,6 +481,11 @@ class AsyncTurnRepository:
         after_sequence: int | None = None,
         actor: TurnActor | None = None,
         turn_type: TurnType | None = None,
+        actors: list[TurnActor] | None = None,
+        turn_types: list[TurnType] | None = None,
+        actor_groups: list[str] | None = None,
+        related_node_id: int | None = None,
+        related_edge_id: int | None = None,
     ) -> list[Turn]:
         """Get turns for a session, ordered by sequence number.
 
@@ -408,6 +495,11 @@ class AsyncTurnRepository:
             after_sequence: Optional sequence number to start after (exclusive)
             actor: Optional actor filter
             turn_type: Optional type filter
+            actors: Optional actor list filter
+            turn_types: Optional list of types filter
+            actor_groups: Optional actor group filters
+            related_node_id: Optional node scope filter
+            related_edge_id: Optional edge scope filter
 
         Returns:
             List of Turn objects ordered by sequence_number
@@ -417,11 +509,27 @@ class AsyncTurnRepository:
         if after_sequence is not None:
             stmt = stmt.filter(Turn.sequence_number > after_sequence)
 
+        stmt = _apply_actor_group_filters(stmt, actor_groups)
+
         if actor is not None:
+            if actors is not None and actor not in actors:
+                return []
             stmt = stmt.filter(Turn.actor == actor)
+        elif actors:
+            stmt = stmt.filter(Turn.actor.in_(actors))
 
         if turn_type is not None:
+            if turn_types is not None and turn_type not in turn_types:
+                return []
             stmt = stmt.filter(Turn.type == turn_type)
+        elif turn_types:
+            stmt = stmt.filter(Turn.type.in_(turn_types))
+
+        if related_node_id is not None:
+            stmt = stmt.filter(Turn.related_node_id == related_node_id)
+
+        if related_edge_id is not None:
+            stmt = stmt.filter(Turn.related_edge_id == related_edge_id)
 
         stmt = stmt.order_by(Turn.sequence_number.asc())
 

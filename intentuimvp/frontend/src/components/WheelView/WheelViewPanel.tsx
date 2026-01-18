@@ -14,6 +14,11 @@ import {
   type TurnResponse,
 } from "@/hooks/turnTypes";
 import { useCanvasStore, type CanvasNode } from "@/state/canvasStore";
+import {
+  type WheelActorGroup,
+  type WheelTurnCategory,
+  useViewFiltersStore,
+} from "@/state/viewFiltersStore";
 import { ReferenceText } from "@/components/References/ReferenceText";
 
 type WheelViewPanelProps = {
@@ -23,22 +28,19 @@ type WheelViewPanelProps = {
   error?: string | null;
 };
 
-type ActorGroup = "user" | "system" | "job";
-type TurnCategory = "input" | "response" | "proposal" | "crud" | "other";
-
-const ACTOR_GROUPS: ActorGroup[] = ["user", "system", "job"];
-const ACTOR_LABELS: Record<ActorGroup, string> = {
+const ACTOR_GROUPS: WheelActorGroup[] = ["user", "system", "job"];
+const ACTOR_LABELS: Record<WheelActorGroup, string> = {
   user: "User",
   system: "System",
   job: "Job",
 };
-const ACTOR_SHORT: Record<ActorGroup, string> = {
+const ACTOR_SHORT: Record<WheelActorGroup, string> = {
   user: "U",
   system: "S",
   job: "J",
 };
 
-const CATEGORY_LABELS: Record<TurnCategory, string> = {
+const CATEGORY_LABELS: Record<WheelTurnCategory, string> = {
   input: "Input",
   response: "Response",
   proposal: "Proposal",
@@ -140,7 +142,7 @@ const buildSummary = (turn: TurnResponse): string => {
   return turn.summary;
 };
 
-const getActorGroup = (turn: TurnResponse): ActorGroup => {
+const getActorGroup = (turn: TurnResponse): WheelActorGroup => {
   if (JOB_TYPES.has(turn.type)) {
     return "job";
   }
@@ -150,7 +152,7 @@ const getActorGroup = (turn: TurnResponse): ActorGroup => {
   return "system";
 };
 
-const getCategory = (turn: TurnResponse): TurnCategory => {
+const getCategory = (turn: TurnResponse): WheelTurnCategory => {
   const responseType = getResponseType(turn);
   if (responseType === "proposal") {
     return "proposal";
@@ -175,8 +177,8 @@ const getCategory = (turn: TurnResponse): TurnCategory => {
 
 type TurnRowProps = {
   turn: TurnResponse;
-  actorGroup: ActorGroup;
-  category: TurnCategory;
+  actorGroup: WheelActorGroup;
+  category: WheelTurnCategory;
   turnIdBySequence: Map<number, number>;
   nodes: CanvasNode[];
   isExpanded: boolean;
@@ -352,8 +354,17 @@ export function WheelViewPanel({
   error = null,
 }: WheelViewPanelProps) {
   const nodes = useCanvasStore((state) => state.nodes);
-  const [actorFilters, setActorFilters] = useState<ActorGroup[]>([...ACTOR_GROUPS]);
-  const [typeFilter, setTypeFilter] = useState<TurnCategory | "all">("all");
+  const actorFilters = useViewFiltersStore((state) => state.wheel.actorFilters);
+  const typeFilter = useViewFiltersStore((state) => state.wheel.typeFilter);
+  const setWheelActorFilters = useViewFiltersStore(
+    (state) => state.setWheelActorFilters
+  );
+  const setWheelTypeFilter = useViewFiltersStore(
+    (state) => state.setWheelTypeFilter
+  );
+  const resetWheelFilters = useViewFiltersStore(
+    (state) => state.resetWheelFilters
+  );
   const [expandedTurnIds, setExpandedTurnIds] = useState<Set<number>>(new Set());
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(360);
@@ -592,17 +603,16 @@ export function WheelViewPanel({
             {ACTOR_GROUPS.map((actor) => {
               const isActive = actorFilters.includes(actor);
               return (
-                <button
+              <button
                   key={actor}
                   type="button"
                   className={`wheel-filter-chip${isActive ? " is-active" : ""}`}
                   onClick={() => {
-                    setActorFilters((prev) => {
-                      if (prev.includes(actor)) {
-                        return prev.filter((item) => item !== actor);
-                      }
-                      return [...prev, actor];
-                    });
+                    setWheelActorFilters(
+                      isActive
+                        ? actorFilters.filter((item) => item !== actor)
+                        : [...actorFilters, actor]
+                    );
                   }}
                   aria-pressed={isActive}
                 >
@@ -621,7 +631,7 @@ export function WheelViewPanel({
             className="wheel-filter-select"
             value={typeFilter}
             onChange={(event) => {
-              setTypeFilter(event.target.value as TurnCategory | "all");
+              setWheelTypeFilter(event.target.value as WheelTurnCategory | "all");
             }}
             aria-label="Type filter"
           >
@@ -636,8 +646,7 @@ export function WheelViewPanel({
           type="button"
           className="wheel-filter-reset"
           onClick={() => {
-            setActorFilters([...ACTOR_GROUPS]);
-            setTypeFilter("all");
+            resetWheelFilters();
           }}
         >
           Reset filters

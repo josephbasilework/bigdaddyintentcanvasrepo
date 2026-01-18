@@ -1,7 +1,12 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { EventsViewPanel } from "../EventsView/EventsViewPanel";
 import type { TurnResponse } from "@/hooks/turnTypes";
+import {
+  DEFAULT_EVENTS_FILTERS,
+  DEFAULT_WHEEL_FILTERS,
+  useViewFiltersStore,
+} from "@/state/viewFiltersStore";
 
 const baseTurns: TurnResponse[] = [
   {
@@ -46,6 +51,21 @@ const baseTurns: TurnResponse[] = [
 ];
 
 describe("EventsViewPanel", () => {
+  afterEach(() => {
+    useViewFiltersStore.setState({
+      wheel: {
+        actorFilters: [...DEFAULT_WHEEL_FILTERS.actorFilters],
+        typeFilter: DEFAULT_WHEEL_FILTERS.typeFilter,
+      },
+      events: {
+        actorFilters: [...DEFAULT_EVENTS_FILTERS.actorFilters],
+        typeFilters: [...DEFAULT_EVENTS_FILTERS.typeFilters],
+        nodeFilter: DEFAULT_EVENTS_FILTERS.nodeFilter,
+      },
+    });
+    useViewFiltersStore.persist.clearStorage();
+  });
+
   it("expands to show payload details", () => {
     render(<EventsViewPanel turns={baseTurns} />);
 

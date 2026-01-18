@@ -3,10 +3,27 @@ import { afterEach, describe, expect, it } from "vitest";
 import { WheelViewPanel } from "../WheelView/WheelViewPanel";
 import type { TurnResponse } from "@/hooks/turnTypes";
 import { useCanvasStore } from "@/state/canvasStore";
+import {
+  DEFAULT_EVENTS_FILTERS,
+  DEFAULT_WHEEL_FILTERS,
+  useViewFiltersStore,
+} from "@/state/viewFiltersStore";
 
 describe("WheelViewPanel", () => {
   afterEach(() => {
     useCanvasStore.setState({ nodes: [] });
+    useViewFiltersStore.setState({
+      wheel: {
+        actorFilters: [...DEFAULT_WHEEL_FILTERS.actorFilters],
+        typeFilter: DEFAULT_WHEEL_FILTERS.typeFilter,
+      },
+      events: {
+        actorFilters: [...DEFAULT_EVENTS_FILTERS.actorFilters],
+        typeFilters: [...DEFAULT_EVENTS_FILTERS.typeFilters],
+        nodeFilter: DEFAULT_EVENTS_FILTERS.nodeFilter,
+      },
+    });
+    useViewFiltersStore.persist.clearStorage();
   });
 
   const turns: TurnResponse[] = [

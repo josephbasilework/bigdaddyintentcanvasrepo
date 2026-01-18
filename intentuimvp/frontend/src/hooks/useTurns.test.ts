@@ -63,4 +63,39 @@ describe("useTurns", () => {
     expect(result.current.turns.map((turn) => turn.id)).toEqual([1, 2]);
     unmount();
   });
+
+  it("includes filters in the turns query", async () => {
+    const sessionIds = ["session-1"];
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ turns: [], count: 0 }),
+    });
+
+    const { unmount } = renderHook(() =>
+      useTurns({
+        sessionIds,
+        enabled: true,
+        pollIntervalMs: 60000,
+        filters: {
+          actorGroups: ["User", "job"],
+          categories: ["crud"],
+          eventTypes: ["node.created"],
+          relatedNodeId: 42,
+        },
+      })
+    );
+
+    await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalled();
+    });
+
+    const url = String(mockFetch.mock.calls[0][0]);
+    const params = new URL(url).searchParams;
+    expect(params.getAll("actor_group").sort()).toEqual(["job", "user"]);
+    expect(params.getAll("category")).toEqual(["crud"]);
+    expect(params.getAll("event_type")).toEqual(["node.created"]);
+    expect(params.get("related_node_id")).toBe("42");
+
+    unmount();
+  });
 });

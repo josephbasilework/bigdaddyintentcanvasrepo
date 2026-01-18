@@ -29,6 +29,15 @@ export type UseTurnsOptions = {
   enabled?: boolean;
   pollIntervalMs?: number;
   limit?: number;
+  filters?: TurnFilters;
+};
+
+export type TurnFilters = {
+  actorGroups?: string[];
+  categories?: string[];
+  eventTypes?: string[];
+  relatedNodeId?: number | null;
+  relatedEdgeId?: number | null;
 };
 
 export const useTurns = ({
@@ -36,12 +45,40 @@ export const useTurns = ({
   enabled = true,
   pollIntervalMs = 5000,
   limit = 200,
+  filters,
 }: UseTurnsOptions) => {
   const normalizedSessionIds = useMemo(
     () => Array.from(new Set(sessionIds.filter(Boolean))).sort(),
     [sessionIds]
   );
-  const sessionKey = normalizedSessionIds.join("|");
+  const normalizedFilters = useMemo(() => {
+    const normalizeList = (values?: string[]) =>
+      Array.from(
+        new Set(
+          (values ?? [])
+            .map((value) => value.trim().toLowerCase())
+            .filter(Boolean)
+        )
+      ).sort();
+    return {
+      actorGroups: normalizeList(filters?.actorGroups),
+      categories: normalizeList(filters?.categories),
+      eventTypes: normalizeList(filters?.eventTypes),
+      relatedNodeId:
+        typeof filters?.relatedNodeId === "number" && Number.isFinite(filters.relatedNodeId)
+          ? filters.relatedNodeId
+          : null,
+      relatedEdgeId:
+        typeof filters?.relatedEdgeId === "number" && Number.isFinite(filters.relatedEdgeId)
+          ? filters.relatedEdgeId
+          : null,
+    };
+  }, [filters]);
+  const filtersKey = useMemo(
+    () => JSON.stringify(normalizedFilters),
+    [normalizedFilters]
+  );
+  const sessionKey = `${normalizedSessionIds.join("|")}::${filtersKey}`;
   const [turns, setTurns] = useState<TurnResponse[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,6 +94,21 @@ export const useTurns = ({
       });
       if (afterSequence !== null) {
         params.set("after_sequence", String(afterSequence));
+      }
+      normalizedFilters.actorGroups.forEach((group) =>
+        params.append("actor_group", group)
+      );
+      normalizedFilters.categories.forEach((category) =>
+        params.append("category", category)
+      );
+      normalizedFilters.eventTypes.forEach((eventType) =>
+        params.append("event_type", eventType)
+      );
+      if (normalizedFilters.relatedNodeId !== null) {
+        params.set("related_node_id", String(normalizedFilters.relatedNodeId));
+      }
+      if (normalizedFilters.relatedEdgeId !== null) {
+        params.set("related_edge_id", String(normalizedFilters.relatedEdgeId));
       }
       const response = await fetch(`${API_BASE_URL}/api/turns?${params.toString()}`, {
         signal,
@@ -75,7 +127,7 @@ export const useTurns = ({
       }
       return allTurns;
     },
-    [limit]
+    [limit, normalizedFilters]
   );
 
   useEffect(() => {

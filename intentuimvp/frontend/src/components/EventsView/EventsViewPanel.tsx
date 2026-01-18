@@ -1,11 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   getResponseType,
   type ResponseType,
   type TurnResponse,
 } from "@/hooks/turnTypes";
+import {
+  type EventActorGroup,
+  useViewFiltersStore,
+} from "@/state/viewFiltersStore";
 
 type EventsViewPanelProps = {
   id?: string;
@@ -14,9 +18,7 @@ type EventsViewPanelProps = {
   error?: string | null;
 };
 
-type EventActor = "user" | "system" | "job" | "external";
-
-const ACTOR_LABELS: Record<EventActor, string> = {
+const ACTOR_LABELS: Record<EventActorGroup, string> = {
   user: "User",
   system: "System",
   job: "Job",
@@ -225,7 +227,7 @@ const getEventType = (turn: TurnResponse): string => {
   return EVENT_TYPE_MAP[turn.type] ?? turn.type.replace(/_/g, ".");
 };
 
-const getActorGroup = (turn: TurnResponse): EventActor => {
+const getActorGroup = (turn: TurnResponse): EventActorGroup => {
   if (JOB_TYPES.has(turn.type)) {
     return "job";
   }
@@ -261,18 +263,24 @@ export function EventsViewPanel({
   isLoading = false,
   error = null,
 }: EventsViewPanelProps) {
-  const [actorFilters, setActorFilters] = useState<EventActor[]>([
-    "user",
-    "system",
-    "job",
-    "external",
-  ]);
-  const [typeFilters, setTypeFilters] = useState<string[]>([]);
-  const [nodeFilter, setNodeFilter] = useState("");
+  const actorFilters = useViewFiltersStore((state) => state.events.actorFilters);
+  const typeFilters = useViewFiltersStore((state) => state.events.typeFilters);
+  const nodeFilter = useViewFiltersStore((state) => state.events.nodeFilter);
+  const setEventsActorFilters = useViewFiltersStore(
+    (state) => state.setEventsActorFilters
+  );
+  const setEventsTypeFilters = useViewFiltersStore(
+    (state) => state.setEventsTypeFilters
+  );
+  const setEventsNodeFilter = useViewFiltersStore(
+    (state) => state.setEventsNodeFilter
+  );
+  const resetEventsFilters = useViewFiltersStore(
+    (state) => state.resetEventsFilters
+  );
   const [expandedEventIds, setExpandedEventIds] = useState<Set<number>>(
     () => new Set()
   );
-  const prevTypeOptionsRef = useRef<string[]>([]);
 
   const eventRows = useMemo(
     () =>
@@ -322,24 +330,26 @@ export function EventsViewPanel({
   }, [eventRows]);
 
   useEffect(() => {
-    setTypeFilters((prev) => {
-      if (eventTypeOptions.length === 0) {
-        return [];
+    if (eventTypeOptions.length === 0) {
+      if (typeFilters.length > 0) {
+        setEventsTypeFilters([]);
       }
-      if (prev.length === 0) {
-        return eventTypeOptions;
-      }
-      const wasAll =
-        prevTypeOptionsRef.current.length > 0 &&
-        prev.length === prevTypeOptionsRef.current.length;
-      const filtered = prev.filter((type) => eventTypeOptions.includes(type));
-      if (wasAll) {
-        return eventTypeOptions;
-      }
-      return filtered.length > 0 ? filtered : eventTypeOptions;
-    });
-    prevTypeOptionsRef.current = eventTypeOptions;
-  }, [eventTypeOptions]);
+      return;
+    }
+
+    if (typeFilters.length === 0) {
+      return;
+    }
+
+    const filtered = typeFilters.filter((type) => eventTypeOptions.includes(type));
+    if (filtered.length === eventTypeOptions.length) {
+      setEventsTypeFilters([]);
+      return;
+    }
+    if (filtered.length !== typeFilters.length) {
+      setEventsTypeFilters(filtered);
+    }
+  }, [eventTypeOptions, typeFilters, setEventsTypeFilters]);
 
   const activeTypeFilters = typeFilters.length > 0 ? typeFilters : eventTypeOptions;
 
@@ -392,7 +402,8 @@ export function EventsViewPanel({
         <div className="events-filter-group">
           <div className="events-filter-label">Actors</div>
           <div className="events-filter-chips" role="group" aria-label="Actor filters">
-            {(["user", "system", "job", "external"] as EventActor[]).map((actor) => {
+            {(["user", "system", "job", "external"] as EventActorGroup[]).map(
+              (actor) => {
               const isActive = actorFilters.includes(actor);
               return (
                 <button
@@ -400,12 +411,11 @@ export function EventsViewPanel({
                   type="button"
                   className={`events-filter-chip${isActive ? " is-active" : ""}`}
                   onClick={() => {
-                    setActorFilters((prev) => {
-                      if (prev.includes(actor)) {
-                        return prev.filter((item) => item !== actor);
-                      }
-                      return [...prev, actor];
-                    });
+                    setEventsActorFilters(
+                      isActive
+                        ? actorFilters.filter((item) => item !== actor)
+                        : [...actorFilters, actor]
+                    );
                   }}
                   aria-pressed={isActive}
                 >
@@ -429,7 +439,11 @@ export function EventsViewPanel({
               const selected = Array.from(event.target.selectedOptions).map(
                 (option) => option.value
               );
-              setTypeFilters(selected.length > 0 ? selected : eventTypeOptions);
+              if (selected.length === eventTypeOptions.length) {
+                setEventsTypeFilters([]);
+                return;
+              }
+              setEventsTypeFilters(selected);
             }}
             aria-label="Event type filter"
           >
@@ -443,7 +457,7 @@ export function EventsViewPanel({
             type="button"
             className="events-filter-reset"
             onClick={() => {
-              setTypeFilters(eventTypeOptions);
+              setEventsTypeFilters([]);
             }}
           >
             All types
@@ -459,7 +473,7 @@ export function EventsViewPanel({
             list="events-node-options"
             placeholder="Node ID"
             value={nodeFilter}
-            onChange={(event) => setNodeFilter(event.target.value)}
+            onChange={(event) => setEventsNodeFilter(event.target.value)}
           />
           <datalist id="events-node-options">
             {nodeOptions.map((nodeId) => (
@@ -469,7 +483,7 @@ export function EventsViewPanel({
           <button
             type="button"
             className="events-filter-reset"
-            onClick={() => setNodeFilter("")}
+            onClick={() => setEventsNodeFilter("")}
           >
             Clear
           </button>
@@ -478,9 +492,7 @@ export function EventsViewPanel({
           type="button"
           className="events-filter-reset"
           onClick={() => {
-            setActorFilters(["user", "system", "job", "external"]);
-            setTypeFilters(eventTypeOptions);
-            setNodeFilter("");
+            resetEventsFilters();
           }}
         >
           Reset filters

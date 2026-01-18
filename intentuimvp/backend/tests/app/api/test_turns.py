@@ -101,6 +101,7 @@ def seed_turns(sync_session_local) -> None:
             actor=TurnActor.SYSTEM,
             turn_type=TurnType.NODE_CREATED,
             summary="Node created",
+            related_node_id=42,
         )
         repo.create_turn(
             session_id="session-1",
@@ -114,6 +115,25 @@ def seed_turns(sync_session_local) -> None:
             actor=TurnActor.USER,
             turn_type=TurnType.USER_INPUT,
             summary="Input 2",
+        )
+        repo.create_turn(
+            session_id="session-1",
+            actor=TurnActor.SYSTEM,
+            turn_type=TurnType.JOB_STARTED,
+            summary="Job started",
+            payload={"job_id": "job-1"},
+        )
+        repo.create_turn(
+            session_id="session-1",
+            actor=TurnActor.MCP,
+            turn_type=TurnType.MCP_TOOL_INVOKED,
+            summary="Tool invoked",
+        )
+        repo.create_turn(
+            session_id="session-1",
+            actor=TurnActor.SYSTEM,
+            turn_type=TurnType.ASSUMPTION_PRESENTED,
+            summary="Assumption presented",
         )
 
 
@@ -159,3 +179,47 @@ class TestTurnEndpoints:
         data = response.json()
         assert data["count"] == 1
         assert data["turns"][0]["responseType"] == "acknowledgment"
+
+    def test_list_turns_actor_group_filters(
+        self, client: testclient.TestClient, sync_session_local
+    ) -> None:
+        """Actor group filters map to turn categories."""
+        seed_turns(sync_session_local)
+
+        response = client.get("/api/turns?session_id=session-1&actor_group=job")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["turns"][0]["type"] == "job_started"
+
+        response = client.get("/api/turns?session_id=session-1&actor_group=external")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["turns"][0]["actor"] == "mcp"
+
+    def test_list_turns_category_and_event_filters(
+        self, client: testclient.TestClient, sync_session_local
+    ) -> None:
+        """Category and event type filters are applied."""
+        seed_turns(sync_session_local)
+
+        response = client.get("/api/turns?session_id=session-1&category=crud")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["turns"][0]["type"] == "node_created"
+
+        response = client.get(
+            "/api/turns?session_id=session-1&event_type=response.acknowledgment"
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["turns"][0]["eventType"] == "response.acknowledgment"
+
+        response = client.get("/api/turns?session_id=session-1&related_node_id=42")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["turns"][0]["relatedNodeId"] == 42

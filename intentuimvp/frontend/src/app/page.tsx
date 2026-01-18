@@ -19,6 +19,7 @@ import {
   type CanvasNode,
 } from "@/state/canvasStore";
 import { useConversationStore } from "@/state/conversationStore";
+import { useViewFiltersStore } from "@/state/viewFiltersStore";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useChatTurns } from "@/hooks/useChatTurns";
 import { useTurns } from "@/hooks/useTurns";
@@ -751,7 +752,17 @@ export default function Home() {
   const isWheelOpen = activeView === "wheel";
   const isEventsOpen = activeView === "events";
   const isMcpOpen = activeView === "mcp";
-  const isTurnsOpen = isWheelOpen || isEventsOpen;
+
+  const wheelFilters = useViewFiltersStore((state) => state.wheel);
+  const eventsFilters = useViewFiltersStore((state) => state.events);
+  const parsedEventNodeId = useMemo(() => {
+    const trimmed = eventsFilters.nodeFilter.trim();
+    if (!trimmed) {
+      return null;
+    }
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [eventsFilters.nodeFilter]);
 
   const {
     turns: chatTurns,
@@ -763,12 +774,31 @@ export default function Home() {
   });
 
   const {
-    turns: timelineTurns,
-    isLoading: isTurnsLoading,
-    error: turnsError,
+    turns: wheelTurns,
+    isLoading: isWheelLoading,
+    error: wheelError,
   } = useTurns({
     sessionIds: chatSessionIds,
-    enabled: isTurnsOpen,
+    enabled: isWheelOpen,
+    filters: {
+      actorGroups: wheelFilters.actorFilters,
+      categories:
+        wheelFilters.typeFilter === "all" ? [] : [wheelFilters.typeFilter],
+    },
+  });
+
+  const {
+    turns: eventsTurns,
+    isLoading: isEventsLoading,
+    error: eventsError,
+  } = useTurns({
+    sessionIds: chatSessionIds,
+    enabled: isEventsOpen,
+    filters: {
+      actorGroups: eventsFilters.actorFilters,
+      eventTypes: eventsFilters.typeFilters,
+      relatedNodeId: parsedEventNodeId,
+    },
   });
 
   useEffect(() => {
@@ -1211,9 +1241,9 @@ export default function Home() {
   const eventsPanel = isEventsOpen ? (
     <EventsViewPanel
       id="events-view-panel"
-      turns={timelineTurns}
-      isLoading={isTurnsLoading}
-      error={turnsError}
+      turns={eventsTurns}
+      isLoading={isEventsLoading}
+      error={eventsError}
     />
   ) : null;
 
@@ -1222,9 +1252,9 @@ export default function Home() {
   const wheelPanel = isWheelOpen ? (
     <WheelViewPanel
       id="wheel-view-panel"
-      turns={timelineTurns}
-      isLoading={isTurnsLoading}
-      error={turnsError}
+      turns={wheelTurns}
+      isLoading={isWheelLoading}
+      error={wheelError}
     />
   ) : null;
 
