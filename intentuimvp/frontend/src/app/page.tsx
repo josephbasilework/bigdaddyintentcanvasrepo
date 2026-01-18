@@ -7,6 +7,11 @@ import { EventsViewPanel } from "@/components/EventsView";
 import { WheelViewPanel } from "@/components/WheelView";
 import { MCPInstallPanel } from "@/components/MCP";
 import { AssumptionsPanel } from "@/components/Assumptions";
+import {
+  canExecuteProposal,
+  deriveProposalStage,
+  getAssumptionCounts,
+} from "@/components/Assumptions/stateMachine";
 import { OfflineQueuePanel } from "@/components/OfflineQueue/OfflineQueuePanel";
 import { ContextPreviewPanel } from "@/components/ContextPreview";
 import type {
@@ -128,6 +133,18 @@ type AssumptionResponse = {
   confidence: number;
   category: string;
   explanation?: string | null;
+  status?: "pending" | "accepted" | "rejected" | null;
+};
+
+type ProposalResponse = {
+  action: string;
+  confidence: number;
+  alternatives: Array<{
+    name: string;
+    confidence: number;
+    description: string;
+  }>;
+  assumptions: AssumptionResponse[];
 };
 
 type AssumptionSetResponse = {
@@ -144,6 +161,7 @@ type AssumptionSetResponse = {
   should_auto_execute: boolean;
   session_id?: string | null;
   clarifying_questions?: string[] | null;
+  proposal?: ProposalResponse | null;
 };
 
 type AssumptionResolutionPayload = {
@@ -171,13 +189,26 @@ const normalizeCategory = (category: string): Assumption["category"] => {
   }
 };
 
+const normalizeStatus = (
+  status?: string | null
+): Assumption["status"] => {
+  switch (status) {
+    case "accepted":
+    case "rejected":
+    case "pending":
+      return status;
+    default:
+      return "pending";
+  }
+};
+
 const mapAssumptionResponse = (assumption: AssumptionResponse): Assumption => ({
   id: assumption.id,
   originalText: assumption.text,
   text: assumption.text,
   confidence: assumption.confidence,
   category: normalizeCategory(assumption.category),
-  status: "pending",
+  status: normalizeStatus(assumption.status),
   explanation: assumption.explanation ?? undefined,
 });
 
@@ -191,16 +222,20 @@ const createRoundId = (): string => {
 const buildClarifyingQuestions = (
   assumptionData: AssumptionSetResponse
 ): string[] => {
+  const proposalAssumptions =
+    assumptionData.proposal?.assumptions ?? assumptionData.assumptions;
+  const proposalAlternatives =
+    assumptionData.proposal?.alternatives ?? assumptionData.alternatives;
   if (
     assumptionData.clarifying_questions &&
     assumptionData.clarifying_questions.length > 0
   ) {
     return assumptionData.clarifying_questions;
   }
-  if (assumptionData.assumptions.length > 0 || assumptionData.should_auto_execute) {
+  if (proposalAssumptions.length > 0 || assumptionData.should_auto_execute) {
     return [];
   }
-  if (assumptionData.alternatives.length > 0) {
+  if (proposalAlternatives.length > 0) {
     return ["Which of these intents best matches your goal?"];
   }
   return ["Can you clarify what you want to accomplish?"];
@@ -213,7 +248,12 @@ const createWorkflowRound = (
   selection: SelectionScope,
   options: { force?: boolean } = {}
 ): WorkflowRound | null => {
-  const mappedAssumptions = assumptionData.assumptions.map(mapAssumptionResponse);
+  const proposal = assumptionData.proposal ?? null;
+  const proposalAction = proposal?.action ?? assumptionData.intent;
+  const proposalConfidence = proposal?.confidence ?? assumptionData.confidence;
+  const proposalAlternatives = proposal?.alternatives ?? assumptionData.alternatives ?? [];
+  const proposalAssumptions = proposal?.assumptions ?? assumptionData.assumptions ?? [];
+  const mappedAssumptions = proposalAssumptions.map(mapAssumptionResponse);
   const clarifyingQuestions = buildClarifyingQuestions(assumptionData);
   const shouldCreate =
     options.force || mappedAssumptions.length > 0 || clarifyingQuestions.length > 0;
@@ -223,11 +263,12 @@ const createWorkflowRound = (
   }
 
   const assumptionSet: AssumptionSet = {
-    intent: assumptionData.intent,
+    intent: proposalAction,
+    action: proposalAction,
     intentDescription: assumptionData.intent_description ?? undefined,
-    confidence: assumptionData.confidence,
+    confidence: proposalConfidence,
     reasoning: assumptionData.reasoning,
-    alternatives: assumptionData.alternatives ?? [],
+    alternatives: proposalAlternatives,
     sessionId: assumptionData.session_id ?? undefined,
   };
 
@@ -252,7 +293,9 @@ const buildRevisionPrompt = (round: WorkflowRound, note?: string): string => {
   ];
 
   if (round.assumptionSet?.intent) {
-    lines.push(`Current proposal: ${round.assumptionSet.intent}`);
+    lines.push(
+      `Current proposal: ${round.assumptionSet.action ?? round.assumptionSet.intent}`
+    );
   }
   if (round.assumptionSet?.intentDescription) {
     lines.push(`Proposal details: ${round.assumptionSet.intentDescription}`);
@@ -820,20 +863,25 @@ export default function Home() {
       setStatusMessage(`Routing error: ${routingError}`);
       return;
     }
-    if (currentRound && currentRound.status === "reviewing") {
-      if ((currentRound.clarifyingQuestions?.length ?? 0) > 0) {
+    if (currentRound) {
+      const stage = deriveProposalStage(currentRound);
+      if (stage === "clarifying") {
         setStatusMessage("Clarification needed.");
         return;
       }
-      const pendingCount = currentRound.assumptions.filter(
-        (assumption) => assumption.status === "pending"
-      ).length;
-      if (pendingCount > 0) {
-        setStatusMessage(`${pendingCount} assumptions need review.`);
+      if (stage === "needs_resolution") {
+        const { pending } = getAssumptionCounts(currentRound.assumptions);
+        setStatusMessage(`${pending} assumptions need review.`);
         return;
       }
-      setStatusMessage("Review the proposal.");
-      return;
+      if (stage === "needs_revision") {
+        setStatusMessage("Proposal needs revision.");
+        return;
+      }
+      if (stage === "ready") {
+        setStatusMessage("Review the proposal.");
+        return;
+      }
     }
     if (commands.length > 0) {
       setStatusMessage("Command queued.");
@@ -1116,7 +1164,7 @@ export default function Home() {
     if (!currentRound || currentRound.status !== "reviewing") {
       return;
     }
-    if ((currentRound.clarifyingQuestions?.length ?? 0) > 0) {
+    if (!canExecuteProposal(currentRound)) {
       return;
     }
     const roundId = currentRound.id;

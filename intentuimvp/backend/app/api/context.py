@@ -83,6 +83,7 @@ class AssumptionResponse(BaseModel):
     confidence: float
     category: str
     explanation: str | None = None
+    status: Literal["pending", "accepted", "rejected"]
 
 
 class ContextResponse(BaseModel):
@@ -181,6 +182,15 @@ class IntentAlternative(BaseModel):
     description: str
 
 
+class ProposalResponse(BaseModel):
+    """Response model for a proposal with assumptions."""
+
+    action: str
+    confidence: float
+    alternatives: list[IntentAlternative]
+    assumptions: list[AssumptionResponse]
+
+
 class AssumptionSetResponse(BaseModel):
     """Response model for generated assumptions and intent options."""
 
@@ -192,6 +202,7 @@ class AssumptionSetResponse(BaseModel):
     reasoning: str
     should_auto_execute: bool
     session_id: str | None = None
+    proposal: ProposalResponse
 
 
 class AssumptionResolutionPayload(BaseModel):
@@ -299,6 +310,7 @@ async def submit_context(payload: ContextPayload) -> ContextResponse:
                 confidence=a.confidence,
                 category=a.category,
                 explanation=a.explanation,
+                status=a.status,
             )
             for a in decision.assumptions
         ]
@@ -358,7 +370,7 @@ async def generate_assumptions(
 
     try:
         result = await decipherer.decipher(payload.text)
-        
+
         logger.info(f"DEBUG: Raw LLM assumptions: {result.assumptions}")
         logger.info(f"DEBUG: Assumption threshold: {decipherer.assumption_confidence_threshold}")
 
@@ -388,11 +400,12 @@ async def generate_assumptions(
                     confidence=assumption.confidence,
                     category=assumption.category,
                     explanation=assumption.explanation,
+                    status=assumption.status,
                 )
             )
 
         logger.info(f"DEBUG: Parsed assumption_responses: {assumption_responses}")
-        
+
         # Show ALL assumptions to user, not just low-confidence ones
         assumptions_needing_confirmation = assumption_responses
 
@@ -400,9 +413,21 @@ async def generate_assumptions(
         if assumptions_needing_confirmation:
             store = get_assumption_store()
             session_id = store.create_session(
+                assumptions=[assumption.model_dump() for assumption in assumption_responses],
                 original_text=payload.text,
                 handler=result.primary_intent.name,
+                user_id="default",
             )
+            auto_confirmed, remaining = store.apply_auto_confirm(session_id)
+            if auto_confirmed:
+                remaining_ids = {
+                    str(item.get("id", "")).strip() for item in remaining if item.get("id")
+                }
+                assumptions_needing_confirmation = [
+                    assumption
+                    for assumption in assumption_responses
+                    if assumption.id in remaining_ids
+                ]
 
         should_auto_execute = (
             bool(result.should_auto_execute)
@@ -433,6 +458,13 @@ async def generate_assumptions(
                 },
             )
 
+        proposal = ProposalResponse(
+            action=result.primary_intent.name,
+            confidence=result.primary_intent.confidence,
+            alternatives=alternatives,
+            assumptions=assumptions_needing_confirmation,
+        )
+
         return AssumptionSetResponse(
             intent=result.primary_intent.name,
             intent_description=result.primary_intent.description,
@@ -442,6 +474,7 @@ async def generate_assumptions(
             reasoning=result.reasoning,
             should_auto_execute=should_auto_execute,
             session_id=session_id,
+            proposal=proposal,
         )
 
     except HTTPException:

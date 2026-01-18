@@ -2,6 +2,7 @@
 
 import { useId, useState } from "react";
 import type { Assumption, AssumptionsPanelProps, IntentWorkflowRound } from "./types";
+import { getAssumptionCounts } from "./stateMachine";
 
 const formatTimestamp = (value?: string): string => {
   if (!value) {
@@ -60,15 +61,16 @@ export function AssumptionsPanel({
   const activeRound = currentRound;
   const assumptions = activeRound?.assumptions ?? [];
   const assumptionSet = activeRound?.assumptionSet;
+  const proposalAction = assumptionSet?.action ?? assumptionSet?.intent;
   const clarifyingQuestions = activeRound?.clarifyingQuestions ?? [];
   const isReviewing = activeRound?.status === "reviewing";
 
-  const pendingAssumptions = assumptions.filter((a) => a.status === "pending");
-  const acceptedCount = assumptions.filter((a) => a.status === "accepted").length;
-  const rejectedCount = assumptions.filter((a) => a.status === "rejected").length;
+  const { pending: pendingCount, accepted: acceptedCount, rejected: rejectedCount } =
+    getAssumptionCounts(assumptions);
   const totalCount = assumptions.length;
 
-  const allResolved = pendingAssumptions.length === 0;
+  const allResolved = pendingCount === 0;
+  const hasRejectedAssumptions = rejectedCount > 0;
   const hasClarifyingQuestions = clarifyingQuestions.length > 0;
   const hasEditedAssumptions = assumptions.some((assumption) => {
     if (assumption.status === "pending") {
@@ -77,7 +79,7 @@ export function AssumptionsPanel({
     return assumption.text.trim() !== assumption.originalText.trim();
   });
   const canRequestRevision =
-    isReviewing && allResolved && (hasEditedAssumptions || rejectedCount > 0);
+    isReviewing && allResolved && (hasEditedAssumptions || hasRejectedAssumptions);
 
   const intentConfidence =
     typeof assumptionSet?.confidence === "number" ? assumptionSet.confidence : null;
@@ -91,7 +93,7 @@ export function AssumptionsPanel({
     Boolean(assumptionSet?.reasoning) ||
     Boolean(assumptionSet?.alternatives && assumptionSet.alternatives.length > 0);
   const hasIntentSummary =
-    Boolean(assumptionSet?.intent) ||
+    Boolean(proposalAction) ||
     Boolean(assumptionSet?.intentDescription) ||
     intentConfidencePercent !== null;
 
@@ -253,9 +255,9 @@ export function AssumptionsPanel({
                 <div className="assumptions-overview">
                   <div className="assumptions-intent">
                     <span className="assumptions-intent-label">Primary intent</span>
-                    {assumptionSet?.intent && (
+                    {proposalAction && (
                       <div className="assumptions-intent-value">
-                        {assumptionSet.intent}
+                        {proposalAction}
                       </div>
                     )}
                     {assumptionSet?.intentDescription && (
@@ -538,9 +540,10 @@ export function AssumptionsPanel({
                       <div className="assumptions-history-command">
                         {round.commandText}
                       </div>
-                      {round.assumptionSet?.intent && (
+                      {(round.assumptionSet?.action ?? round.assumptionSet?.intent) && (
                         <div className="assumptions-history-intent">
-                          Proposal: {round.assumptionSet.intent}
+                          Proposal:{" "}
+                          {round.assumptionSet?.action ?? round.assumptionSet?.intent}
                         </div>
                       )}
                       {round.clarificationResponse && (
@@ -565,15 +568,30 @@ export function AssumptionsPanel({
               <p className="assumptions-footer-hint">
                 Provide clarification to refine the proposal.
               </p>
-            ) : !allResolved ? (
+          ) : !allResolved ? (
+            <p className="assumptions-footer-hint">
+              Please confirm or reject all assumptions to continue
+            </p>
+          ) : hasRejectedAssumptions ? (
+            <div className="assumptions-footer-actions">
               <p className="assumptions-footer-hint">
-                Please confirm or reject all assumptions to continue
+                Rejected assumptions require a revised proposal.
               </p>
-            ) : (
-              <div className="assumptions-footer-actions">
-                {canRequestRevision && onRequestRevision && (
-                  <button
-                    type="button"
+              {canRequestRevision && onRequestRevision && (
+                <button
+                  type="button"
+                  onClick={onRequestRevision}
+                  className="assumptions-revise"
+                >
+                  Request revision
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="assumptions-footer-actions">
+              {canRequestRevision && onRequestRevision && (
+                <button
+                  type="button"
                     onClick={onRequestRevision}
                     className="assumptions-revise"
                   >

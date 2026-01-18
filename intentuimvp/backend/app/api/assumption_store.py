@@ -503,6 +503,10 @@ class AssumptionStore:
         """Check if all expected assumptions have been resolved."""
         expected_ids = session.get("expected_assumption_ids") or []
         if not expected_ids:
+            assumptions = session.get("assumptions") or []
+            resolved = session.get("resolved_assumptions") or []
+            if assumptions and len(resolved) >= len(assumptions):
+                return True
             return False
         resolved_ids = {
             resolution["assumption_id"]

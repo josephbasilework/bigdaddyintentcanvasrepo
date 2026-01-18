@@ -33,6 +33,14 @@ class AssumptionCategory(str, Enum):
     OTHER = "other"
 
 
+class AssumptionStatus(str, Enum):
+    """Resolution status for assumptions."""
+
+    PENDING = "pending"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+
+
 class AssumptionNotResolvedError(RuntimeError):
     """Raised when dependent actions are executed before assumptions are resolved.
 
@@ -54,6 +62,7 @@ class Assumption:
         confidence: Confidence score (0-1) for this assumption.
         category: The category/type of assumption.
         explanation: Optional explanation of why this assumption was made.
+        status: Resolution status for this assumption.
     """
 
     id: str
@@ -61,6 +70,7 @@ class Assumption:
     confidence: float
     category: Literal["context", "intent", "parameter", "other"]
     explanation: str | None = None
+    status: Literal["pending", "accepted", "rejected"] = AssumptionStatus.PENDING.value
 
     def __post_init__(self) -> None:
         """Validate assumption data."""
@@ -74,6 +84,8 @@ class Assumption:
             raise ValueError("Assumption category must be a string")
         if self.category not in {category.value for category in AssumptionCategory}:
             raise ValueError("Assumption category must be a supported value")
+        if self.status not in {status.value for status in AssumptionStatus}:
+            raise ValueError("Assumption status must be a supported value")
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -83,6 +95,7 @@ class Assumption:
             "confidence": self.confidence,
             "category": self.category,
             "explanation": self.explanation,
+            "status": self.status,
         }
 
 
@@ -156,6 +169,14 @@ def parse_assumption(payload: Mapping[str, Any]) -> Assumption:
     except (TypeError, ValueError) as exc:
         raise ValueError("Confidence must be between 0 and 1") from exc
 
+    raw_status = payload.get("status", AssumptionStatus.PENDING.value)
+    if isinstance(raw_status, AssumptionStatus):
+        status = raw_status.value
+    else:
+        status = str(raw_status).strip().lower()
+    if status not in {state.value for state in AssumptionStatus}:
+        status = AssumptionStatus.PENDING.value
+
     explanation = payload.get("explanation")
     if explanation is not None and not isinstance(explanation, str):
         explanation = str(explanation)
@@ -171,6 +192,7 @@ def parse_assumption(payload: Mapping[str, Any]) -> Assumption:
         confidence=confidence,
         category=category_value,
         explanation=explanation,
+        status=cast(Literal["pending", "accepted", "rejected"], status),
     )
 
 

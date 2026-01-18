@@ -302,8 +302,11 @@ class TestAssumptionEndpoints:
         assert data["confidence"] == 0.82
         assert data["alternatives"][0]["name"] == "analyze"
         assert data["intent_description"] == "Research a topic based on the request"
-        assert len(data["assumptions"]) == 1
+        assert data["proposal"]["action"] == "research"
+        assert data["proposal"]["confidence"] == 0.82
+        assert len(data["assumptions"]) == 3
         assert data["assumptions"][0]["id"] == "assumption-1"
+        assert data["assumptions"][0]["status"] == "pending"
         assert data["session_id"] is not None
 
     def test_generate_assumptions_auto_execute_threshold(self) -> None:

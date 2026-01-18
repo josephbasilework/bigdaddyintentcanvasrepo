@@ -34,6 +34,8 @@ export interface IntentAlternative {
 export interface AssumptionSet {
   /** Primary intent inferred by the agent */
   intent: string;
+  /** Proposed action derived from the intent */
+  action?: string;
   /** Optional description for the primary intent */
   intentDescription?: string;
   /** Confidence score (0-1) for the primary intent */

@@ -182,7 +182,7 @@ describe("AssumptionsPanel", () => {
   it("enables confirm button when all assumptions are resolved", () => {
     const resolvedAssumptions: Assumption[] = [
       { ...mockAssumptions[0], status: "accepted" as const },
-      { ...mockAssumptions[1], status: "rejected" as const },
+      { ...mockAssumptions[1], status: "accepted" as const },
       { ...mockAssumptions[2], status: "accepted" as const },
     ];
 
@@ -200,12 +200,44 @@ describe("AssumptionsPanel", () => {
       />
     );
 
-    const confirmButton = screen.getByText("Continue with Execution (2 accepted)");
+    const confirmButton = screen.getByText("Continue with Execution (3 accepted)");
     expect(confirmButton).toBeInTheDocument();
     expect(confirmButton).not.toBeDisabled();
 
     fireEvent.click(confirmButton);
     expect(onConfirm).toHaveBeenCalled();
+  });
+
+  it("requires revision when any assumption is rejected", () => {
+    const resolvedAssumptions: Assumption[] = [
+      { ...mockAssumptions[0], status: "accepted" as const },
+      { ...mockAssumptions[1], status: "rejected" as const },
+    ];
+
+    const onRequestRevision = vi.fn();
+    render(
+      <AssumptionsPanel
+        currentRound={{
+          ...mockRound,
+          assumptions: resolvedAssumptions,
+        }}
+        onAccept={vi.fn()}
+        onReject={vi.fn()}
+        onEdit={vi.fn()}
+        onConfirm={vi.fn()}
+        onRequestRevision={onRequestRevision}
+      />
+    );
+
+    expect(
+      screen.queryByText(/continue with execution/i)
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Rejected assumptions require a revised proposal.")
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Request revision"));
+    expect(onRequestRevision).toHaveBeenCalled();
   });
 
   it("displays correct category badges", () => {
