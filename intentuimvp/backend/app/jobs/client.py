@@ -53,6 +53,7 @@ async def enqueue_job(
     job_data: dict[str, Any],
     user_id: str | None = None,
     workspace_id: str | None = None,
+    job_metadata: dict[str, Any] | None = None,
 ) -> str:
     """Enqueue a job for processing.
 
@@ -61,6 +62,7 @@ async def enqueue_job(
         job_data: Data to pass to the job function
         user_id: Optional user ID for the job context
         workspace_id: Optional workspace ID for the job context
+        job_metadata: Optional metadata to persist with the job record
 
     Returns:
         Job ID (UUID) that can be used to track the job
@@ -69,7 +71,21 @@ async def enqueue_job(
         JobEnqueueError: If the job fails to enqueue
     """
     job_id = str(uuid.uuid4())
-    logger.info(f"Enqueueing job {job_id}: type={job_type}, data={job_data}")
+    job_payload = dict(job_data or {})
+    metadata_payload: dict[str, Any] = dict(job_metadata or {})
+    result_destinations = job_payload.pop("result_destinations", None)
+    if result_destinations is None:
+        result_destinations = job_payload.pop("resultDestinations", None)
+    result_destination = job_payload.pop("result_destination", None)
+    if result_destination is None:
+        result_destination = job_payload.pop("resultDestination", None)
+
+    if result_destinations is not None:
+        metadata_payload["result_destinations"] = result_destinations
+    elif result_destination is not None:
+        metadata_payload["result_destination"] = result_destination
+
+    logger.info(f"Enqueueing job {job_id}: type={job_type}, data={job_payload}")
 
     try:
         redis = await create_pool(get_redis_settings())
@@ -84,18 +100,21 @@ async def enqueue_job(
             _job_id=job_id,
             _job_user_id=user_id,
             _job_workspace_id=workspace_id,
-            **job_data,
+            **job_payload,
         )
 
         await redis.close()
         try:
-            await progress_tracker.create_job(
-                job_id=job_id,
-                job_type=job_type,
-                user_id=user_id,
-                workspace_id=workspace_id,
-                parameters=job_data,
-            )
+            create_kwargs = {
+                "job_id": job_id,
+                "job_type": job_type,
+                "user_id": user_id,
+                "workspace_id": workspace_id,
+                "parameters": job_payload,
+            }
+            if metadata_payload:
+                create_kwargs["job_metadata"] = metadata_payload
+            await progress_tracker.create_job(**create_kwargs)
         except Exception as exc:
             logger.error(
                 "Failed to record queued job %s: %s",
@@ -111,7 +130,7 @@ async def enqueue_job(
             workspace_id=workspace_id or "default",
             job_id=job_id,
             job_type=job_type.value,
-            job_params=job_data,
+            job_params=job_payload,
         )
 
         return job_id
@@ -449,12 +468,25 @@ async def retry_job(job_id: str) -> dict[str, Any]:
         # Increment retry count before re-enqueueing
         await increment_job_retry_count(job_id)
 
+        job_metadata: dict[str, Any] = {}
+        if job.job_metadata:
+            try:
+                metadata_payload = json.loads(job.job_metadata)
+            except json.JSONDecodeError:
+                metadata_payload = {}
+            if isinstance(metadata_payload, dict):
+                if "result_destinations" in metadata_payload:
+                    job_metadata["result_destinations"] = metadata_payload["result_destinations"]
+                elif "result_destination" in metadata_payload:
+                    job_metadata["result_destination"] = metadata_payload["result_destination"]
+
         # Re-enqueue the job with the same parameters
         new_job_id = await enqueue_job(
             job_type=JobType(job.job_type),
             job_data=parameters,
             user_id=job.user_id,
             workspace_id=job.workspace_id,
+            job_metadata=job_metadata or None,
         )
 
         logger.info(f"Job {job_id} re-enqueued as {new_job_id}")

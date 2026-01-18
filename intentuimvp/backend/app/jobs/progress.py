@@ -60,8 +60,18 @@ async def _log_job_turn(
     turn_type: TurnType,
     summary: str,
     payload: dict[str, Any],
-) -> None:
-    await asyncio.to_thread(_log_job_turn_sync, job, turn_type, summary, payload)
+) -> Any | None:
+    return await asyncio.to_thread(_log_job_turn_sync, job, turn_type, summary, payload)
+
+
+def _parse_job_metadata_json(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _create_job_sync(
@@ -70,10 +80,38 @@ def _create_job_sync(
     user_id: str | None,
     workspace_id: str | None,
     parameters: str | None,
-) -> Job:
+    job_metadata: str | None,
+) -> tuple[Job, bool]:
     """Synchronous helper to create a job in the database."""
     db = SessionLocal()
     try:
+        existing = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
+        if existing:
+            updated = False
+            if user_id and not existing.user_id:
+                existing.user_id = user_id
+                updated = True
+            if workspace_id and not existing.workspace_id:
+                existing.workspace_id = workspace_id
+                updated = True
+            if parameters and not existing.parameters:
+                existing.parameters = parameters
+                updated = True
+            if job_metadata:
+                current_metadata = _parse_job_metadata_json(existing.job_metadata)
+                new_metadata = _parse_job_metadata_json(job_metadata)
+                merged = dict(current_metadata)
+                for key, value in new_metadata.items():
+                    if key not in merged:
+                        merged[key] = value
+                if merged and merged != current_metadata:
+                    existing.job_metadata = json.dumps(merged, ensure_ascii=True)
+                    updated = True
+            if updated:
+                db.commit()
+                db.refresh(existing)
+            return existing, False
+
         job = Job(
             job_id=job_id,
             user_id=user_id,
@@ -81,11 +119,28 @@ def _create_job_sync(
             job_type=job_type,
             status="queued",
             parameters=parameters,
+            job_metadata=job_metadata,
         )
         db.add(job)
         db.commit()
         db.refresh(job)
-        return job
+        return job, True
+    finally:
+        db.close()
+
+
+def _set_origin_turn_sync(job_id: str, turn_id: int) -> None:
+    db = SessionLocal()
+    try:
+        job = db.execute(select(Job).where(Job.job_id == job_id)).scalar_one_or_none()
+        if not job:
+            return
+        metadata = _parse_job_metadata_json(job.job_metadata)
+        if metadata.get("origin_turn_id") is not None:
+            return
+        metadata["origin_turn_id"] = turn_id
+        job.job_metadata = json.dumps(metadata, ensure_ascii=True)
+        db.commit()
     finally:
         db.close()
 
@@ -310,40 +365,49 @@ class JobProgressTracker:
         user_id: str | None = None,
         workspace_id: str | None = None,
         parameters: dict[str, Any] | None = None,
+        job_metadata: dict[str, Any] | None = None,
     ) -> Job:
         """Create a new job in the database and emit queued event.
 
         Implements NFR-OBS-003: Logs job lifecycle event (queued).
         """
         parameters_json = json.dumps(parameters) if parameters else None
-        job = await asyncio.to_thread(
-            _create_job_sync, job_id, job_type, user_id, workspace_id, parameters_json
+        metadata_json = json.dumps(job_metadata, ensure_ascii=True) if job_metadata else None
+        job, created = await asyncio.to_thread(
+            _create_job_sync,
+            job_id,
+            job_type,
+            user_id,
+            workspace_id,
+            parameters_json,
+            metadata_json,
         )
 
-        # Emit queued event
-        await self.emit_event(
-            ProgressEvent(
-                event_type=ProgressEventType.QUEUED,
-                job_id=job_id,
-                job_type=job_type,
-                status="queued",
-                data={"parameters": parameters} if parameters else {},
+        if created:
+            # Emit queued event
+            await self.emit_event(
+                ProgressEvent(
+                    event_type=ProgressEventType.QUEUED,
+                    job_id=job_id,
+                    job_type=job_type,
+                    status="queued",
+                    data={"parameters": parameters} if parameters else {},
+                )
             )
-        )
 
-        # Log job lifecycle event (NFR-OBS-003)
-        logger.info(
-            "Job queued",
-            extra={
-                "event": "job_lifecycle",
-                "job_id": job_id,
-                "job_type": job_type,
-                "status": "queued",
-                "user_id": user_id,
-                "workspace_id": workspace_id,
-                "correlation_id": get_correlation_id(),
-            },
-        )
+            # Log job lifecycle event (NFR-OBS-003)
+            logger.info(
+                "Job queued",
+                extra={
+                    "event": "job_lifecycle",
+                    "job_id": job_id,
+                    "job_type": job_type,
+                    "status": "queued",
+                    "user_id": user_id,
+                    "workspace_id": workspace_id,
+                    "correlation_id": get_correlation_id(),
+                },
+            )
 
         return job
 
@@ -397,7 +461,7 @@ class JobProgressTracker:
                         "correlation_id": get_correlation_id(),
                     },
                 )
-                await _log_job_turn(
+                job_started_turn = await _log_job_turn(
                     job,
                     TurnType.JOB_STARTED,
                     "Job started",
@@ -411,6 +475,12 @@ class JobProgressTracker:
                         "steps_total": steps_total,
                     },
                 )
+                if job_started_turn is not None and getattr(job_started_turn, "id", None):
+                    await asyncio.to_thread(
+                        _set_origin_turn_sync,
+                        job_id,
+                        job_started_turn.id,
+                    )
 
             await self.emit_event(
                 ProgressEvent(

@@ -7,7 +7,7 @@ produced during job execution.
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import DateTime, Integer, String, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -97,6 +97,12 @@ class JobArtifact(Base):
     )
 
     # Metadata and timestamps
+    origin_turn_id: Mapped[int | None] = mapped_column(
+        ForeignKey("turn.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="ID of the turn that originated this artifact",
+    )
     is_archived: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, comment="Whether the artifact is archived (0/1)"
     )
@@ -127,6 +133,7 @@ class JobArtifact(Base):
             "size_bytes": self.size_bytes,
             "storage_path": self.storage_path,
             "inline_data": self.inline_data,
+            "origin_turn_id": self.origin_turn_id,
             "is_archived": bool(self.is_archived),
             "archive_after_days": self.archive_after_days,
             "created_at": self.created_at.isoformat() if self.created_at else None,

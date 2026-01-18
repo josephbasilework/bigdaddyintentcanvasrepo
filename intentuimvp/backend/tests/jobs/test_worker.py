@@ -384,6 +384,7 @@ class TestDeepResearchJob:
             assert artifact is not None
             assert artifact.artifact_type == ArtifactType.RESEARCH_REPORT.value
             assert artifact.workspace_id == str(canvas_id)
+            assert artifact.origin_turn_id is not None
 
     async def test_deep_research_job_creates_report_node_and_artifact(self) -> None:
         """Should store report artifact and link a report node to inputs."""

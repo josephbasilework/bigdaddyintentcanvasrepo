@@ -10,6 +10,7 @@ import logging
 import os
 import uuid
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 # Default model - configurable via GATEWAY_MODEL env var (model name only)
@@ -41,7 +42,7 @@ from app.models.edge import RelationType
 from app.models.node import Node, NodeType
 from app.repositories.canvas_repo import CanvasRepository
 from app.repositories.edge_repo import EdgeRepository
-from app.repositories.node_repo import NodeRepository
+from app.repositories.node_repo import DuplicatePositionError, NodeRepository
 from app.schemas.node import (
     BiasAnalysisSchema,
     CriticNodeMetadata,
@@ -56,6 +57,10 @@ REPORT_LABEL_LIMIT = 80
 REPORT_OFFSET_X = 240.0
 REPORT_OFFSET_Y = 140.0
 REPORT_OFFSET_Z = 1.0
+DAG_OFFSET_X = 240.0
+DAG_OFFSET_Y = 0.0
+POSITION_OFFSET_STEP = 48.0
+POSITION_OFFSET_MAX_ATTEMPTS = 49
 
 # Perspective node offsets for FR-012 Multi-Judge Compute
 PERSPECTIVE_OFFSET_X = 200.0
@@ -178,6 +183,64 @@ def _coerce_input_ref(ref: Any) -> int | None:
     return None
 
 
+def _iter_position_candidates(
+    base: dict[str, float],
+    *,
+    step: float = POSITION_OFFSET_STEP,
+    max_attempts: int = POSITION_OFFSET_MAX_ATTEMPTS,
+) -> list[dict[str, float]]:
+    """Return candidate positions in expanding rings around the base."""
+    candidates: list[dict[str, float]] = [base]
+    ring = 1
+    attempts = 1
+    while attempts < max_attempts:
+        for dx in range(-ring, ring + 1):
+            for dy in range(-ring, ring + 1):
+                if abs(dx) != ring and abs(dy) != ring:
+                    continue
+                candidates.append(
+                    {
+                        "x": base["x"] + (dx * step),
+                        "y": base["y"] + (dy * step),
+                        "z": base["z"],
+                    }
+                )
+                attempts += 1
+                if attempts >= max_attempts:
+                    break
+            if attempts >= max_attempts:
+                break
+        ring += 1
+    return candidates
+
+
+async def _create_node_with_position(
+    *,
+    node_repo: NodeRepository,
+    canvas_id: int,
+    label: str,
+    node_type: NodeType,
+    base_position: dict[str, float],
+    node_metadata: dict[str, Any] | None = None,
+    content: str | None = None,
+) -> Node:
+    last_error: DuplicatePositionError | None = None
+    for candidate in _iter_position_candidates(base_position):
+        try:
+            return await node_repo.create_node(
+                canvas_id=canvas_id,
+                label=label,
+                type=node_type,
+                position=candidate,
+                content=content,
+                node_metadata=node_metadata,
+            )
+        except DuplicatePositionError as exc:
+            last_error = exc
+            continue
+    raise last_error or DuplicatePositionError(canvas_id=canvas_id, position=base_position)
+
+
 async def _load_input_nodes(
     session: AsyncSession,
     input_refs: list[int | str | float] | None,
@@ -203,6 +266,185 @@ async def _load_input_nodes(
     nodes = list(result.scalars().all())
     nodes_by_id = {node.id: node for node in nodes}
     return [nodes_by_id[node_id] for node_id in unique_ids if node_id in nodes_by_id]
+
+
+class ResultDestinationType(StrEnum):
+    """Supported job result destinations."""
+
+    CANVAS_NODE = "canvas_node"
+    DOCUMENT_INSERT = "document_insert"
+    USER_STORAGE = "user_storage"
+    NODE_ARTIFACT = "node_artifact"
+    CUSTOM = "custom"
+
+
+def _parse_job_metadata(payload: str | None) -> dict[str, Any]:
+    if not payload:
+        return {}
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _extract_result_destinations(metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = metadata.get("result_destinations") or metadata.get("resultDestinations")
+    if raw is None:
+        raw = metadata.get("result_destination") or metadata.get("resultDestination")
+    if raw is None:
+        return []
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    if isinstance(raw, dict):
+        return [raw]
+    return []
+
+
+def _resolve_destination_type(value: dict[str, Any]) -> ResultDestinationType | None:
+    raw = value.get("type") or value.get("destination_type") or value.get("destinationType")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return ResultDestinationType(raw)
+    except ValueError:
+        return None
+
+
+def _resolve_destination_node_id(
+    destination: dict[str, Any],
+    fallback_refs: list[int | str | float] | None,
+) -> int | None:
+    for key in (
+        "node_id",
+        "nodeId",
+        "origin_node_id",
+        "originNodeId",
+        "target_node_id",
+        "targetNodeId",
+        "document_node_id",
+        "documentNodeId",
+    ):
+        if key in destination:
+            return _coerce_input_ref(destination.get(key))
+    if fallback_refs:
+        return _coerce_input_ref(fallback_refs[0])
+    return None
+
+
+def _normalize_insert_mode(value: Any) -> str:
+    if not isinstance(value, str):
+        return "append"
+    mode = value.strip().lower()
+    if mode in {"append", "prepend", "replace"}:
+        return mode
+    return "append"
+
+
+def _render_result_text(job_type: JobType, result_data: dict[str, Any]) -> str:
+    if job_type == JobType.DEEP_RESEARCH:
+        synthesis = result_data.get("judge_synthesis") or result_data.get("synthesis") or {}
+        summary = synthesis.get("executive_summary")
+        if isinstance(summary, str) and summary.strip():
+            return summary.strip()
+    if job_type == JobType.SYNTHESIS:
+        synthesis = result_data.get("judge_synthesis") or result_data.get("synthesis") or {}
+        summary = synthesis.get("executive_summary")
+        if isinstance(summary, str) and summary.strip():
+            return summary.strip()
+    if job_type == JobType.PERSPECTIVE_ANALYSIS:
+        evaluation = result_data.get("evaluation") or {}
+        summary = evaluation.get("summary") or evaluation.get("overall_assessment")
+        if isinstance(summary, str) and summary.strip():
+            return summary.strip()
+    if job_type == JobType.PLANNER:
+        plan_metadata = result_data.get("plan_metadata") or {}
+        goal = plan_metadata.get("goal")
+        if isinstance(goal, str) and goal.strip():
+            return f"Plan: {goal.strip()}"
+    for key in ("summary", "content", "analysis", "transcription"):
+        value = result_data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return json.dumps(result_data, ensure_ascii=True, indent=2)
+
+
+async def _get_job_metadata(job_id: str) -> dict[str, Any]:
+    job = await progress_tracker.get_job(job_id)
+    return _parse_job_metadata(getattr(job, "job_metadata", None))
+
+
+async def _get_result_destinations(job_id: str) -> list[dict[str, Any]]:
+    metadata = await _get_job_metadata(job_id)
+    return _extract_result_destinations(metadata)
+
+
+async def _get_origin_turn_id(job_id: str) -> int | None:
+    metadata = await _get_job_metadata(job_id)
+    raw = metadata.get("origin_turn_id") or metadata.get("originTurnId")
+    return _coerce_input_ref(raw)
+
+
+def _record_custom_destination(
+    result_data: dict[str, Any],
+    destination: dict[str, Any],
+) -> None:
+    custom_list = result_data.setdefault("custom_destinations", [])
+    if isinstance(custom_list, list):
+        custom_list.append(destination)
+
+
+async def _insert_result_into_document(
+    node_id: int,
+    content: str,
+    mode: str,
+) -> bool:
+    async with AsyncSessionLocal() as session:
+        repo = NodeRepository(session)
+        node = await repo.get_by_id(node_id)
+        if node is None:
+            return False
+        existing = node.content or ""
+        if mode == "replace":
+            new_content = content
+        elif mode == "prepend":
+            new_content = f"{content}\n\n{existing}".rstrip() if existing else content
+        else:
+            new_content = f"{existing}\n\n{content}".strip() if existing else content
+        updated = await repo.update(node_id, content=new_content)
+        return updated is not None
+
+
+async def _attach_artifact_to_node(
+    node_id: int,
+    artifact_id: int,
+    artifact_type: str | None,
+    job_id: str,
+    job_type: JobType,
+) -> bool:
+    async with AsyncSessionLocal() as session:
+        repo = NodeRepository(session)
+        node = await repo.get_by_id(node_id)
+        if node is None:
+            return False
+        metadata = node.get_metadata()
+        existing_ids = []
+        if isinstance(metadata.get("artifactIds"), list):
+            existing_ids = [
+                entry for entry in metadata["artifactIds"] if isinstance(entry, int)
+            ]
+        prior_id = metadata.get("artifactId")
+        if isinstance(prior_id, int) and prior_id not in existing_ids:
+            existing_ids.append(prior_id)
+        if artifact_id not in existing_ids:
+            existing_ids.append(artifact_id)
+        metadata["artifactId"] = artifact_id
+        metadata["artifactIds"] = existing_ids
+        metadata["artifactType"] = artifact_type
+        metadata["jobId"] = job_id
+        metadata["jobType"] = job_type.value
+        updated = await repo.update_metadata(node_id, metadata)
+        return updated is not None
 
 
 async def _store_perspective_nodes(
@@ -422,6 +664,41 @@ def _compute_report_position(input_nodes: list[Node]) -> dict[str, float]:
     }
 
 
+async def _store_research_artifact(
+    *,
+    job_id: str,
+    user_id: str | None,
+    workspace_id: str | None,
+    query: str,
+    result_data: dict[str, Any],
+    origin_turn_id: int | None = None,
+) -> tuple[int, int]:
+    async with AsyncSessionLocal() as session:
+        canvas = await _resolve_canvas(session, user_id, workspace_id)
+        effective_user_id = user_id or DEFAULT_USER_ID
+        report_label = _build_report_label(query)
+
+        metadata = ArtifactMetadata(
+            artifact_type=ArtifactType.RESEARCH_REPORT,
+            artifact_name=report_label,
+            description=f"Deep research report for '{_truncate_label(query)}'",
+            filename=f"research_report_{job_id}.json",
+            mime_type="application/json",
+        )
+        storage = get_artifact_storage()
+        stored = await storage.store_artifact(
+            session,
+            job_id=job_id,
+            metadata=metadata,
+            content=json.dumps(result_data, ensure_ascii=True, indent=2),
+            user_id=effective_user_id,
+            workspace_id=str(canvas.id),
+            origin_turn_id=origin_turn_id,
+        )
+
+    return stored.id, canvas.id
+
+
 async def _store_research_report(
     *,
     job_id: str,
@@ -431,6 +708,7 @@ async def _store_research_report(
     result_data: dict[str, Any],
     input_refs: list[int | str | float] | None,
     judge_synthesis: JudgeSynthesis,
+    origin_turn_id: int | None = None,
 ) -> tuple[int, int, list[int], int]:
     async with AsyncSessionLocal() as session:
         canvas = await _resolve_canvas(session, user_id, workspace_id)
@@ -452,6 +730,7 @@ async def _store_research_report(
             content=json.dumps(result_data, ensure_ascii=True, indent=2),
             user_id=effective_user_id,
             workspace_id=str(canvas.id),
+            origin_turn_id=origin_turn_id,
         )
 
         input_nodes = await _load_input_nodes(session, input_refs, canvas.id)
@@ -491,6 +770,120 @@ async def _store_research_report(
                 edge_ids.append(edge.id)
 
     return stored.id, node.id, edge_ids, canvas.id
+
+
+async def _store_json_artifact(
+    *,
+    job_id: str,
+    user_id: str | None,
+    workspace_id: str | None,
+    artifact_type: ArtifactType,
+    artifact_name: str,
+    description: str | None,
+    filename: str,
+    payload: dict[str, Any],
+    origin_turn_id: int | None = None,
+) -> tuple[int, int]:
+    async with AsyncSessionLocal() as session:
+        canvas = await _resolve_canvas(session, user_id, workspace_id)
+        effective_user_id = user_id or DEFAULT_USER_ID
+        metadata = ArtifactMetadata(
+            artifact_type=artifact_type,
+            artifact_name=artifact_name,
+            description=description,
+            filename=filename,
+            mime_type="application/json",
+        )
+        storage = get_artifact_storage()
+        stored = await storage.store_artifact(
+            session,
+            job_id=job_id,
+            metadata=metadata,
+            content=json.dumps(payload, ensure_ascii=True, indent=2),
+            user_id=effective_user_id,
+            workspace_id=str(canvas.id),
+            origin_turn_id=origin_turn_id,
+        )
+
+    return stored.id, canvas.id
+
+
+async def _store_plan_nodes(
+    *,
+    job_id: str,
+    user_id: str | None,
+    workspace_id: str | None,
+    plan_title: str,
+    plan_metadata: dict[str, Any],
+    task_dag: dict[str, Any],
+    execution_order: list[Any],
+    source_references: list[Any],
+    reasoning: Any,
+    artifact_id: int | None,
+) -> tuple[int, int, int]:
+    async with AsyncSessionLocal() as session:
+        canvas = await _resolve_canvas(session, user_id, workspace_id)
+        plan_metadata_payload = {
+            "plan_metadata": plan_metadata,
+            "execution_order": execution_order,
+            "source_references": source_references,
+            "reasoning": reasoning,
+            "planner_job_id": job_id,
+            "artifactId": artifact_id,
+        }
+        dag_metadata_payload = {
+            "task_dag": task_dag,
+            "execution_order": execution_order,
+            "source_references": source_references,
+            "planner_job_id": job_id,
+            "artifactId": artifact_id,
+        }
+        node_repo = NodeRepository(session)
+        base_position = {"x": 0.0, "y": 0.0, "z": 0.0}
+        plan_node: Node | None = None
+        dag_node: Node | None = None
+        last_error: DuplicatePositionError | None = None
+        for candidate in _iter_position_candidates(base_position):
+            plan_position = candidate
+            dag_position = {
+                "x": candidate["x"] + DAG_OFFSET_X,
+                "y": candidate["y"] + DAG_OFFSET_Y,
+                "z": candidate["z"],
+            }
+            try:
+                plan_node = await node_repo.create_node(
+                    canvas_id=canvas.id,
+                    label=f"Plan: {plan_title}",
+                    type=NodeType.PLAN,
+                    position=plan_position,
+                    node_metadata=plan_metadata_payload,
+                )
+            except DuplicatePositionError as exc:
+                last_error = exc
+                continue
+
+            try:
+                dag_node = await node_repo.create_node(
+                    canvas_id=canvas.id,
+                    label=f"Task DAG: {plan_title}",
+                    type=NodeType.DAG,
+                    position=dag_position,
+                    node_metadata=dag_metadata_payload,
+                )
+            except DuplicatePositionError as exc:
+                last_error = exc
+                await node_repo.delete(plan_node.id)
+                plan_node = None
+                continue
+            break
+
+        if plan_node is None or dag_node is None:
+            raise last_error or DuplicatePositionError(
+                canvas_id=canvas.id,
+                position=base_position,
+            )
+
+    return plan_node.id, dag_node.id, canvas.id
 
 
 async def _stream_periodic_progress(
@@ -922,26 +1315,102 @@ async def deep_research_job(
             "job_id": job_id,
         }
 
-        report_artifact_id, report_node_id, report_edge_ids, report_canvas_id = (
-            await _store_research_report(
-                job_id=job_id,
-                user_id=user_id,
-                workspace_id=workspace_id,
-                query=query,
-                result_data=result_data,
-                input_refs=input_refs,
-                judge_synthesis=judge_synthesis,
-            )
-        )
+        destinations = await _get_result_destinations(job_id)
+        report_artifact_id: int | None = None
+        report_node_id: int | None = None
+        report_canvas_id: int | None = None
+        report_edge_ids: list[int] = []
 
-        result_data.update(
-            {
-                "report_artifact_id": report_artifact_id,
-                "report_node_id": report_node_id,
-                "report_edge_ids": report_edge_ids,
-                "report_canvas_id": report_canvas_id,
-            }
-        )
+        if destinations:
+            origin_turn_id = await _get_origin_turn_id(job_id)
+            wants_canvas_node = any(
+                _resolve_destination_type(dest) == ResultDestinationType.CANVAS_NODE
+                for dest in destinations
+            )
+            if wants_canvas_node:
+                report_artifact_id, report_node_id, report_edge_ids, report_canvas_id = (
+                    await _store_research_report(
+                        job_id=job_id,
+                        user_id=user_id,
+                        workspace_id=workspace_id,
+                        query=query,
+                        result_data=result_data,
+                        input_refs=input_refs,
+                        judge_synthesis=judge_synthesis,
+                        origin_turn_id=origin_turn_id,
+                    )
+                )
+            else:
+                report_artifact_id, report_canvas_id = await _store_research_artifact(
+                    job_id=job_id,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    query=query,
+                    result_data=result_data,
+                    origin_turn_id=origin_turn_id,
+                )
+
+            result_text = _render_result_text(JobType.DEEP_RESEARCH, result_data)
+            for dest in destinations:
+                dest_type = _resolve_destination_type(dest)
+                if dest_type in {
+                    None,
+                    ResultDestinationType.CANVAS_NODE,
+                    ResultDestinationType.USER_STORAGE,
+                }:
+                    continue
+                if dest_type == ResultDestinationType.DOCUMENT_INSERT:
+                    node_id = _resolve_destination_node_id(dest, input_refs)
+                    if node_id:
+                        mode = _normalize_insert_mode(
+                            dest.get("insert_mode") or dest.get("insertMode")
+                        )
+                        await _insert_result_into_document(node_id, result_text, mode)
+                elif dest_type == ResultDestinationType.NODE_ARTIFACT:
+                    node_id = _resolve_destination_node_id(dest, input_refs)
+                    if node_id and report_artifact_id is not None:
+                        await _attach_artifact_to_node(
+                            node_id,
+                            report_artifact_id,
+                            ArtifactType.RESEARCH_REPORT.value,
+                            job_id,
+                            JobType.DEEP_RESEARCH,
+                        )
+                elif dest_type == ResultDestinationType.CUSTOM:
+                    _record_custom_destination(result_data, dest)
+
+            if report_artifact_id is not None:
+                result_data.update(
+                    {
+                        "report_artifact_id": report_artifact_id,
+                        "report_node_id": report_node_id,
+                        "report_edge_ids": report_edge_ids,
+                        "report_canvas_id": report_canvas_id,
+                    }
+                )
+        else:
+            origin_turn_id = await _get_origin_turn_id(job_id)
+            report_artifact_id, report_node_id, report_edge_ids, report_canvas_id = (
+                await _store_research_report(
+                    job_id=job_id,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    query=query,
+                    result_data=result_data,
+                    input_refs=input_refs,
+                    judge_synthesis=judge_synthesis,
+                    origin_turn_id=origin_turn_id,
+                )
+            )
+
+            result_data.update(
+                {
+                    "report_artifact_id": report_artifact_id,
+                    "report_node_id": report_node_id,
+                    "report_edge_ids": report_edge_ids,
+                    "report_canvas_id": report_canvas_id,
+                }
+            )
 
         logger.info(f"[{job_id}] Deep research completed successfully")
 
@@ -1158,15 +1627,93 @@ async def perspective_analysis_job(
             steps_total=2,
         )
 
-        # Store perspective nodes using _store_perspective_nodes (FR-012)
-        synthesis_node_id, critic_node_ids, edge_ids, canvas_id = await _store_perspective_nodes(
-            job_id=job_id,
-            user_id=user_id,
-            workspace_id=workspace_id,
-            topic=topic,
-            evaluation=evaluation.model_dump(),
-            input_refs=input_refs,
-        )
+        destinations = await _get_result_destinations(job_id)
+        synthesis_node_id: int | None = None
+        critic_node_ids: list[int] = []
+        edge_ids: list[int] = []
+        canvas_id: int | None = None
+        artifact_id: int | None = None
+
+        if destinations:
+            wants_canvas_node = any(
+                _resolve_destination_type(dest) == ResultDestinationType.CANVAS_NODE
+                for dest in destinations
+            )
+            if wants_canvas_node:
+                synthesis_node_id, critic_node_ids, edge_ids, canvas_id = (
+                    await _store_perspective_nodes(
+                        job_id=job_id,
+                        user_id=user_id,
+                        workspace_id=workspace_id,
+                        topic=topic,
+                        evaluation=evaluation.model_dump(),
+                        input_refs=input_refs,
+                    )
+                )
+
+            needs_artifact = any(
+                _resolve_destination_type(dest)
+                in {
+                    ResultDestinationType.USER_STORAGE,
+                    ResultDestinationType.NODE_ARTIFACT,
+                }
+                for dest in destinations
+            ) or not wants_canvas_node
+            if needs_artifact:
+                origin_turn_id = await _get_origin_turn_id(job_id)
+                artifact_id, canvas_id = await _store_json_artifact(
+                    job_id=job_id,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    artifact_type=ArtifactType.PERSPECTIVE_RESULT,
+                    artifact_name=f"Perspective analysis: {topic}",
+                    description=f"Perspective analysis results for '{_truncate_label(topic)}'",
+                    filename=f"perspective_analysis_{job_id}.json",
+                    payload=evaluation.model_dump(),
+                    origin_turn_id=origin_turn_id,
+                )
+
+            result_text = _render_result_text(JobType.PERSPECTIVE_ANALYSIS, {"evaluation": evaluation.model_dump()})
+            for dest in destinations:
+                dest_type = _resolve_destination_type(dest)
+                if dest_type in {
+                    None,
+                    ResultDestinationType.CANVAS_NODE,
+                    ResultDestinationType.USER_STORAGE,
+                }:
+                    continue
+                if dest_type == ResultDestinationType.DOCUMENT_INSERT:
+                    node_id = _resolve_destination_node_id(dest, input_refs)
+                    if node_id:
+                        mode = _normalize_insert_mode(
+                            dest.get("insert_mode") or dest.get("insertMode")
+                        )
+                        await _insert_result_into_document(node_id, result_text, mode)
+                elif dest_type == ResultDestinationType.NODE_ARTIFACT:
+                    node_id = _resolve_destination_node_id(dest, input_refs)
+                    if node_id and artifact_id is not None:
+                        await _attach_artifact_to_node(
+                            node_id,
+                            artifact_id,
+                            ArtifactType.PERSPECTIVE_RESULT.value,
+                            job_id,
+                            JobType.PERSPECTIVE_ANALYSIS,
+                        )
+                elif dest_type == ResultDestinationType.CUSTOM:
+                    custom_destinations.append(dest)
+
+        else:
+            # Store perspective nodes using _store_perspective_nodes (FR-012)
+            synthesis_node_id, critic_node_ids, edge_ids, canvas_id = (
+                await _store_perspective_nodes(
+                    job_id=job_id,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    topic=topic,
+                    evaluation=evaluation.model_dump(),
+                    input_refs=input_refs,
+                )
+            )
 
         result_data = {
             "topic": topic,
@@ -1178,6 +1725,10 @@ async def perspective_analysis_job(
             "timestamp": datetime.now(UTC).isoformat(),
             "job_id": job_id,
         }
+        if custom_destinations:
+            result_data["custom_destinations"] = custom_destinations
+        if artifact_id is not None:
+            result_data["artifact_id"] = artifact_id
 
         logger.info(
             f"[{job_id}] Perspective analysis completed: "
@@ -1291,6 +1842,106 @@ async def synthesis_job(
             "timestamp": datetime.now(UTC).isoformat(),
             "job_id": job_id,
         }
+
+        destinations = await _get_result_destinations(job_id)
+        if destinations:
+            origin_turn_id = await _get_origin_turn_id(job_id)
+            artifact_id: int | None = None
+            node_id: int | None = None
+            canvas_id: int | None = None
+            custom_destinations: list[dict[str, Any]] = []
+
+            wants_canvas_node = any(
+                _resolve_destination_type(dest) == ResultDestinationType.CANVAS_NODE
+                for dest in destinations
+            )
+            needs_artifact = any(
+                _resolve_destination_type(dest)
+                in {
+                    ResultDestinationType.CANVAS_NODE,
+                    ResultDestinationType.USER_STORAGE,
+                    ResultDestinationType.NODE_ARTIFACT,
+                }
+                for dest in destinations
+            )
+
+            if needs_artifact:
+                artifact_id, canvas_id = await _store_json_artifact(
+                    job_id=job_id,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    artifact_type=ArtifactType.SYNTHESIS_OUTPUT,
+                    artifact_name=f"Synthesis: {_truncate_label(query)}",
+                    description=f"Synthesis output for '{_truncate_label(query)}'",
+                    filename=f"synthesis_{job_id}.json",
+                    payload=result_data,
+                    origin_turn_id=origin_turn_id,
+                )
+
+            if wants_canvas_node:
+                async with AsyncSessionLocal() as session:
+                    canvas = await _resolve_canvas(session, user_id, workspace_id)
+                    node_repo = NodeRepository(session)
+                    summary = _render_result_text(JobType.SYNTHESIS, result_data)
+                    node_metadata = {
+                        "artifactId": artifact_id,
+                        "artifactType": ArtifactType.SYNTHESIS_OUTPUT.value if artifact_id else None,
+                        "jobId": job_id,
+                        "jobType": JobType.SYNTHESIS.value,
+                        "query": query,
+                        "summary": summary,
+                    }
+                    node = await _create_node_with_position(
+                        node_repo=node_repo,
+                        canvas_id=canvas.id,
+                        label=_truncate_label(
+                            f"Synthesis: {query}",
+                            limit=REPORT_LABEL_LIMIT,
+                        ),
+                        node_type=NodeType.DOCUMENT,
+                        base_position={"x": 0.0, "y": 0.0, "z": 0.0},
+                        node_metadata=node_metadata,
+                    )
+                    node_id = node.id
+                    canvas_id = canvas.id
+
+            result_text = _render_result_text(JobType.SYNTHESIS, result_data)
+            for dest in destinations:
+                dest_type = _resolve_destination_type(dest)
+                if dest_type in {
+                    None,
+                    ResultDestinationType.CANVAS_NODE,
+                    ResultDestinationType.USER_STORAGE,
+                }:
+                    continue
+                if dest_type == ResultDestinationType.DOCUMENT_INSERT:
+                    target_id = _resolve_destination_node_id(dest, None)
+                    if target_id:
+                        mode = _normalize_insert_mode(
+                            dest.get("insert_mode") or dest.get("insertMode")
+                        )
+                        await _insert_result_into_document(target_id, result_text, mode)
+                elif dest_type == ResultDestinationType.NODE_ARTIFACT:
+                    target_id = _resolve_destination_node_id(dest, None)
+                    if target_id and artifact_id is not None:
+                        await _attach_artifact_to_node(
+                            target_id,
+                            artifact_id,
+                            ArtifactType.SYNTHESIS_OUTPUT.value,
+                            job_id,
+                            JobType.SYNTHESIS,
+                        )
+                elif dest_type == ResultDestinationType.CUSTOM:
+                    custom_destinations.append(dest)
+
+            if artifact_id is not None:
+                result_data["artifact_id"] = artifact_id
+            if node_id is not None:
+                result_data["node_id"] = node_id
+            if canvas_id is not None:
+                result_data["canvas_id"] = canvas_id
+            if custom_destinations:
+                result_data["custom_destinations"] = custom_destinations
 
         logger.info(f"[{job_id}] Judge-based synthesis completed successfully")
 
@@ -1511,6 +2162,7 @@ async def transcription_job(
                 filename=f"audio_block_{audio_block_id}_transcription.txt",
                 mime_type="text/plain",
             )
+            origin_turn_id = await _get_origin_turn_id(job_id)
             stored = await storage.store_artifact(
                 db,
                 job_id=job_id,
@@ -1518,6 +2170,7 @@ async def transcription_job(
                 content=mock_transcription,
                 user_id=effective_user_id,
                 workspace_id=workspace_id or str(audio_block.canvas_id),
+                origin_turn_id=origin_turn_id,
             )
 
             result_data = {
@@ -1676,6 +2329,97 @@ async def planner_job(
             "success": planner_result.success,
             "job_id": job_id,
         }
+
+        destinations = await _get_result_destinations(job_id)
+        if destinations:
+            origin_turn_id = await _get_origin_turn_id(job_id)
+            artifact_id: int | None = None
+            plan_node_id: int | None = None
+            dag_node_id: int | None = None
+            canvas_id: int | None = None
+            custom_destinations: list[dict[str, Any]] = []
+
+            wants_canvas_node = any(
+                _resolve_destination_type(dest) == ResultDestinationType.CANVAS_NODE
+                for dest in destinations
+            )
+            needs_artifact = any(
+                _resolve_destination_type(dest)
+                in {
+                    ResultDestinationType.CANVAS_NODE,
+                    ResultDestinationType.USER_STORAGE,
+                    ResultDestinationType.NODE_ARTIFACT,
+                }
+                for dest in destinations
+            )
+
+            if needs_artifact:
+                artifact_id, canvas_id = await _store_json_artifact(
+                    job_id=job_id,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    artifact_type=ArtifactType.JSON_EXPORT,
+                    artifact_name=f"Plan output: {_truncate_label(goal)}",
+                    description=f"Planner job output for '{_truncate_label(goal)}'",
+                    filename=f"planner_{job_id}.json",
+                    payload=result_data,
+                    origin_turn_id=origin_turn_id,
+                )
+
+            if wants_canvas_node:
+                plan_title = planner_result.plan_metadata.goal or goal
+                plan_node_id, dag_node_id, canvas_id = await _store_plan_nodes(
+                    job_id=job_id,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    plan_title=plan_title,
+                    plan_metadata=planner_result.plan_metadata.model_dump(),
+                    task_dag=planner_result.task_dag.model_dump(),
+                    execution_order=execution_order,
+                    source_references=planner_result.source_references,
+                    reasoning=planner_result.reasoning,
+                    artifact_id=artifact_id,
+                )
+
+            result_text = _render_result_text(JobType.PLANNER, result_data)
+            for dest in destinations:
+                dest_type = _resolve_destination_type(dest)
+                if dest_type in {
+                    None,
+                    ResultDestinationType.CANVAS_NODE,
+                    ResultDestinationType.USER_STORAGE,
+                }:
+                    continue
+                if dest_type == ResultDestinationType.DOCUMENT_INSERT:
+                    target_id = _resolve_destination_node_id(dest, None)
+                    if target_id:
+                        mode = _normalize_insert_mode(
+                            dest.get("insert_mode") or dest.get("insertMode")
+                        )
+                        await _insert_result_into_document(target_id, result_text, mode)
+                elif dest_type == ResultDestinationType.NODE_ARTIFACT:
+                    target_id = _resolve_destination_node_id(dest, None)
+                    if target_id and artifact_id is not None:
+                        await _attach_artifact_to_node(
+                            target_id,
+                            artifact_id,
+                            ArtifactType.JSON_EXPORT.value,
+                            job_id,
+                            JobType.PLANNER,
+                        )
+                elif dest_type == ResultDestinationType.CUSTOM:
+                    custom_destinations.append(dest)
+
+            if artifact_id is not None:
+                result_data["artifact_id"] = artifact_id
+            if plan_node_id is not None:
+                result_data["plan_node_id"] = plan_node_id
+            if dag_node_id is not None:
+                result_data["dag_node_id"] = dag_node_id
+            if canvas_id is not None:
+                result_data["canvas_id"] = canvas_id
+            if custom_destinations:
+                result_data["custom_destinations"] = custom_destinations
 
         logger.info(
             f"[{job_id}] Planner job completed: "
@@ -1857,6 +2601,7 @@ async def doc_generation_job(
                 mime_type="text/markdown",
             )
 
+            origin_turn_id = await _get_origin_turn_id(source_job_id)
             stored = await storage.store_artifact(
                 db=db,
                 job_id=source_job_id,
@@ -1864,6 +2609,7 @@ async def doc_generation_job(
                 content=generated.content,
                 user_id=user_id,
                 workspace_id=workspace_id,
+                origin_turn_id=origin_turn_id,
             )
 
             generated.artifact_id = stored.id

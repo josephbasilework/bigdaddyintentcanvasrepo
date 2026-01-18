@@ -175,6 +175,7 @@ async def ingest_attachment(
         storage_path=storage_path,
         inline_data=None,
         archive_after_days=None,
+        origin_turn_id=turn_id,
     )
     db.add(artifact)
     await db.flush()

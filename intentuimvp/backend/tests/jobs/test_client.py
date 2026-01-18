@@ -171,6 +171,34 @@ class TestEnqueueJob:
             parameters={"query": "Test", "depth": 1},
         )
 
+    async def test_enqueue_job_extracts_result_destination(self) -> None:
+        """Should persist result destination metadata without passing it to the worker."""
+        mock_redis = MagicMock()
+        mock_redis.enqueue_job = AsyncMock(return_value="redis-job")
+        mock_redis.close = AsyncMock()
+
+        with patch("app.jobs.client.create_pool", new_callable=AsyncMock) as mock_create_pool:
+            mock_create_pool.return_value = mock_redis
+            with patch(
+                "app.jobs.client.progress_tracker.create_job",
+                new_callable=AsyncMock,
+            ) as mock_create_job:
+                await enqueue_job(
+                    job_type=JobType.EXPORT,
+                    job_data={
+                        "workspace_id": "workspace-123",
+                        "export_format": "json",
+                        "result_destination": {"type": "user_storage"},
+                    },
+                )
+
+        create_kwargs = mock_create_job.call_args.kwargs
+        assert create_kwargs["parameters"] == {
+            "workspace_id": "workspace-123",
+            "export_format": "json",
+        }
+        assert create_kwargs["job_metadata"]["result_destination"] == {"type": "user_storage"}
+
 
 @pytest.mark.asyncio
 class TestGetJobStatus:

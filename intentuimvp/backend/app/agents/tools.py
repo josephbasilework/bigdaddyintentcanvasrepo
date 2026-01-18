@@ -356,6 +356,14 @@ class CanvasSpawnJobParams(BaseModel):
         default=None,
         description="Additional job parameters (varies by job_type)",
     )
+    result_destination: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional result destination routing for the job output",
+    )
+    result_destinations: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="Optional list of result destinations for the job output",
+    )
     user_id: str | None = Field(
         default=None,
         description="Optional user ID for the job context",
@@ -1280,6 +1288,8 @@ class ToolManager:
             job_type: str,
             input_refs: list[int] | None = None,
             params: dict[str, Any] | None = None,
+            result_destination: dict[str, Any] | None = None,
+            result_destinations: list[dict[str, Any]] | None = None,
             user_id: str | None = None,
             workspace_id: str | None = None,
         ) -> dict[str, Any]:
@@ -1302,6 +1312,10 @@ class ToolManager:
                 job_data["input_refs"] = input_refs
             if params:
                 job_data.update(params)
+            if result_destinations is not None:
+                job_data["result_destinations"] = result_destinations
+            elif result_destination is not None:
+                job_data["result_destination"] = result_destination
 
             # Use default user_id if not provided
             effective_user_id = user_id or DEFAULT_USER_ID

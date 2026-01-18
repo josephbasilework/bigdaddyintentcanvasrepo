@@ -165,6 +165,7 @@ class JobService:  # noqa: F811
         job_data: dict[str, Any],
         user_id: str | None = None,
         workspace_id: str | None = None,
+        job_metadata: dict[str, Any] | None = None,
     ) -> str:
         """Enqueue a job for processing.
 
@@ -176,6 +177,7 @@ class JobService:  # noqa: F811
             job_data: Data to pass to the job function
             user_id: Optional user ID for the job context
             workspace_id: Optional workspace ID for the job context
+            job_metadata: Optional metadata to persist with the job record
 
         Returns:
             Job ID (UUID) that can be used to track the job
@@ -193,7 +195,13 @@ class JobService:  # noqa: F811
             )
             ```
         """
-        job_id = await enqueue_job(job_type, job_data, user_id, workspace_id)
+        job_id = await enqueue_job(
+            job_type,
+            job_data,
+            user_id=user_id,
+            workspace_id=workspace_id,
+            job_metadata=job_metadata,
+        )
         logger.info(f"JobService: Enqueued job {job_id} of type {job_type}")
 
         # Emit telemetry event for Research Job Completion metric (JM-8)

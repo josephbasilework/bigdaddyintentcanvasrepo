@@ -4,6 +4,7 @@ Tests that the progress tracker emits structured job lifecycle events
 as required by NFR-OBS-003: Job system lifecycle events, duration, outcomes.
 """
 
+import json
 import logging
 
 import pytest
@@ -124,6 +125,27 @@ class TestJobLifecycleLogging:
         assert log_entry.user_id == "test-user"
         assert log_entry.workspace_id == "test-workspace"
         assert log_entry.correlation_id is not None
+
+    async def test_job_started_sets_origin_turn_id(self):
+        """Job start should persist origin_turn_id metadata."""
+        job_id = "test-job-origin-turn"
+        await progress_tracker.create_job(
+            job_id=job_id,
+            job_type=JobType.EXPORT,
+            user_id="origin-user",
+            workspace_id="1",
+        )
+
+        await progress_tracker.update_progress(
+            job_id=job_id,
+            progress_percent=5.0,
+            current_step="Starting export",
+        )
+
+        job = await progress_tracker.get_job(job_id)
+        assert job is not None
+        metadata = json.loads(job.job_metadata) if job.job_metadata else {}
+        assert isinstance(metadata.get("origin_turn_id"), int)
 
     async def test_job_complete_emits_lifecycle_event_with_duration(self, caplog):
         """Test that job completion emits structured job_lifecycle event with duration."""

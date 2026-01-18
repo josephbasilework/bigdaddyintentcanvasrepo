@@ -53,6 +53,7 @@ class StoredArtifact(BaseModel):
     size_bytes: int | None
     storage_path: str | None
     inline_data: str | None
+    origin_turn_id: int | None = None
     is_archived: bool
     created_at: str
     updated_at: str
@@ -130,6 +131,7 @@ class ArtifactStorageService:
         content: str | bytes,
         user_id: str | None = None,
         workspace_id: str | None = None,
+        origin_turn_id: int | None = None,
     ) -> StoredArtifact:
         """Store a job artifact.
 
@@ -143,6 +145,7 @@ class ArtifactStorageService:
             content: Artifact content (string or bytes).
             user_id: Optional user ID for access control.
             workspace_id: Optional workspace ID.
+            origin_turn_id: Optional turn ID that originated the artifact.
 
         Returns:
             StoredArtifact with database record details.
@@ -192,6 +195,7 @@ class ArtifactStorageService:
             storage_path=storage_path,
             inline_data=inline_data,
             archive_after_days=metadata.archive_after_days,
+            origin_turn_id=origin_turn_id,
         )
 
         db.add(artifact)
