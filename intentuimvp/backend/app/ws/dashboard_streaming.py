@@ -237,12 +237,13 @@ class DashboardStreamingService:
                     timestamp=datetime.now(UTC),
                 )
                 message = DashboardUpdateMessage(payload=payload)
-                message_json = message.model_dump_json()
 
                 # Send to all subscribed connections
                 for ws in websockets:
                     try:
-                        await ws.send_text(message_json)
+                        from app.ws.websocket import manager
+
+                        await manager.send_agui_message(message, ws)
                         update_count += 1
                     except Exception as e:
                         logger.warning(
@@ -297,7 +298,9 @@ class DashboardStreamingService:
         )
         message = DashboardSubscribedMessage(payload=payload)
         try:
-            await websocket.send_text(message.model_dump_json())
+            from app.ws.websocket import manager
+
+            await manager.send_agui_message(message, websocket)
         except Exception as e:
             logger.warning(
                 f"Failed to send subscription confirmation: {e}",

@@ -689,44 +689,36 @@ class ToolManager:
                         position=params.position.model_dump(),
                     )
 
-            moved_payload = None
             if moved_node is not None and moved_position is not None:
-                moved_payload = {
-                    "type": "node.updated",
-                    "payload": {
-                        "id": str(moved_node.id),
-                        "x": moved_position.x,
-                        "y": moved_position.y,
-                        "z": moved_position.z,
-                        "previous": {
-                            "x": params.position.x,
-                            "y": params.position.y,
-                            "z": params.position.z,
-                        },
-                    },
-                }
+                from app.agui import NodeEventPayload, NodeUpdatedMessage
 
-            # Broadcast node creation to all connected clients
-            if moved_payload is not None:
-                await ws_manager.broadcast(json.dumps(moved_payload))
-            node_data = {
-                "type": "node.created",
-                "payload": {
-                    "id": str(node.id),
-                    "type": params.type.value if hasattr(params.type, "value") else str(params.type),
-                    "title": params.content,
-                    "content": params.content,
-                    "x": final_position.x,
-                    "y": final_position.y,
-                    "z": final_position.z,
-                    "metadata": params.metadata,
-                },
+                moved_event = NodeEventPayload(
+                    id=str(moved_node.id),
+                    x=moved_position.x,
+                    y=moved_position.y,
+                    z=moved_position.z,
+                    previous={
+                        "x": params.position.x,
+                        "y": params.position.y,
+                        "z": params.position.z,
+                    },
+                )
+                await ws_manager.broadcast_agui(
+                    NodeUpdatedMessage(payload=moved_event)
+                )
+
+            node_payload = {
+                "id": str(node.id),
+                "type": params.type.value
+                if hasattr(params.type, "value")
+                else str(params.type),
+                "title": params.content,
+                "content": params.content,
+                "x": final_position.x,
+                "y": final_position.y,
+                "z": final_position.z,
+                "metadata": params.metadata,
             }
-            await ws_manager.broadcast(json.dumps(node_data))
-            logger.info(
-                "Broadcast node.created",
-                extra={"node_id": node.id, "type": params.type},
-            )
             await log_turn_for_user_async(
                 session,
                 user_id=DEFAULT_USER_ID,
@@ -736,7 +728,7 @@ class ToolManager:
                 summary=f"Node created by agent: {params.content[:120]}"
                 if params.content
                 else "Node created by agent",
-                payload=node_data["payload"],
+                payload=node_payload,
                 related_node_id=node.id,
             )
 
@@ -830,9 +822,6 @@ class ToolManager:
                         "z": position.z,
                         "metadata": node_metadata,
                     }
-                    await ws_manager.broadcast(
-                        json.dumps({"type": "node.created", "payload": node_payload})
-                    )
 
                     await log_turn_for_user_async(
                         session,
@@ -874,9 +863,6 @@ class ToolManager:
                         "label": created.label,
                         "metadata": edge_metadata,
                     }
-                    await ws_manager.broadcast(
-                        json.dumps({"type": "edge.created", "payload": edge_payload})
-                    )
 
                     await log_turn_for_user_async(
                         session,
@@ -1077,9 +1063,6 @@ class ToolManager:
                     "label": edge.label,
                     "metadata": edge.get_metadata(),
                 }
-                await ws_manager.broadcast(
-                    json.dumps({"type": "edge.created", "payload": edge_payload})
-                )
 
                 await log_turn_for_user_async(
                     session,

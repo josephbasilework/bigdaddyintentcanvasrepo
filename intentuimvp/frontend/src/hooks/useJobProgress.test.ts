@@ -13,14 +13,24 @@ global.fetch = vi.fn();
 
 describe("useJobProgress", () => {
   const mockJobId = "test-job-123";
+  let messageHandler:
+    | ((message: { type: string; payload?: Record<string, unknown> }) => void)
+    | null = null;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    messageHandler = null;
 
     // Mock AG-UI client
     (getAGUIClient as ReturnType<typeof vi.fn>).mockReturnValue({
-      connect: vi.fn(),
-      disconnect: vi.fn(),
+      onMessage: vi.fn(
+        (handler: (message: { type: string; payload?: Record<string, unknown> }) => void) => {
+          messageHandler = handler;
+          return () => {
+            messageHandler = null;
+          };
+        }
+      ),
     });
   });
 
@@ -86,42 +96,49 @@ describe("useJobProgress", () => {
     expect(result.current.error).toBeNull();
   });
 
-  it("should poll for job updates every 2 seconds", async () => {
-    const mockJobResponse = {
-      job_id: mockJobId,
-      job_type: "deep_research",
-      status: "in_progress",
-      progress_percent: 50,
-      current_step: "Researching",
-      updated_at: "2024-01-01T00:00:00Z",
-    };
-
+  it("should update from job progress messages", async () => {
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
-      json: async () => mockJobResponse,
+      json: async () => ({}),
     });
 
-    renderHook(() => useJobProgress(mockJobId));
+    const { result } = renderHook(() => useJobProgress(mockJobId));
 
-    // Initial fetch
     await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalled();
+      expect(messageHandler).not.toBeNull();
+    });
+
+    messageHandler?.({
+      type: "job.progress",
+      payload: {
+        job_id: mockJobId,
+        job_type: "deep_research",
+        status: "in_progress",
+        progress_percent: 35,
+        current_step: "Streaming",
+        timestamp: "2024-01-02T00:00:00Z",
+      },
+    });
+
+    await waitFor(() => {
+      expect(result.current.jobData).toEqual({
+        job_id: mockJobId,
+        job_type: "deep_research",
+        status: "in_progress",
+        progress_percent: 35,
+        current_step: "Streaming",
+        step_number: null,
+        steps_total: null,
+        data: null,
+        timestamp: "2024-01-02T00:00:00Z",
+      });
     });
   });
 
-  it("should stop polling when jobId changes", async () => {
-    const mockJobResponse = {
-      job_id: mockJobId,
-      job_type: "deep_research",
-      status: "in_progress",
-      progress_percent: 50,
-      current_step: "Researching",
-      updated_at: "2024-01-01T00:00:00Z",
-    };
-
+  it("should reset handler when jobId changes", async () => {
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
-      json: async () => mockJobResponse,
+      json: async () => ({}),
     });
 
     const { rerender } = renderHook(({ jobId }) => useJobProgress(jobId), {
@@ -129,11 +146,14 @@ describe("useJobProgress", () => {
     });
 
     await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalled();
+      expect(messageHandler).not.toBeNull();
     });
 
-    // Change jobId - should create new effect and fetch for new job
     rerender({ jobId: "different-job-456" });
+
+    await waitFor(() => {
+      expect(messageHandler).not.toBeNull();
+    });
   });
 
   it("should handle fetch errors gracefully", () => {
@@ -158,7 +178,7 @@ describe("useJobProgress", () => {
     expect(result.current.jobData).toBeNull();
   });
 
-  it("should cleanup polling interval on unmount", () => {
+  it("should cleanup message handler on unmount", () => {
     (global.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
       ok: true,
       json: async () => ({}),
@@ -166,7 +186,8 @@ describe("useJobProgress", () => {
 
     const { unmount } = renderHook(() => useJobProgress(mockJobId));
 
-    // Should not throw when unmounting
-    expect(() => unmount()).not.toThrow();
+    expect(messageHandler).not.toBeNull();
+    unmount();
+    expect(messageHandler).toBeNull();
   });
 });

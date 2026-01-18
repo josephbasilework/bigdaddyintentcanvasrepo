@@ -21,6 +21,7 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.database import SessionLocal
 from app.jobs.base import JobStateMachine
+from app.agui import JobProgressMessage
 from app.logging_config import get_correlation_id
 from app.models.job import Job
 from app.models.turn import TurnActor, TurnType
@@ -635,9 +636,23 @@ class JobProgressTracker:
 
     async def emit_event(self, event: ProgressEvent) -> None:
         """Emit a progress event to subscribed WebSocket connections."""
-        event_json = event.to_json()
+        if event.timestamp is None:
+            event.timestamp = datetime.now().isoformat()
+
+        payload = {
+            "job_id": event.job_id,
+            "job_type": event.job_type,
+            "status": event.status,
+            "progress_percent": event.progress_percent,
+            "current_step": event.current_step,
+            "step_number": event.step_number,
+            "steps_total": event.steps_total,
+            "data": event.data,
+            "event_type": event.event_type.value,
+            "timestamp": event.timestamp,
+        }
         logger.debug(f"Emitting event: {event.event_type} for job {event.job_id}")
-        await ws_manager.broadcast(event_json)
+        await ws_manager.broadcast_agui(JobProgressMessage(payload=payload))
 
     async def get_job(self, job_id: str) -> Job | None:
         """Get job by ID."""

@@ -56,46 +56,38 @@ export function useJobProgress(jobId: string | null) {
     setIsConnected(true);
     setError(null);
 
-    // Listen for job progress notifications
-    // The backend sends progress updates via WebSocket as notification messages
-    // Note: Handler not yet registered - TODO: integrate with AGUIClient message handlers
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _handleProgressUpdate = (message: { type: string; payload: Record<string, unknown> }) => {
-      if (message.type === "notification" && message.payload) {
-        const payload = message.payload as {
-          title?: string;
-          message?: string;
-          job_id?: string;
-          job_type?: string;
-          status?: string;
-          progress_percent?: number;
-          current_step?: string;
-          step_number?: number;
-          steps_total?: number;
-          data?: Record<string, unknown>;
-          timestamp?: string;
-        };
-
-        // Check if this is a job progress update for our job
-        if (payload.job_id === jobId) {
-          setJobData({
-            job_id: payload.job_id,
-            job_type: payload.job_type || "unknown",
-            status: payload.status || "unknown",
-            progress_percent: payload.progress_percent ?? 0,
-            current_step: payload.current_step ?? null,
-            step_number: payload.step_number ?? null,
-            steps_total: payload.steps_total ?? null,
-            data: payload.data ?? null,
-            timestamp: payload.timestamp || new Date().toISOString(),
-          });
-        }
+    const unsubscribe = client.onMessage((message) => {
+      if (message.type !== "job.progress") {
+        return;
       }
-    };
+      const payload = message.payload as {
+        job_id?: string;
+        job_type?: string;
+        status?: string;
+        progress_percent?: number;
+        current_step?: string;
+        step_number?: number;
+        steps_total?: number;
+        data?: Record<string, unknown>;
+        timestamp?: string;
+      };
 
-    // Register with the client's message handlers
-    // Note: This requires the AGUIClient to expose a way to register message handlers
-    // For now, we'll fetch the initial job state via REST API
+      if (payload.job_id !== jobId) {
+        return;
+      }
+
+      setJobData({
+        job_id: payload.job_id,
+        job_type: payload.job_type || "unknown",
+        status: payload.status || "unknown",
+        progress_percent: payload.progress_percent ?? 0,
+        current_step: payload.current_step ?? null,
+        step_number: payload.step_number ?? null,
+        steps_total: payload.steps_total ?? null,
+        data: payload.data ?? null,
+        timestamp: payload.timestamp || new Date().toISOString(),
+      });
+    });
 
     // Fetch initial job state
     const fetchJobState = async () => {
@@ -122,12 +114,8 @@ export function useJobProgress(jobId: string | null) {
 
     fetchJobState();
 
-    // Poll for job updates every 2 seconds
-    // In production, this would be replaced with WebSocket streaming
-    const interval = setInterval(fetchJobState, 2000);
-
     return () => {
-      clearInterval(interval);
+      unsubscribe();
     };
   }, [jobId]);
 

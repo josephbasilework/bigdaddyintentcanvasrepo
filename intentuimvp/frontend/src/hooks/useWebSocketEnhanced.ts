@@ -63,9 +63,17 @@ export interface WebSocketMessage {
     | "state.snapshot"
     | "node.created"
     | "node.updated"
+    | "node.deleted"
     | "edge.created"
     | "edge.updated"
     | "edge.deleted"
+    | "job.progress"
+    | "turn.created"
+    | "event.created"
+    | "dashboard.update"
+    | "dashboard.subscribed"
+    | "request"
+    | "notification"
     | "raw";
   message?: string;
   sequence?: number;
@@ -307,6 +315,14 @@ const getDefaultWebSocketUrl = (sessionId: string): string => {
   return `${protocol}//${host}/ws?session_id=${encodeURIComponent(sessionId)}`;
 };
 
+const appendSessionId = (url: string, sessionId: string): string => {
+  if (!url || url.includes("session_id=")) {
+    return url;
+  }
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}session_id=${encodeURIComponent(sessionId)}`;
+};
+
 /**
  * Enhanced WebSocket hook with:
  * - Exponential backoff reconnection (1s base, 30s cap, max 10 attempts)
@@ -341,7 +357,8 @@ export function useWebSocketEnhanced(
   } = options;
 
   // Compute the WebSocket URL with session ID
-  const wsUrl = urlProp || getDefaultWebSocketUrl(sessionIdRef.current);
+  const baseUrl = urlProp || getDefaultWebSocketUrl(sessionIdRef.current);
+  const wsUrl = appendSessionId(baseUrl, sessionIdRef.current);
 
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);

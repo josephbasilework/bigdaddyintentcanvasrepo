@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TurnListResponse, TurnResponse } from "./turnTypes";
+import { getAGUIClient } from "../agui/client";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -163,6 +164,36 @@ export const useChatTurns = ({
       abortRef.current?.abort();
     };
   }, [enabled, fetchTurnsForSession, normalizedSessionIds, pollIntervalMs, sessionKey]);
+
+  useEffect(() => {
+    if (!enabled || normalizedSessionIds.length === 0) {
+      return undefined;
+    }
+
+    const client = getAGUIClient();
+    if (!client) {
+      return undefined;
+    }
+
+    const unsubscribe = client.onMessage((message) => {
+      if (message.type !== "turn.created") {
+        return;
+      }
+      const payload = message.payload as TurnResponse;
+      if (!normalizedSessionIds.includes(payload.sessionId)) {
+        return;
+      }
+      if (!isChatTurn(payload)) {
+        return;
+      }
+      lastSequenceBySession.current.set(payload.sessionId, payload.sequenceNumber);
+      setTurns((current) => mergeTurns(current, [payload]));
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [enabled, normalizedSessionIds]);
 
   return {
     turns,

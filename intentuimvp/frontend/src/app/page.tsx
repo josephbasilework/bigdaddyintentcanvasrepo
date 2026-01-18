@@ -23,6 +23,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useChatTurns } from "@/hooks/useChatTurns";
 import { useTurns } from "@/hooks/useTurns";
 import { useWebSocketEnhanced, type WebSocketMessage } from "@/hooks/useWebSocketEnhanced";
+import { createAGUIClient } from "@/agui/client";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -378,6 +379,9 @@ export default function Home() {
   const edges = useCanvasStore((state) => state.edges);
   const addNode = useCanvasStore((state) => state.addNode);
   const addEdge = useCanvasStore((state) => state.addEdge);
+  const removeNode = useCanvasStore((state) => state.removeNode);
+  const updateEdge = useCanvasStore((state) => state.updateEdge);
+  const removeEdge = useCanvasStore((state) => state.removeEdge);
   const updateNodePosition = useCanvasStore((state) => state.updateNodePosition);
   const updateNode = useCanvasStore((state) => state.updateNode);
   const selectNode = useCanvasStore((state) => state.selectNode);
@@ -432,108 +436,190 @@ export default function Home() {
   // Handle WebSocket messages for real-time node updates from backend
   const handleWebSocketMessage = useCallback(
     (message: WebSocketMessage) => {
-      if (message.type === "node.created" && message.payload) {
-        const payload = message.payload as {
-          id: string;
-          type: string;
-          title: string;
-          content?: string;
-          x: number;
-          y: number;
-          z: number;
-          metadata?: Record<string, unknown>;
+      const asRecord = (value: unknown): Record<string, unknown> =>
+        value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+
+      const asId = (value: unknown): string | null => {
+        if (typeof value === "string") {
+          const trimmed = value.trim();
+          return trimmed.length > 0 ? trimmed : null;
+        }
+        if (typeof value === "number" && Number.isFinite(value)) {
+          return String(value);
+        }
+        return null;
+      };
+
+      const asNumber = (value: unknown): number | null => {
+        if (typeof value === "number" && Number.isFinite(value)) {
+          return value;
+        }
+        if (typeof value === "string") {
+          const parsed = Number(value);
+          return Number.isFinite(parsed) ? parsed : null;
+        }
+        return null;
+      };
+
+      const resolvePosition = (value: Record<string, unknown>) => {
+        const position = asRecord(value.position);
+        return {
+          x: asNumber(value.x ?? position.x),
+          y: asNumber(value.y ?? position.y),
+          z: asNumber(value.z ?? position.z),
         };
-        const nodeId = String(payload.id);
-        console.log("DEBUG: Received node.created from backend:", payload);
+      };
+
+      if (message.type === "node.created" && message.payload) {
+        const payload = asRecord(message.payload);
+        const nodePayload = asRecord(payload.node ?? payload);
+        const position = resolvePosition(nodePayload);
+        const nodeId = asId(nodePayload.id ?? payload.id);
+        if (!nodeId) {
+          console.warn("DEBUG: node.created missing id:", nodePayload);
+          return;
+        }
+        const title =
+          (nodePayload.title as string | undefined) ??
+          (nodePayload.label as string | undefined) ??
+          (nodePayload.content as string | undefined) ??
+          "Untitled";
+        const content =
+          (nodePayload.content as string | undefined) ??
+          (nodePayload.title as string | undefined) ??
+          (nodePayload.label as string | undefined);
+        const nodeType =
+          (nodePayload.type as string | undefined) ??
+          (payload.type as string | undefined) ??
+          "text";
+        const metadata =
+          (nodePayload.metadata as Record<string, unknown> | undefined) ??
+          (nodePayload.node_metadata as Record<string, unknown> | undefined) ??
+          (nodePayload.nodeMetadata as Record<string, unknown> | undefined);
+        console.log("DEBUG: Received node.created from backend:", nodePayload);
         // Check if node already exists (to avoid duplicates from local creation)
         const existingNode = nodes.find((n) => n.id === nodeId);
         if (!existingNode) {
           addNode({
             id: nodeId,
-            type: (payload.type as CanvasNode["type"]) || "text",
-            x: payload.x,
-            y: payload.y,
-            z: payload.z,
-            title: payload.title,
-            content: payload.content,
-            metadata: payload.metadata,
+            type: (nodeType as CanvasNode["type"]) || "text",
+            x: position.x ?? 0,
+            y: position.y ?? 0,
+            z: position.z ?? 0,
+            title,
+            content,
+            metadata,
           });
-          console.log("DEBUG: Added backend-created node:", payload.id);
+          console.log("DEBUG: Added backend-created node:", nodeId);
           if (!selectedNodeId && selectedNodeIds.length === 0) {
             selectNode(nodeId);
           }
         } else {
-          console.log("DEBUG: Node already exists, skipping:", payload.id);
+          console.log("DEBUG: Node already exists, skipping:", nodeId);
         }
       }
       if (message.type === "node.updated" && message.payload) {
-        const payload = message.payload as {
-          id: string;
-          type?: string;
-          title?: string;
-          content?: string;
-          x?: number;
-          y?: number;
-          z?: number;
-          previous?: {
-            x: number;
-            y: number;
-            z?: number;
-          };
-          metadata?: Record<string, unknown>;
-        };
-        let nodeId = String(payload.id);
-        let targetNode = nodes.find((node) => node.id === nodeId);
-        if (!targetNode && payload.previous) {
+        const payload = asRecord(message.payload);
+        const nodePayload = asRecord(payload.node ?? payload);
+        const payloadUpdates = asRecord(payload.updates);
+        let nodeId = asId(nodePayload.id ?? payload.id);
+        let targetNode = nodeId ? nodes.find((node) => node.id === nodeId) : null;
+        const previous = asRecord(payload.previous);
+        const previousX = asNumber(previous.x);
+        const previousY = asNumber(previous.y);
+        const previousZ = asNumber(previous.z);
+        if (!targetNode && previousX !== null && previousY !== null) {
           targetNode = nodes.find((node) =>
-            node.x === payload.previous?.x &&
-            node.y === payload.previous?.y &&
-            (payload.previous?.z === undefined || node.z === payload.previous.z)
+            node.x === previousX &&
+            node.y === previousY &&
+            (previousZ === null || node.z === previousZ)
           );
-          if (targetNode) {
+          if (targetNode && !nodeId) {
             nodeId = targetNode.id;
           }
         }
-        if (!targetNode) {
-          console.warn("DEBUG: node.updated for missing node:", nodeId);
+        if (!targetNode || !nodeId) {
+          console.warn("DEBUG: node.updated for missing node:", nodeId ?? "unknown");
           return;
         }
-        if (payload.x !== undefined && payload.y !== undefined) {
-          updateNodePosition(nodeId, payload.x, payload.y, payload.z);
+        const position = resolvePosition({ ...nodePayload, ...payloadUpdates });
+        if (position.x !== null && position.y !== null) {
+          updateNodePosition(nodeId, position.x, position.y, position.z ?? undefined);
         }
         const updates: Partial<CanvasNode> = {};
-        if (payload.type !== undefined) updates.type = payload.type as CanvasNode["type"];
-        if (payload.title !== undefined) updates.title = payload.title;
-        if (payload.content !== undefined) updates.content = payload.content;
-        if (payload.metadata !== undefined) updates.metadata = payload.metadata;
+        const nextType =
+          (nodePayload.type as string | undefined) ??
+          (payloadUpdates.type as string | undefined) ??
+          (payload.type as string | undefined);
+        if (nextType !== undefined) updates.type = nextType as CanvasNode["type"];
+        const nextTitle =
+          (nodePayload.title as string | undefined) ??
+          (nodePayload.label as string | undefined) ??
+          (payloadUpdates.label as string | undefined) ??
+          (payloadUpdates.content as string | undefined) ??
+          (payload.title as string | undefined);
+        if (nextTitle !== undefined) updates.title = nextTitle;
+        const nextContent =
+          (nodePayload.content as string | undefined) ??
+          (payloadUpdates.content as string | undefined) ??
+          (payload.content as string | undefined);
+        if (nextContent !== undefined) updates.content = nextContent;
+        const nextMetadata =
+          (nodePayload.metadata as Record<string, unknown> | undefined) ??
+          (payloadUpdates.metadata as Record<string, unknown> | undefined) ??
+          (payload.metadata as Record<string, unknown> | undefined);
+        if (nextMetadata !== undefined) updates.metadata = nextMetadata;
         if (Object.keys(updates).length > 0) {
           updateNode(nodeId, updates);
         }
       }
+      if (message.type === "node.deleted" && message.payload) {
+        const payload = asRecord(message.payload);
+        const nodePayload = asRecord(payload.node ?? payload);
+        const nodeId = asId(nodePayload.id ?? payload.id);
+        if (!nodeId) {
+          console.warn("DEBUG: node.deleted missing id:", nodePayload);
+          return;
+        }
+        removeNode(nodeId);
+      }
       if (message.type === "edge.created" && message.payload) {
-        const payload = message.payload as {
-          id: string;
-          fromNodeId?: string;
-          toNodeId?: string;
-          sourceNodeId?: string;
-          targetNodeId?: string;
-          relationType?: string;
-          label?: string;
-          metadata?: Record<string, unknown>;
-          type?: string;
-        };
-        const edgeId = String(payload.id);
+        const payload = asRecord(message.payload);
+        const edgePayload = asRecord(payload.edge ?? payload);
+        const edgeId = asId(edgePayload.id ?? payload.id);
+        if (!edgeId) {
+          console.warn("DEBUG: edge.created missing id:", edgePayload);
+          return;
+        }
         if (edges.some((edge) => edge.id === edgeId)) {
           return;
         }
-        const sourceId = payload.fromNodeId ?? payload.sourceNodeId;
-        const targetId = payload.toNodeId ?? payload.targetNodeId;
+        const sourceId =
+          edgePayload.fromNodeId ??
+          edgePayload.from_node_id ??
+          edgePayload.sourceNodeId ??
+          payload.fromNodeId ??
+          payload.from_node_id ??
+          payload.sourceNodeId;
+        const targetId =
+          edgePayload.toNodeId ??
+          edgePayload.to_node_id ??
+          edgePayload.targetNodeId ??
+          payload.toNodeId ??
+          payload.to_node_id ??
+          payload.targetNodeId;
         if (!sourceId || !targetId) {
-          console.warn("DEBUG: edge.created missing node IDs:", payload);
+          console.warn("DEBUG: edge.created missing node IDs:", edgePayload);
           return;
         }
-        const relationType = payload.relationType;
-        const normalizedRelation = relationType && EDGE_RELATION_TYPES.has(relationType as CanvasEdgeRelationType)
+        const relationType =
+          edgePayload.relationType ??
+          edgePayload.relation_type ??
+          payload.relationType ??
+          payload.relation_type;
+        const normalizedRelation =
+          relationType &&
+          EDGE_RELATION_TYPES.has(relationType as CanvasEdgeRelationType)
           ? (relationType as CanvasEdgeRelationType)
           : undefined;
         addEdge({
@@ -541,8 +627,49 @@ export default function Home() {
           sourceNodeId: String(sourceId),
           targetNodeId: String(targetId),
           relationType: normalizedRelation,
-          label: payload.label,
+          label: (edgePayload.label as string | undefined) ?? (payload.label as string | undefined),
         });
+      }
+      if (message.type === "edge.updated" && message.payload) {
+        const payload = asRecord(message.payload);
+        const edgePayload = asRecord(payload.edge ?? payload);
+        const edgeId = asId(edgePayload.id ?? payload.id);
+        if (!edgeId) {
+          console.warn("DEBUG: edge.updated missing id:", edgePayload);
+          return;
+        }
+        const relationType =
+          edgePayload.relationType ??
+          edgePayload.relation_type ??
+          payload.relationType ??
+          payload.relation_type;
+        const normalizedRelation =
+          relationType &&
+          EDGE_RELATION_TYPES.has(relationType as CanvasEdgeRelationType)
+            ? (relationType as CanvasEdgeRelationType)
+            : undefined;
+        const label =
+          (edgePayload.label as string | undefined) ?? (payload.label as string | undefined);
+        const updates: { relationType?: CanvasEdgeRelationType; label?: string } = {};
+        if (normalizedRelation !== undefined) {
+          updates.relationType = normalizedRelation;
+        }
+        if (label !== undefined) {
+          updates.label = label;
+        }
+        if (Object.keys(updates).length > 0) {
+          updateEdge(edgeId, updates);
+        }
+      }
+      if (message.type === "edge.deleted" && message.payload) {
+        const payload = asRecord(message.payload);
+        const edgePayload = asRecord(payload.edge ?? payload);
+        const edgeId = asId(edgePayload.id ?? payload.id);
+        if (!edgeId) {
+          console.warn("DEBUG: edge.deleted missing id:", edgePayload);
+          return;
+        }
+        removeEdge(edgeId);
       }
     },
     [
@@ -550,6 +677,9 @@ export default function Home() {
       edges,
       addNode,
       addEdge,
+      removeNode,
+      updateEdge,
+      removeEdge,
       updateNodePosition,
       updateNode,
       selectNode,
@@ -571,6 +701,32 @@ export default function Home() {
     url: WS_URL,
     onMessage: handleWebSocketMessage,
   });
+
+  const aguiGatewayUrl = useMemo(() => {
+    if (!WS_URL) {
+      return "";
+    }
+    return wsSessionId
+      ? `${WS_URL}?session_id=${encodeURIComponent(wsSessionId)}`
+      : WS_URL;
+  }, [wsSessionId]);
+
+  const aguiClient = useMemo(() => {
+    if (!aguiGatewayUrl) {
+      return null;
+    }
+    return createAGUIClient({ gatewayUrl: aguiGatewayUrl });
+  }, [aguiGatewayUrl]);
+
+  useEffect(() => {
+    if (!aguiClient) {
+      return undefined;
+    }
+    aguiClient.connect();
+    return () => {
+      aguiClient.disconnect();
+    };
+  }, [aguiClient]);
 
   const chatSessionIds = useMemo(() => {
     const ids = new Set<string>();

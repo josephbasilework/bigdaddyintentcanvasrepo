@@ -18,6 +18,10 @@ from app.agui.schemas import (
     AGUIEnvelope,
     AGUIEvent,
     AGUIEventType,
+    EdgeCreatedMessage,
+    EventCreatedMessage,
+    JobProgressMessage,
+    NodeCreatedMessage,
     UICancelMessage,
     UICommandMessage,
     UIContext,
@@ -27,7 +31,10 @@ from app.agui.schemas import (
     UIContextWorkspace,
     UIResponseMessage,
     UIToAgentMessageType,
+    TurnCreatedMessage,
 )
+from app.schemas.event import EventResponse
+from app.schemas.turn import TurnResponse
 
 
 class TestAGUIEnvelope:
@@ -160,6 +167,75 @@ class TestAgentToUIMessages:
         assert msg.type == "notification"
         assert msg.payload.level == "info"
         assert msg.payload.duration == 5000
+
+    def test_job_progress_message(self):
+        """Test JobProgressMessage validation."""
+        msg = JobProgressMessage(
+            payload={
+                "job_id": "job-123",
+                "job_type": "deep_research",
+                "status": "in_progress",
+                "progress_percent": 50,
+            }
+        )
+        assert msg.type == "job.progress"
+        assert msg.payload.job_id == "job-123"
+
+    def test_node_created_message(self):
+        """Test NodeCreatedMessage validation."""
+        msg = NodeCreatedMessage(
+            payload={
+                "id": "node-123",
+                "type": "text",
+                "title": "Test Node",
+                "x": 1,
+                "y": 2,
+            }
+        )
+        assert msg.type == "node.created"
+        assert msg.payload.id == "node-123"
+
+    def test_edge_created_message(self):
+        """Test EdgeCreatedMessage validation."""
+        msg = EdgeCreatedMessage(
+            payload={
+                "id": "edge-123",
+                "from_node_id": "node-a",
+                "to_node_id": "node-b",
+                "relation_type": "depends_on",
+            }
+        )
+        assert msg.type == "edge.created"
+        assert msg.payload.id == "edge-123"
+
+    def test_turn_created_message(self):
+        """Test TurnCreatedMessage validation."""
+        payload = TurnResponse(
+            id=1,
+            sessionId="session-1",
+            sequenceNumber=1,
+            timestamp=datetime.now(UTC).isoformat(),
+            actor="user",
+            type="user_input",
+            summary="Test turn",
+            payload={},
+        )
+        msg = TurnCreatedMessage(payload=payload)
+        assert msg.type == "turn.created"
+        assert msg.payload.sessionId == "session-1"
+
+    def test_event_created_message(self):
+        """Test EventCreatedMessage validation."""
+        payload = EventResponse(
+            id=1,
+            eventType="node.created",
+            actor="user",
+            timestamp=datetime.now(UTC).isoformat(),
+            payload={},
+        )
+        msg = EventCreatedMessage(payload=payload)
+        assert msg.type == "event.created"
+        assert msg.payload.eventType == "node.created"
 
 
 class TestUIToAgentMessages:

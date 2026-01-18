@@ -24,13 +24,18 @@ from app.agui import (
     StateSnapshotMessage,
     StateSnapshotPayload,
     StateSyncRequestMessage,
+    UIResponseMessage,
 )
 from app.config import get_settings
-from app.database import get_async_db
+from app.database import AsyncSessionLocal, get_async_db
 from app.logging_config import get_correlation_id
 from app.repositories.session_repo import AsyncSessionRepository
+from app.models.intent import AssumptionResolutionDB
 from app.models.turn import ResponseType, TurnActor, TurnType, resolve_response_type
-from app.services.turns import log_turn_with_new_async_session
+from app.services.turns import (
+    log_turn_with_new_async_session,
+    log_turn_with_session_id_async,
+)
 from app.ws.dashboard_streaming import get_dashboard_streaming_service
 from app.ws.state_manager import get_state_manager
 
@@ -800,6 +805,134 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                                 level="warning",
                                 title="Unsubscribe Error",
                                 message="Failed to unsubscribe from dashboard",
+                            )
+                            error_msg = AgentNotificationMessage(payload=error_payload)
+                            await manager.send_agui_message(error_msg, websocket)
+
+                    # Handle UI response messages (assumption reconciliation)
+                    elif message_type == "response":
+                        try:
+                            response_msg = UIResponseMessage(**message_data)
+                            session_id = response_msg.payload.request_id
+                            response_payload = response_msg.payload.response
+
+                            from app.api.assumption_store import get_assumption_store
+
+                            store = get_assumption_store()
+                            resolutions: list[dict[str, object]] = []
+                            if isinstance(response_payload, list):
+                                resolutions = [
+                                    item for item in response_payload if isinstance(item, dict)
+                                ]
+                            elif isinstance(response_payload, dict):
+                                if isinstance(response_payload.get("resolutions"), list):
+                                    resolutions = [
+                                        item
+                                        for item in response_payload.get("resolutions", [])
+                                        if isinstance(item, dict)
+                                    ]
+
+                            if session_id and resolutions:
+                                resolved_results = []
+                                for resolution in resolutions:
+                                    action = resolution.get("action")
+                                    assumption_id = resolution.get("assumption_id")
+                                    if not action or not assumption_id:
+                                        continue
+                                    original_text = resolution.get("original_text")
+                                    if not isinstance(original_text, str):
+                                        original_text = "[original text not available]"
+                                    category = resolution.get("category")
+                                    if not isinstance(category, str):
+                                        category = "unknown"
+                                    edited_text = resolution.get("edited_text")
+                                    feedback = resolution.get("feedback")
+                                    resolved = store.resolve_assumption(
+                                        session_id=session_id,
+                                        assumption_id=str(assumption_id),
+                                        action=str(action),
+                                        original_text=original_text,
+                                        category=category,
+                                        edited_text=edited_text
+                                        if isinstance(edited_text, str)
+                                        else None,
+                                        feedback=feedback if isinstance(feedback, str) else None,
+                                    )
+                                    resolved_results.append(resolved)
+
+                                async with AsyncSessionLocal() as session:
+                                    db_records = [
+                                        AssumptionResolutionDB(
+                                            session_id=session_id,
+                                            assumption_id=result["assumption_id"],
+                                            action=result["action"],
+                                            original_text=result["original_text"],
+                                            final_text=result["final_text"],
+                                            category=result["category"],
+                                        )
+                                        for result in resolved_results
+                                    ]
+                                    if db_records:
+                                        session.add_all(db_records)
+                                        await session.commit()
+
+                                    for result in resolved_results:
+                                        action = result["action"]
+                                        turn_type = {
+                                            "accept": TurnType.ASSUMPTION_CONFIRMED,
+                                            "reject": TurnType.ASSUMPTION_REJECTED,
+                                            "edit": TurnType.ASSUMPTION_MODIFIED,
+                                        }.get(action)
+                                        if turn_type is None:
+                                            continue
+                                        await log_turn_with_session_id_async(
+                                            session,
+                                            session_id=session_id,
+                                            actor=TurnActor.USER,
+                                            turn_type=turn_type,
+                                            summary=f"Assumption {action}",
+                                            payload={
+                                                "assumption_id": result["assumption_id"],
+                                                "action": result["action"],
+                                                "original_text": result["original_text"],
+                                                "final_text": result["final_text"],
+                                                "category": result["category"],
+                                                "feedback": result.get("feedback"),
+                                            },
+                                        )
+
+                            if (
+                                isinstance(response_payload, dict)
+                                and response_payload.get("complete")
+                                and session_id
+                            ):
+                                store.mark_complete(session_id)
+
+                            ack_payload = AgentNotificationPayload(
+                                level="info",
+                                title="Response Received",
+                                message="Processed response message",
+                            )
+                            ack_msg = AgentNotificationMessage(
+                                payload=ack_payload,
+                                correlation_id=envelope.message_id,
+                            )
+                            await manager.send_agui_message(ack_msg, websocket)
+                        except ValidationError as e:
+                            logger.error(f"Response message validation failed: {e}")
+                            error_payload = AgentNotificationPayload(
+                                level="warning",
+                                title="Invalid Response",
+                                message=str(e),
+                            )
+                            error_msg = AgentNotificationMessage(payload=error_payload)
+                            await manager.send_agui_message(error_msg, websocket)
+                        except Exception as e:
+                            logger.error(f"Error handling response message: {e}")
+                            error_payload = AgentNotificationPayload(
+                                level="warning",
+                                title="Response Error",
+                                message="Failed to process response message",
                             )
                             error_msg = AgentNotificationMessage(payload=error_payload)
                             await manager.send_agui_message(error_msg, websocket)

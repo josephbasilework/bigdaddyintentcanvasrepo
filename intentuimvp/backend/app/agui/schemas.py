@@ -17,6 +17,9 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.schemas.event import EventResponse
+from app.schemas.turn import TurnResponse
+
 # ============================================================================
 # Protocol Constants
 # ============================================================================
@@ -173,6 +176,109 @@ class AgentNotificationMessage(AgentToUIMessage):
 
     type: Literal["notification"] = "notification"
     payload: AgentNotificationPayload
+
+
+class JobProgressPayload(BaseModel):
+    """Payload for job progress updates."""
+
+    job_id: str
+    job_type: str
+    status: str
+    progress_percent: float = Field(ge=0.0, le=100.0)
+    current_step: str | None = None
+    step_number: int | None = None
+    steps_total: int | None = None
+    data: dict[str, Any] | None = None
+    event_type: str | None = None
+    timestamp: datetime | None = None
+
+
+class JobProgressMessage(AgentToUIMessage):
+    """Job progress update for background work."""
+
+    type: Literal["job.progress"] = "job.progress"
+    payload: JobProgressPayload
+
+
+# ============================================================================
+# Canvas Event Messages
+# ============================================================================
+
+
+class NodeEventPayload(BaseModel):
+    """Payload for node CRUD event messages."""
+
+    id: str
+    type: str | None = None
+    title: str | None = None
+    content: str | None = None
+    x: float | None = None
+    y: float | None = None
+    z: float | None = None
+    position: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
+    previous: dict[str, Any] | None = None
+    updates: dict[str, Any] | None = None
+    canvas_id: int | None = None
+
+
+class NodeCreatedMessage(AgentToUIMessage):
+    """Node created event message."""
+
+    type: Literal["node.created"] = "node.created"
+    payload: NodeEventPayload
+
+
+class NodeUpdatedMessage(AgentToUIMessage):
+    """Node updated event message."""
+
+    type: Literal["node.updated"] = "node.updated"
+    payload: NodeEventPayload
+
+
+class NodeDeletedMessage(AgentToUIMessage):
+    """Node deleted event message."""
+
+    type: Literal["node.deleted"] = "node.deleted"
+    payload: NodeEventPayload
+
+
+class EdgeEventPayload(BaseModel):
+    """Payload for edge CRUD event messages."""
+
+    id: str
+    from_node_id: str | None = None
+    to_node_id: str | None = None
+    fromNodeId: str | None = None
+    toNodeId: str | None = None
+    sourceNodeId: str | None = None
+    targetNodeId: str | None = None
+    relation_type: str | None = None
+    relationType: str | None = None
+    label: str | None = None
+    metadata: dict[str, Any] | None = None
+    canvas_id: int | None = None
+
+
+class EdgeCreatedMessage(AgentToUIMessage):
+    """Edge created event message."""
+
+    type: Literal["edge.created"] = "edge.created"
+    payload: EdgeEventPayload
+
+
+class EdgeUpdatedMessage(AgentToUIMessage):
+    """Edge updated event message."""
+
+    type: Literal["edge.updated"] = "edge.updated"
+    payload: EdgeEventPayload
+
+
+class EdgeDeletedMessage(AgentToUIMessage):
+    """Edge deleted event message."""
+
+    type: Literal["edge.deleted"] = "edge.deleted"
+    payload: EdgeEventPayload
 
 
 # ============================================================================
@@ -388,6 +494,25 @@ class StateSnapshotMessage(AgentToUIMessage):
     payload: StateSnapshotPayload
 
 
+# ============================================================================
+# Turn/Event Stream Messages
+# ============================================================================
+
+
+class TurnCreatedMessage(AgentToUIMessage):
+    """Broadcast a newly created turn to subscribed clients."""
+
+    type: Literal["turn.created"] = "turn.created"
+    payload: TurnResponse
+
+
+class EventCreatedMessage(AgentToUIMessage):
+    """Broadcast a newly created event to subscribed clients."""
+
+    type: Literal["event.created"] = "event.created"
+    payload: EventResponse
+
+
 # Note: StateSyncRequestMessage is defined after UIToAgentMessage below
 
 
@@ -399,12 +524,21 @@ AgentToUIMessageType = (
     | AgentErrorMessage
     | AgentRequestMessage
     | AgentNotificationMessage
+    | JobProgressMessage
+    | NodeCreatedMessage
+    | NodeUpdatedMessage
+    | NodeDeletedMessage
+    | EdgeCreatedMessage
+    | EdgeUpdatedMessage
+    | EdgeDeletedMessage
     | RunStartMessage
     | RunEndMessage
     | ToolCallMessage
     | ToolResultMessage
     | StateUpdateMessage
     | StateSnapshotMessage
+    | TurnCreatedMessage
+    | EventCreatedMessage
 )
 
 
@@ -581,6 +715,8 @@ class AGUIEvent(BaseModel):
         default_factory=dict,
         description="Event data payload",
     )
+
+
 
 
 

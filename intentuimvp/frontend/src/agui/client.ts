@@ -52,12 +52,21 @@ const AGENT_MESSAGE_TYPES = new Set<string>([
   "error",
   "request",
   "notification",
+  "job.progress",
+  "node.created",
+  "node.updated",
+  "node.deleted",
+  "edge.created",
+  "edge.updated",
+  "edge.deleted",
   "run.start",
   "run.end",
   "tool.call",
   "tool.result",
   "state.update",
   "state.snapshot",
+  "turn.created",
+  "event.created",
   "dashboard.update",
   "dashboard.subscribed",
 ]);
@@ -878,10 +887,10 @@ export class AGUIClient {
     }
     this.activeDashboardSubscriptions.add(dashboardNodeId);
 
-    // In production, this would send a WebSocket message to subscribe
-    // For now, we just track the subscription locally
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      const message = {
+      const message: UIToAgentMessageType = {
+        source: "ui",
+        target: "agent",
         type: "dashboard.subscribe",
         payload: {
           dashboard_node_id: dashboardNodeId,
@@ -889,7 +898,7 @@ export class AGUIClient {
           targets: ["workspace_state", "node", "edge", "job", "artifact", "tool_output"],
         },
       };
-      this.ws.send(JSON.stringify(message));
+      this.send(message);
     }
   }
 
@@ -902,11 +911,13 @@ export class AGUIClient {
     this.dashboardSubscribedListeners.delete(dashboardNodeId);
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      const message = {
+      const message: UIToAgentMessageType = {
+        source: "ui",
+        target: "agent",
         type: "dashboard.unsubscribe",
         payload: { dashboard_node_id: dashboardNodeId },
       };
-      this.ws.send(JSON.stringify(message));
+      this.send(message);
     }
   }
 

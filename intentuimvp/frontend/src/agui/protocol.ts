@@ -47,12 +47,21 @@ export type AgentToUIMessageType =
   | AgentErrorMessage
   | AgentRequestMessage
   | AgentNotificationMessage
+  | JobProgressMessage
+  | NodeCreatedMessage
+  | NodeUpdatedMessage
+  | NodeDeletedMessage
+  | EdgeCreatedMessage
+  | EdgeUpdatedMessage
+  | EdgeDeletedMessage
   | RunStartMessage
   | RunEndMessage
   | ToolCallMessage
   | ToolResultMessage
   | StateUpdateMessage
   | StateSnapshotMessage
+  | TurnCreatedMessage
+  | EventCreatedMessage
   | DashboardUpdateMessage
   | DashboardSubscribedMessage;
 
@@ -140,6 +149,26 @@ export interface AgentNotificationMessage extends AgentToUIMessage {
     message: string;
     duration?: number; // Auto-dismiss after ms (0 = no auto-dismiss)
     actions?: Array<{ label: string; action: string; primary?: boolean }>;
+  };
+}
+
+// ============================================================================
+// Job Progress Messages
+// ============================================================================
+
+export interface JobProgressMessage extends AgentToUIMessage {
+  type: 'job.progress';
+  payload: {
+    job_id: string;
+    job_type: string;
+    status: string;
+    progress_percent: number;
+    current_step?: string | null;
+    step_number?: number | null;
+    steps_total?: number | null;
+    data?: Record<string, unknown> | null;
+    event_type?: string | null;
+    timestamp?: string | null;
   };
 }
 
@@ -237,6 +266,111 @@ export interface StateSnapshotMessage extends AgentToUIMessage {
 }
 
 // ============================================================================
+// Canvas CRUD Event Messages
+// ============================================================================
+
+export interface NodeEventPayload {
+  id: string;
+  type?: string | null;
+  title?: string | null;
+  content?: string | null;
+  x?: number | null;
+  y?: number | null;
+  z?: number | null;
+  position?: { x?: number | null; y?: number | null; z?: number | null } | null;
+  metadata?: Record<string, unknown> | null;
+  previous?: Record<string, unknown> | null;
+  updates?: Record<string, unknown> | null;
+  canvas_id?: number | null;
+}
+
+export interface NodeCreatedMessage extends AgentToUIMessage {
+  type: 'node.created';
+  payload: NodeEventPayload;
+}
+
+export interface NodeUpdatedMessage extends AgentToUIMessage {
+  type: 'node.updated';
+  payload: NodeEventPayload;
+}
+
+export interface NodeDeletedMessage extends AgentToUIMessage {
+  type: 'node.deleted';
+  payload: NodeEventPayload;
+}
+
+export interface EdgeEventPayload {
+  id: string;
+  from_node_id?: string | null;
+  to_node_id?: string | null;
+  fromNodeId?: string | null;
+  toNodeId?: string | null;
+  sourceNodeId?: string | null;
+  targetNodeId?: string | null;
+  relation_type?: string | null;
+  relationType?: string | null;
+  label?: string | null;
+  metadata?: Record<string, unknown> | null;
+  canvas_id?: number | null;
+}
+
+export interface EdgeCreatedMessage extends AgentToUIMessage {
+  type: 'edge.created';
+  payload: EdgeEventPayload;
+}
+
+export interface EdgeUpdatedMessage extends AgentToUIMessage {
+  type: 'edge.updated';
+  payload: EdgeEventPayload;
+}
+
+export interface EdgeDeletedMessage extends AgentToUIMessage {
+  type: 'edge.deleted';
+  payload: EdgeEventPayload;
+}
+
+// ============================================================================
+// Turn/Event Stream Messages
+// ============================================================================
+
+export interface TurnStreamPayload {
+  id: number;
+  sessionId: string;
+  sequenceNumber: number;
+  timestamp: string;
+  actor: string;
+  type: string;
+  summary: string;
+  payload: Record<string, unknown>;
+  responseType?: string | null;
+  eventType?: string | null;
+  originSequenceNumber?: number | null;
+  relatedNodeId?: number | null;
+  relatedEdgeId?: number | null;
+}
+
+export interface EventStreamPayload {
+  id: number;
+  eventType: string;
+  actor: string;
+  timestamp: string;
+  payload: Record<string, unknown>;
+  relatedTurnId?: number | null;
+  relatedNodeId?: number | null;
+  relatedEdgeId?: number | null;
+}
+
+export interface TurnCreatedMessage extends AgentToUIMessage {
+  type: 'turn.created';
+  payload: TurnStreamPayload;
+}
+
+export interface EventCreatedMessage extends AgentToUIMessage {
+  type: 'event.created';
+  payload: EventStreamPayload;
+}
+
+// ============================================================================
 // UI -> Agent Messages
 // ============================================================================
 
@@ -256,7 +390,9 @@ export type UIToAgentMessageType =
   | UIResponseMessage
   | UICancelMessage
   | UIContextMessage
-  | UIStateSyncRequestMessage;
+  | UIStateSyncRequestMessage
+  | DashboardSubscribeMessage
+  | DashboardUnsubscribeMessage;
 
 /**
  * UI command to agent (execute an operation)
@@ -313,6 +449,22 @@ export interface UIStateSyncRequestMessage extends UIToAgentMessage {
   type: 'state.sync_request';
   payload: {
     last_sequence: number | null; // The last sequence number the client received
+  };
+}
+
+export interface DashboardSubscribeMessage extends UIToAgentMessage {
+  type: 'dashboard.subscribe';
+  payload: {
+    dashboard_node_id: number;
+    canvas_id: number;
+    targets?: DashboardSubscriptionTarget[];
+  };
+}
+
+export interface DashboardUnsubscribeMessage extends UIToAgentMessage {
+  type: 'dashboard.unsubscribe';
+  payload: {
+    dashboard_node_id: number;
   };
 }
 
