@@ -61,4 +61,26 @@ describe("WheelViewPanel", () => {
     expect(screen.queryByText("Create a node")).not.toBeInTheDocument();
     expect(screen.getByText("Node created")).toBeInTheDocument();
   });
+
+  it("shows response type tags for response turns", () => {
+    const responseTurns: TurnResponse[] = [
+      {
+        id: 9,
+        sessionId: "session-1",
+        sequenceNumber: 9,
+        timestamp: "2024-01-01T00:00:09Z",
+        actor: "agent",
+        type: "agent_response",
+        summary: "Need clarification",
+        payload: { prompt: "Which metric should I use?" },
+        responseType: "clarification",
+        relatedNodeId: null,
+        relatedEdgeId: null,
+      },
+    ];
+
+    render(<WheelViewPanel turns={responseTurns} />);
+
+    expect(screen.getByText("Clarification")).toBeInTheDocument();
+  });
 });

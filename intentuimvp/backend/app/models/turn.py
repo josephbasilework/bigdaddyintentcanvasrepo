@@ -69,6 +69,110 @@ class TurnType(str, Enum):
     MCP_TOOL_RESULT = "mcp_tool_result"
 
 
+class ResponseType(str, Enum):
+    """Enumeration of response types for system/agent responses."""
+
+    CONVERSATIONAL = "conversational"
+    PROPOSAL = "proposal"
+    CLARIFICATION = "clarification"
+    ACKNOWLEDGMENT = "acknowledgment"
+    TOOL_INVOCATION = "tool_invocation"
+
+
+_RESPONSE_TYPE_ALIASES = {
+    "acknowledgement": ResponseType.ACKNOWLEDGMENT.value,
+    "tool": ResponseType.TOOL_INVOCATION.value,
+    "tool-invocation": ResponseType.TOOL_INVOCATION.value,
+    "tool_invocation": ResponseType.TOOL_INVOCATION.value,
+}
+
+
+def _normalize_response_type(value: Any) -> ResponseType | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower().replace("-", "_")
+    normalized = _RESPONSE_TYPE_ALIASES.get(normalized, normalized)
+    try:
+        return ResponseType(normalized)
+    except ValueError:
+        return None
+
+
+def _response_type_from_payload(payload: dict[str, Any]) -> ResponseType | None:
+    for key in ("response_type", "responseType"):
+        if key not in payload:
+            continue
+        resolved = _normalize_response_type(payload.get(key))
+        if resolved:
+            return resolved
+    return None
+
+
+def _request_type_to_response_type(value: str) -> ResponseType | None:
+    normalized = value.strip().lower()
+    if normalized == "confirmation":
+        return ResponseType.PROPOSAL
+    if normalized in {"input", "choice", "file"}:
+        return ResponseType.CLARIFICATION
+    return None
+
+
+def _has_non_empty_list(payload: dict[str, Any], keys: list[str]) -> bool:
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list) and value:
+            return True
+    return False
+
+
+def resolve_response_type(
+    turn_type: TurnType,
+    actor: TurnActor | str,
+    payload: dict[str, Any],
+) -> ResponseType | None:
+    """Resolve response type from explicit payload or turn context."""
+    explicit = _response_type_from_payload(payload)
+    if explicit:
+        return explicit
+
+    nested = payload.get("result")
+    if isinstance(nested, dict):
+        nested_response = _response_type_from_payload(nested)
+        if nested_response:
+            return nested_response
+        nested_request_type = nested.get("request_type") or nested.get("requestType")
+        if isinstance(nested_request_type, str):
+            request_response = _request_type_to_response_type(nested_request_type)
+            if request_response:
+                return request_response
+        if _has_non_empty_list(nested, ["clarifying_questions", "clarifyingQuestions"]):
+            return ResponseType.CLARIFICATION
+        if _has_non_empty_list(nested, ["assumptions"]):
+            return ResponseType.PROPOSAL
+
+    request_type = payload.get("request_type") or payload.get("requestType")
+    if isinstance(request_type, str):
+        request_response = _request_type_to_response_type(request_type)
+        if request_response:
+            return request_response
+
+    if _has_non_empty_list(payload, ["clarifying_questions", "clarifyingQuestions"]):
+        return ResponseType.CLARIFICATION
+    if _has_non_empty_list(payload, ["assumptions"]):
+        return ResponseType.PROPOSAL
+
+    if turn_type == TurnType.ASSUMPTION_PRESENTED:
+        return ResponseType.PROPOSAL
+    if turn_type in {TurnType.MCP_TOOL_INVOKED, TurnType.MCP_TOOL_RESULT}:
+        return ResponseType.TOOL_INVOCATION
+    if turn_type == TurnType.AGENT_RESPONSE:
+        return ResponseType.CONVERSATIONAL
+    if turn_type in {TurnType.SYSTEM_MESSAGE, TurnType.EXTERNAL_STATE_CHANGE}:
+        return ResponseType.ACKNOWLEDGMENT
+
+    return None
+
+
 class Turn(Base):
     """Turn model representing a single state change event.
 
@@ -157,8 +261,13 @@ class Turn(Base):
         """Set payload from dictionary."""
         self.turn_payload = json.dumps(payload)
 
+    def get_response_type(self) -> ResponseType | None:
+        """Get response type for this turn if applicable."""
+        return resolve_response_type(self.type, self.actor, self.get_payload())
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
+        response_type = self.get_response_type()
         return {
             "id": self.id,
             "sessionId": self.session_id,
@@ -168,6 +277,7 @@ class Turn(Base):
             "type": self.type,
             "summary": self.summary,
             "payload": self.get_payload(),
+            "responseType": response_type.value if response_type else None,
             "relatedNodeId": self.related_node_id,
             "relatedEdgeId": self.related_edge_id,
         }

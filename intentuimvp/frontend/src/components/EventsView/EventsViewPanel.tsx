@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { TurnResponse } from "@/hooks/turnTypes";
+import {
+  getResponseType,
+  type ResponseType,
+  type TurnResponse,
+} from "@/hooks/turnTypes";
 
 type EventsViewPanelProps = {
   id?: string;
@@ -27,12 +31,17 @@ const DEFAULT_EVENT_TYPES = [
   "node.updated",
   "node.deleted",
   "edge.created",
+  "edge.updated",
+  "edge.deleted",
   "job.started",
   "job.progress",
   "job.completed",
   "job.failed",
-  "response.sent",
-  "tool.invoked",
+  "response.conversational",
+  "response.proposal",
+  "response.clarification",
+  "response.acknowledgment",
+  "response.tool_invocation",
   "external.updated",
 ];
 
@@ -59,6 +68,14 @@ const EVENT_TYPE_MAP: Record<string, string> = {
   mcp_tool_invoked: "tool.invoked",
   mcp_tool_result: "tool.result",
   external_state_change: "external.updated",
+};
+
+const RESPONSE_EVENT_TYPE_MAP: Record<ResponseType, string> = {
+  conversational: "response.conversational",
+  proposal: "response.proposal",
+  clarification: "response.clarification",
+  acknowledgment: "response.acknowledgment",
+  tool_invocation: "response.tool_invocation",
 };
 
 const formatTimestamp = (value: string): string => {
@@ -190,6 +207,10 @@ const buildSummary = (turn: TurnResponse): string => {
 };
 
 const getEventType = (turn: TurnResponse): string => {
+  const responseType = getResponseType(turn);
+  if (responseType) {
+    return RESPONSE_EVENT_TYPE_MAP[responseType] ?? `response.${responseType}`;
+  }
   return EVENT_TYPE_MAP[turn.type] ?? turn.type.replace(/_/g, ".");
 };
 
@@ -211,7 +232,13 @@ const getBadgeTone = (eventType: string): string => {
   if (eventType.startsWith("assumption.")) return "assumption";
   if (eventType.startsWith("node.") || eventType.startsWith("edge.")) return "canvas";
   if (eventType.startsWith("job.")) return "job";
-  if (eventType.startsWith("response.")) return "response";
+  if (eventType.startsWith("response.")) {
+    const responseKey = eventType.replace("response.", "");
+    if (responseKey === "tool_invocation") {
+      return "response-tool_invocation";
+    }
+    return `response-${responseKey}`;
+  }
   if (eventType.startsWith("tool.")) return "tool";
   if (eventType.startsWith("external.")) return "external";
   return "neutral";
@@ -754,6 +781,31 @@ export function EventsViewPanel({
         .events-badge.tone-response {
           color: #fca5a5;
           border-color: rgba(248, 113, 113, 0.45);
+        }
+
+        .events-badge.tone-response-conversational {
+          color: #93c5fd;
+          border-color: rgba(147, 197, 253, 0.45);
+        }
+
+        .events-badge.tone-response-proposal {
+          color: #fb923c;
+          border-color: rgba(251, 146, 60, 0.45);
+        }
+
+        .events-badge.tone-response-clarification {
+          color: #facc15;
+          border-color: rgba(250, 204, 21, 0.45);
+        }
+
+        .events-badge.tone-response-acknowledgment {
+          color: #34d399;
+          border-color: rgba(52, 211, 153, 0.45);
+        }
+
+        .events-badge.tone-response-tool_invocation {
+          color: #22d3ee;
+          border-color: rgba(34, 211, 238, 0.45);
         }
 
         .events-badge.tone-tool {

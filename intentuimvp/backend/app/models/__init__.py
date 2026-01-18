@@ -13,7 +13,7 @@ from app.models.job import Job
 from app.models.node import Node, NodeType
 from app.models.preferences import Preferences
 from app.models.session import WorkspaceSession
-from app.models.turn import Turn, TurnActor, TurnType
+from app.models.turn import Turn, ResponseType, TurnActor, TurnType
 
 # MCP models are imported separately to avoid circular dependencies
 # Use: from app.mcp.models import MCPServer, MCPExecutionLog, SecurityLevel
@@ -33,6 +33,7 @@ __all__ = [
     "Job",
     "JobArtifact",
     "Turn",
+    "ResponseType",
     "TurnActor",
     "TurnType",
     "WorkspaceSession",

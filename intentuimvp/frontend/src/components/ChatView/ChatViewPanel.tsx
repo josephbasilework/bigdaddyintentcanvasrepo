@@ -3,7 +3,11 @@
 import { useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { TurnResponse } from "@/hooks/turnTypes";
+import {
+  getResponseType,
+  getResponseTypeLabel,
+  type TurnResponse,
+} from "@/hooks/turnTypes";
 
 type ChatViewPanelProps = {
   id?: string;
@@ -126,18 +130,39 @@ export function ChatViewPanel({
             const label = ACTOR_LABELS[turn.actor] ?? "System";
             const content = buildTurnContent(turn);
             const timestamp = formatTimestamp(turn.timestamp);
-            const isClarification = CLARIFICATION_TYPES.has(turn.type);
+            const responseType = getResponseType(turn);
+            const responseLabel = responseType
+              ? getResponseTypeLabel(responseType)
+              : null;
+            const isClarification =
+              !responseType && CLARIFICATION_TYPES.has(turn.type);
 
             return (
-              <div key={turn.id} className={`chat-turn ${role}`}>
+              <div
+                key={turn.id}
+                className={`chat-turn ${role}${
+                  responseType ? ` response-${responseType}` : ""
+                }`}
+              >
                 <div className="chat-meta">
                   <span className="chat-role">{label}</span>
-                  {isClarification && (
-                    <span className="chat-tag">Clarification</span>
+                  {responseType && (
+                    <span className={`chat-tag response-${responseType}`}>
+                      {responseLabel}
+                    </span>
+                  )}
+                  {isClarification && !responseType && (
+                    <span className="chat-tag response-clarification">
+                      Clarification
+                    </span>
                   )}
                   {timestamp && <time className="chat-time">{timestamp}</time>}
                 </div>
-                <div className="chat-bubble">
+                <div
+                  className={`chat-bubble${
+                    responseType ? ` response-${responseType}` : ""
+                  }`}
+                >
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
                 </div>
               </div>
@@ -255,6 +280,31 @@ export function ChatViewPanel({
           letter-spacing: 0.12em;
         }
 
+        .chat-tag.response-conversational {
+          color: #93c5fd;
+          border-color: rgba(147, 197, 253, 0.45);
+        }
+
+        .chat-tag.response-proposal {
+          color: #fb923c;
+          border-color: rgba(251, 146, 60, 0.45);
+        }
+
+        .chat-tag.response-clarification {
+          color: #facc15;
+          border-color: rgba(250, 204, 21, 0.45);
+        }
+
+        .chat-tag.response-acknowledgment {
+          color: #34d399;
+          border-color: rgba(52, 211, 153, 0.45);
+        }
+
+        .chat-tag.response-tool_invocation {
+          color: #22d3ee;
+          border-color: rgba(34, 211, 238, 0.45);
+        }
+
         .chat-bubble {
           background: rgba(15, 23, 42, 0.7);
           border: 1px solid rgba(148, 163, 184, 0.2);
@@ -268,6 +318,26 @@ export function ChatViewPanel({
         .chat-turn.user .chat-bubble {
           background: rgba(30, 41, 59, 0.9);
           border-color: rgba(56, 189, 248, 0.35);
+        }
+
+        .chat-bubble.response-conversational {
+          border-color: rgba(147, 197, 253, 0.45);
+        }
+
+        .chat-bubble.response-proposal {
+          border-color: rgba(251, 146, 60, 0.5);
+        }
+
+        .chat-bubble.response-clarification {
+          border-color: rgba(250, 204, 21, 0.5);
+        }
+
+        .chat-bubble.response-acknowledgment {
+          border-color: rgba(52, 211, 153, 0.5);
+        }
+
+        .chat-bubble.response-tool_invocation {
+          border-color: rgba(34, 211, 238, 0.55);
         }
 
         .chat-bubble :global(p) {

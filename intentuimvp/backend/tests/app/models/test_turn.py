@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 
-from app.models.turn import Turn, TurnActor, TurnType
+from app.models.turn import ResponseType, Turn, TurnActor, TurnType
 
 
 class TestTurnActorEnum:
@@ -62,6 +62,18 @@ class TestTurnTypeEnum:
         """Verify MCP operation turn types."""
         assert TurnType.MCP_TOOL_INVOKED == "mcp_tool_invoked"
         assert TurnType.MCP_TOOL_RESULT == "mcp_tool_result"
+
+
+class TestResponseTypeEnum:
+    """Tests for ResponseType enum."""
+
+    def test_response_type_values(self) -> None:
+        """Verify response type values are defined."""
+        assert ResponseType.CONVERSATIONAL == "conversational"
+        assert ResponseType.PROPOSAL == "proposal"
+        assert ResponseType.CLARIFICATION == "clarification"
+        assert ResponseType.ACKNOWLEDGMENT == "acknowledgment"
+        assert ResponseType.TOOL_INVOCATION == "tool_invocation"
 
 
 class TestTurnModel:
@@ -204,6 +216,41 @@ class TestTurnToDict:
         result = turn.to_dict()
 
         assert result["payload"] == {"data": [1, 2, 3]}
+        assert result["responseType"] == ResponseType.CONVERSATIONAL.value
+
+    def test_to_dict_response_type_override(self) -> None:
+        """Explicit response type in payload wins."""
+        turn = Turn(
+            id=13,
+            session_id="s2",
+            sequence_number=2,
+            timestamp=datetime(2026, 1, 17, 0, 0, 0),
+            actor=TurnActor.AGENT,
+            type=TurnType.AGENT_RESPONSE,
+            summary="Clarifying question",
+            turn_payload=json.dumps({"response_type": "clarification"}),
+        )
+
+        result = turn.to_dict()
+
+        assert result["responseType"] == ResponseType.CLARIFICATION.value
+
+    def test_to_dict_proposal_response_type(self) -> None:
+        """Assumption proposals map to proposal response type."""
+        turn = Turn(
+            id=14,
+            session_id="s3",
+            sequence_number=3,
+            timestamp=datetime(2026, 1, 17, 0, 0, 0),
+            actor=TurnActor.AGENT,
+            type=TurnType.ASSUMPTION_PRESENTED,
+            summary="Proposal requires confirmation",
+            turn_payload=json.dumps({"assumptions": [{"text": "Confirm scope"}]}),
+        )
+
+        result = turn.to_dict()
+
+        assert result["responseType"] == ResponseType.PROPOSAL.value
 
     def test_to_dict_uses_camel_case(self) -> None:
         """Verify to_dict uses camelCase for API compatibility."""

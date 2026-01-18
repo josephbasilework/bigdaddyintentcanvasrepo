@@ -13,6 +13,8 @@ const CHAT_TURN_TYPES = new Set([
   "assumption_confirmed",
   "assumption_rejected",
   "assumption_modified",
+  "mcp_tool_invoked",
+  "mcp_tool_result",
 ]);
 
 const isChatTurn = (turn: TurnResponse): boolean => CHAT_TURN_TYPES.has(turn.type);

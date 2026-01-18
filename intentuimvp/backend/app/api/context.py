@@ -15,9 +15,12 @@ from app.context.models import ContextPayload, parse_assumption
 from app.context.router import ContextRouter, get_context_router
 from app.database import AsyncSessionLocal, get_db
 from app.models.intent import AssumptionResolutionDB
-from app.models.turn import TurnActor, TurnType
+from app.models.turn import ResponseType, TurnActor, TurnType
 from app.repositories.intent_repo import IntentRepository
-from app.services.turns import log_turn_with_session_id_sync
+from app.services.turns import (
+    log_turn_with_new_async_session,
+    log_turn_with_session_id_sync,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -299,6 +302,29 @@ async def generate_assumptions(
             and result.primary_intent.confidence >= AUTO_EXECUTE_CONFIDENCE_THRESHOLD
             and not assumptions_needing_confirmation
         )
+
+        if session_id and assumptions_needing_confirmation:
+            await log_turn_with_new_async_session(
+                session_id=session_id,
+                actor=TurnActor.AGENT,
+                turn_type=TurnType.ASSUMPTION_PRESENTED,
+                summary=(
+                    f"Proposal requires confirmation for {result.primary_intent.name}"
+                ),
+                payload={
+                    "intent": result.primary_intent.name,
+                    "confidence": result.primary_intent.confidence,
+                    "assumptions": [
+                        assumption.model_dump()
+                        for assumption in assumptions_needing_confirmation
+                    ],
+                    "alternatives": [
+                        alt.model_dump() for alt in alternatives
+                    ],
+                    "reasoning": result.reasoning,
+                    "response_type": ResponseType.PROPOSAL.value,
+                },
+            )
 
         return AssumptionSetResponse(
             intent=result.primary_intent.name,

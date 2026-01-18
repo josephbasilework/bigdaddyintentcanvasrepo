@@ -4,7 +4,7 @@ import { ChatViewPanel } from "../ChatView/ChatViewPanel";
 import type { TurnResponse } from "@/hooks/turnTypes";
 
 describe("ChatViewPanel", () => {
-  it("renders markdown and clarification tags", () => {
+  it("renders markdown and response tags", () => {
     const turns: TurnResponse[] = [
       {
         id: 1,
@@ -24,9 +24,10 @@ describe("ChatViewPanel", () => {
         sequenceNumber: 2,
         timestamp: "2024-01-01T00:00:05Z",
         actor: "system",
-        type: "assumption_modified",
-        summary: "Assumption modified",
-        payload: { final_text: "Use UTC" },
+        type: "system_message",
+        summary: "Acknowledged",
+        payload: { message: "Got it, noted." },
+        responseType: "acknowledgment",
         relatedNodeId: null,
         relatedEdgeId: null,
       },
@@ -36,9 +37,7 @@ describe("ChatViewPanel", () => {
 
     const strongText = screen.getByText("world");
     expect(strongText.tagName).toBe("STRONG");
-    expect(screen.getByText("Clarification")).toBeInTheDocument();
-    expect(
-      screen.getByText("Clarification updated: Use UTC")
-    ).toBeInTheDocument();
+    expect(screen.getByText("Acknowledgment")).toBeInTheDocument();
+    expect(screen.getByText("Got it, noted.")).toBeInTheDocument();
   });
 });

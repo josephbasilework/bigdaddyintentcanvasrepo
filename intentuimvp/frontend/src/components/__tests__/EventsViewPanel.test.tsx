@@ -93,4 +93,29 @@ describe("EventsViewPanel", () => {
     expect(screen.queryByText("Node created")).not.toBeInTheDocument();
     expect(screen.queryByText("Plan sprint")).not.toBeInTheDocument();
   });
+
+  it("labels response types in event badges", () => {
+    const responseTurns: TurnResponse[] = [
+      {
+        id: 10,
+        sessionId: "session-2",
+        sequenceNumber: 1,
+        timestamp: "2024-01-02T00:00:01Z",
+        actor: "agent",
+        type: "agent_response",
+        summary: "Proposal ready",
+        payload: { message: "I can draft the outline." },
+        responseType: "proposal",
+        relatedNodeId: null,
+        relatedEdgeId: null,
+      },
+    ];
+
+    render(<EventsViewPanel turns={responseTurns} />);
+
+    const matches = screen.getAllByText("response.proposal");
+    expect(
+      matches.some((element) => element.classList.contains("events-badge"))
+    ).toBe(true);
+  });
 });

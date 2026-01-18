@@ -8,7 +8,11 @@ import {
   useState,
   type UIEvent,
 } from "react";
-import type { TurnResponse } from "@/hooks/turnTypes";
+import {
+  getResponseType,
+  getResponseTypeLabel,
+  type TurnResponse,
+} from "@/hooks/turnTypes";
 
 type WheelViewPanelProps = {
   id?: string;
@@ -145,6 +149,13 @@ const getActorGroup = (turn: TurnResponse): ActorGroup => {
 };
 
 const getCategory = (turn: TurnResponse): TurnCategory => {
+  const responseType = getResponseType(turn);
+  if (responseType === "proposal") {
+    return "proposal";
+  }
+  if (responseType) {
+    return "response";
+  }
   if (CRUD_TYPES.has(turn.type)) {
     return "crud";
   }
@@ -203,11 +214,15 @@ const TurnRow = ({
   const payloadText = extractPayloadText(payload);
   const formattedPayload =
     payload && Object.keys(payload).length > 0 ? JSON.stringify(payload, null, 2) : null;
+  const responseType = getResponseType(turn);
+  const responseLabel = responseType ? getResponseTypeLabel(responseType) : null;
 
   return (
     <div
       ref={rowRef}
-      className={`wheel-turn is-${actorGroup}${isExpanded ? " is-expanded" : ""}`}
+      className={`wheel-turn is-${actorGroup}${
+        responseType ? ` response-${responseType}` : ""
+      }${isExpanded ? " is-expanded" : ""}`}
       id={`turn-${turn.id}`}
     >
       <div className="wheel-turn-header">
@@ -230,6 +245,11 @@ const TurnRow = ({
             <span className={`wheel-turn-tag tag-${category}`}>
               {CATEGORY_LABELS[category]}
             </span>
+            {responseType && (
+              <span className={`wheel-turn-tag response-${responseType}`}>
+                {responseLabel}
+              </span>
+            )}
             <span className="wheel-turn-type">{turn.type}</span>
             <time className="wheel-turn-time">{formatTimestamp(turn.timestamp)}</time>
           </div>
@@ -255,6 +275,12 @@ const TurnRow = ({
             <div className="wheel-detail">
               <div className="wheel-detail-label">Actor</div>
               <div className="wheel-detail-value">{turn.actor}</div>
+            </div>
+            <div className="wheel-detail">
+              <div className="wheel-detail-label">Response type</div>
+              <div className="wheel-detail-value">
+                {responseLabel ?? "None"}
+              </div>
             </div>
             <div className="wheel-detail">
               <div className="wheel-detail-label">Related node</div>
@@ -863,6 +889,31 @@ export function WheelViewPanel({
         .tag-proposal {
           color: #fbbf24;
           border-color: rgba(251, 191, 36, 0.4);
+        }
+
+        .wheel-turn-tag.response-conversational {
+          color: #93c5fd;
+          border-color: rgba(147, 197, 253, 0.45);
+        }
+
+        .wheel-turn-tag.response-proposal {
+          color: #fb923c;
+          border-color: rgba(251, 146, 60, 0.45);
+        }
+
+        .wheel-turn-tag.response-clarification {
+          color: #facc15;
+          border-color: rgba(250, 204, 21, 0.45);
+        }
+
+        .wheel-turn-tag.response-acknowledgment {
+          color: #34d399;
+          border-color: rgba(52, 211, 153, 0.45);
+        }
+
+        .wheel-turn-tag.response-tool_invocation {
+          color: #22d3ee;
+          border-color: rgba(34, 211, 238, 0.45);
         }
 
         .tag-crud {

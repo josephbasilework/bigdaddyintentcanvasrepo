@@ -29,7 +29,7 @@ from app.config import get_settings
 from app.database import get_async_db
 from app.logging_config import get_correlation_id
 from app.repositories.session_repo import AsyncSessionRepository
-from app.models.turn import TurnActor, TurnType
+from app.models.turn import ResponseType, TurnActor, TurnType, resolve_response_type
 from app.services.turns import log_turn_with_new_async_session
 from app.ws.dashboard_streaming import get_dashboard_streaming_service
 from app.ws.state_manager import get_state_manager
@@ -53,40 +53,94 @@ def _build_turn_from_agui_message(
         if getattr(payload, "title", "") == "Heartbeat":
             return None
         summary = _truncate_summary(f"{payload.title}: {payload.message}")
+        payload_data = payload.model_dump()
+        payload_data["response_type"] = ResponseType.ACKNOWLEDGMENT.value
         return (
             TurnActor.SYSTEM,
             TurnType.SYSTEM_MESSAGE,
             summary,
-            payload.model_dump(),
+            payload_data,
         )
     if message_type == "status":
         payload = message.payload
         summary = _truncate_summary(f"{payload.agent_name}: {payload.status}")
+        payload_data = payload.model_dump()
+        payload_data["response_type"] = ResponseType.ACKNOWLEDGMENT.value
         return (
             TurnActor.SYSTEM,
             TurnType.SYSTEM_MESSAGE,
             summary,
-            payload.model_dump(),
+            payload_data,
         )
     if message_type == "error":
         payload = message.payload
         summary = _truncate_summary(f"Agent error: {payload.error}")
+        payload_data = payload.model_dump()
+        payload_data["response_type"] = ResponseType.ACKNOWLEDGMENT.value
         return (
             TurnActor.SYSTEM,
             TurnType.SYSTEM_MESSAGE,
             summary,
-            payload.model_dump(),
+            payload_data,
+        )
+    if message_type == "request":
+        payload = message.payload
+        prompt = getattr(payload, "prompt", "")
+        summary = _truncate_summary(f"Agent request: {prompt}")
+        payload_data = payload.model_dump()
+        request_type = payload_data.get("request_type")
+        response_type = (
+            ResponseType.PROPOSAL
+            if request_type == "confirmation"
+            else ResponseType.CLARIFICATION
+        )
+        payload_data["response_type"] = response_type.value
+        return (
+            TurnActor.AGENT,
+            TurnType.AGENT_RESPONSE,
+            summary,
+            payload_data,
+        )
+    if message_type == "tool.call":
+        payload = message.payload
+        summary = _truncate_summary(f"Tool call: {payload.tool_name}")
+        payload_data = payload.model_dump()
+        payload_data["response_type"] = ResponseType.TOOL_INVOCATION.value
+        return (
+            TurnActor.MCP,
+            TurnType.MCP_TOOL_INVOKED,
+            summary,
+            payload_data,
+        )
+    if message_type == "tool.result":
+        payload = message.payload
+        summary = _truncate_summary(f"Tool result: {payload.tool_name}")
+        payload_data = payload.model_dump()
+        payload_data["response_type"] = ResponseType.TOOL_INVOCATION.value
+        return (
+            TurnActor.MCP,
+            TurnType.MCP_TOOL_RESULT,
+            summary,
+            payload_data,
         )
     if message_type in {"result", "run.end"}:
         payload = message.payload
         summary = _truncate_summary(
             f"Agent response: {getattr(payload, 'agent_id', 'agent')}"
         )
+        payload_data = payload.model_dump()
+        response_type = resolve_response_type(
+            TurnType.AGENT_RESPONSE,
+            TurnActor.AGENT,
+            payload_data,
+        )
+        if response_type:
+            payload_data["response_type"] = response_type.value
         return (
             TurnActor.AGENT,
             TurnType.AGENT_RESPONSE,
             summary,
-            payload.model_dump(),
+            payload_data,
         )
     return None
 

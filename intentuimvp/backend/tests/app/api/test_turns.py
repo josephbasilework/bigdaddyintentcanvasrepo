@@ -104,6 +104,13 @@ def seed_turns(sync_session_local) -> None:
         )
         repo.create_turn(
             session_id="session-1",
+            actor=TurnActor.AGENT,
+            turn_type=TurnType.AGENT_RESPONSE,
+            summary="Agent response",
+            payload={"response_type": "acknowledgment"},
+        )
+        repo.create_turn(
+            session_id="session-1",
             actor=TurnActor.USER,
             turn_type=TurnType.USER_INPUT,
             summary="Input 2",
@@ -140,3 +147,15 @@ class TestTurnEndpoints:
         data = response.json()
         assert data["count"] == 1
         assert data["turns"][0]["sequenceNumber"] == 2
+
+    def test_list_turns_response_type(
+        self, client: testclient.TestClient, sync_session_local
+    ) -> None:
+        """Response type is included when available."""
+        seed_turns(sync_session_local)
+
+        response = client.get("/api/turns?session_id=session-1&type=agent_response")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["count"] == 1
+        assert data["turns"][0]["responseType"] == "acknowledgment"
