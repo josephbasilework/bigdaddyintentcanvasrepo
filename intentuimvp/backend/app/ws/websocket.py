@@ -29,9 +29,9 @@ from app.agui import (
 from app.config import get_settings
 from app.database import AsyncSessionLocal, get_async_db
 from app.logging_config import get_correlation_id
-from app.repositories.session_repo import AsyncSessionRepository
 from app.models.intent import AssumptionResolutionDB
 from app.models.turn import ResponseType, TurnActor, TurnType, resolve_response_type
+from app.repositories.session_repo import AsyncSessionRepository
 from app.services.turns import (
     log_turn_with_new_async_session,
     log_turn_with_session_id_async,
@@ -733,6 +733,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                                 websocket,
                                 subscribe_msg.payload.dashboard_node_id,
                                 subscribe_msg.payload.canvas_id,
+                                subscribe_msg.payload.targets,
                             )
                             # Send confirmation with active subscriptions
                             await dashboard_service.send_subscribed_confirmation(

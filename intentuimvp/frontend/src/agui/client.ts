@@ -889,13 +889,24 @@ export class AGUIClient {
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       const message: UIToAgentMessageType = {
+        version: AGUI_PROTOCOL_VERSION,
+        messageId: generateMessageId(),
+        timestamp: getTimestamp(),
         source: "ui",
         target: "agent",
         type: "dashboard.subscribe",
         payload: {
           dashboard_node_id: dashboardNodeId,
           canvas_id: canvasId,
-          targets: ["workspace_state", "node", "edge", "job", "artifact", "tool_output"],
+          targets: [
+            "workspace_state",
+            "node",
+            "edge",
+            "job",
+            "artifact",
+            "tool_output",
+            "external_state",
+          ],
         },
       };
       this.send(message);
@@ -912,6 +923,9 @@ export class AGUIClient {
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       const message: UIToAgentMessageType = {
+        version: AGUI_PROTOCOL_VERSION,
+        messageId: generateMessageId(),
+        timestamp: getTimestamp(),
         source: "ui",
         target: "agent",
         type: "dashboard.unsubscribe",

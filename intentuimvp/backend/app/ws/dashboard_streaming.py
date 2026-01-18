@@ -75,6 +75,7 @@ class DashboardStreamingService:
 
         # Maps WebSocket connection id to WebSocket instance
         self._connections: dict[int, WebSocket] = {}
+        self._dashboard_canvas_ids: dict[int, int] = {}
 
     def _get_connection_id(self, websocket: WebSocket) -> int:
         """Get a unique ID for a WebSocket connection."""
@@ -85,6 +86,7 @@ class DashboardStreamingService:
         websocket: WebSocket,
         dashboard_node_id: int,
         canvas_id: int,
+        targets: list[DashboardSubscriptionTarget] | None = None,
     ) -> list[dict[str, Any]]:
         """Subscribe a WebSocket connection to a dashboard node's updates.
 
@@ -102,11 +104,19 @@ class DashboardStreamingService:
             self._subscriptions[dashboard_node_id].add(websocket)
             self._connection_dashboards[conn_id].add(dashboard_node_id)
             self._connections[conn_id] = websocket
+            self._dashboard_canvas_ids[dashboard_node_id] = canvas_id
 
         # Fetch active subscriptions from database
         subscriptions = await self._get_dashboard_subscriptions(
-            dashboard_node_id, canvas_id
+            dashboard_node_id, canvas_id, targets
         )
+        if subscriptions:
+            from app.services.external_state import get_external_state_manager
+
+            external_manager = get_external_state_manager()
+            await external_manager.attach_dashboard(
+                dashboard_node_id, canvas_id, subscriptions
+            )
 
         logger.info(
             "Dashboard subscription added",
@@ -136,15 +146,23 @@ class DashboardStreamingService:
         """
         conn_id = self._get_connection_id(websocket)
 
+        canvas_id: int | None = None
         async with self._lock:
             self._subscriptions[dashboard_node_id].discard(websocket)
             if not self._subscriptions[dashboard_node_id]:
                 del self._subscriptions[dashboard_node_id]
+                canvas_id = self._dashboard_canvas_ids.pop(dashboard_node_id, None)
 
             self._connection_dashboards[conn_id].discard(dashboard_node_id)
             if not self._connection_dashboards[conn_id]:
                 del self._connection_dashboards[conn_id]
                 self._connections.pop(conn_id, None)
+
+        if canvas_id is not None:
+            from app.services.external_state import get_external_state_manager
+
+            external_manager = get_external_state_manager()
+            await external_manager.detach_dashboard(dashboard_node_id, canvas_id)
 
         logger.info(
             "Dashboard subscription removed",
@@ -165,12 +183,16 @@ class DashboardStreamingService:
         """
         conn_id = self._get_connection_id(websocket)
 
+        dashboards_to_detach: list[tuple[int, int]] = []
         async with self._lock:
             dashboard_ids = list(self._connection_dashboards.get(conn_id, set()))
             for dashboard_id in dashboard_ids:
                 self._subscriptions[dashboard_id].discard(websocket)
                 if not self._subscriptions[dashboard_id]:
                     del self._subscriptions[dashboard_id]
+                    canvas_id = self._dashboard_canvas_ids.pop(dashboard_id, None)
+                    if canvas_id is not None:
+                        dashboards_to_detach.append((dashboard_id, canvas_id))
 
             self._connection_dashboards.pop(conn_id, None)
             self._connections.pop(conn_id, None)
@@ -186,6 +208,13 @@ class DashboardStreamingService:
                     "correlation_id": get_correlation_id(),
                 },
             )
+
+        if dashboards_to_detach:
+            from app.services.external_state import get_external_state_manager
+
+            external_manager = get_external_state_manager()
+            for dashboard_id, canvas_id in dashboards_to_detach:
+                await external_manager.detach_dashboard(dashboard_id, canvas_id)
 
     async def publish_update(
         self,
@@ -317,6 +346,7 @@ class DashboardStreamingService:
         self,
         dashboard_node_id: int,
         canvas_id: int,
+        targets: list[DashboardSubscriptionTarget] | None = None,
     ) -> list[dict[str, Any]]:
         """Fetch active subscriptions for a dashboard node from the database.
 
@@ -333,6 +363,14 @@ class DashboardStreamingService:
                 DashboardSubscription.canvas_id == canvas_id,
                 DashboardSubscription.is_active.is_(True),
             )
+            if targets:
+                normalized_targets = [
+                    target.value if isinstance(target, DashboardSubscriptionTarget) else str(target)
+                    for target in targets
+                ]
+                stmt = stmt.where(
+                    DashboardSubscription.subscription_target.in_(normalized_targets)
+                )
             result = await db.execute(stmt)
             subscriptions = result.scalars().all()
             return [sub.to_dict() for sub in subscriptions]

@@ -746,7 +746,8 @@ export type DashboardSubscriptionTarget =
   | 'edge'
   | 'job'
   | 'artifact'
-  | 'tool_output';
+  | 'tool_output'
+  | 'external_state';
 
 export type DashboardChangeType = 'created' | 'updated' | 'deleted';
 

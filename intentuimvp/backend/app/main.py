@@ -15,6 +15,8 @@ from app.api.audio import router as audio_router
 from app.api.backup import router as backup_router
 from app.api.commands import router as commands_router
 from app.api.context import router as context_router
+from app.api.dashboard_external import router as dashboard_external_router
+from app.api.dashboard_subscriptions import router as dashboard_subscriptions_router
 from app.api.edges import router as edges_router
 from app.api.events import router as events_router
 from app.api.health import router as health_router
@@ -216,6 +218,8 @@ def create_app() -> FastAPI:
     app.include_router(audio_router, tags=["audio"])
     app.include_router(attachments_router, tags=["attachments"])
     app.include_router(preferences_router, tags=["preferences"])
+    app.include_router(dashboard_subscriptions_router, tags=["dashboard"])
+    app.include_router(dashboard_external_router, tags=["dashboard"])
     app.include_router(backup_router, tags=["backup"])
     app.include_router(mcp_router, tags=["mcp"])
     app.include_router(jobs_router, tags=["jobs"])

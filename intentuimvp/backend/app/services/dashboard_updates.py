@@ -63,6 +63,7 @@ async def publish_dashboard_update(
         DashboardSubscriptionTarget.WORKSPACE_STATE,
         DashboardSubscriptionTarget.TOOL_OUTPUT,
         DashboardSubscriptionTarget.ARTIFACT,
+        DashboardSubscriptionTarget.EXTERNAL_STATE,
     }:
         try:
             async with AsyncSessionLocal() as session:

@@ -8,6 +8,10 @@ from app.schemas.backup import (
     ManualBackupRequest,
     RestoreResponse,
 )
+from app.schemas.dashboard_external import (
+    DashboardExternalWriteRequest,
+    DashboardExternalWriteResponse,
+)
 from app.schemas.dashboard_subscription import (
     DashboardSubscriptionCreateRequest,
     DashboardSubscriptionListResponse,
@@ -82,6 +86,8 @@ __all__ = [
     "DashboardSubscriptionUpdateRequest",
     "DashboardSubscriptionResponse",
     "DashboardSubscriptionListResponse",
+    "DashboardExternalWriteRequest",
+    "DashboardExternalWriteResponse",
     # MCP schemas
     "MCPServerRegisterRequest",
     "MCPServerResponse",

@@ -26,6 +26,7 @@ class DashboardSubscriptionTarget(str, Enum):
     JOB = "job"
     ARTIFACT = "artifact"
     TOOL_OUTPUT = "tool_output"
+    EXTERNAL_STATE = "external_state"
 
 
 class DashboardSubscription(Base):

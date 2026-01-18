@@ -19,6 +19,15 @@ export interface DashboardStreamStats {
   activeSubscriptions: DashboardSubscribedPayload["subscriptions"];
 }
 
+export type ExternalStreamStatus = "idle" | "connecting" | "connected" | "error";
+
+export interface ExternalStreamState {
+  data: unknown;
+  status: ExternalStreamStatus;
+  error: string | null;
+  lastUpdated: Date | null;
+}
+
 export interface DashboardChange {
   target: DashboardSubscriptionTarget;
   sourceId: string | null;
@@ -37,11 +46,19 @@ const initialStats: DashboardStreamStats = {
     job: 0,
     artifact: 0,
     tool_output: 0,
+    external_state: 0,
   },
   recentChanges: [],
   isSubscribed: false,
   lastUpdateTime: null,
   activeSubscriptions: [],
+};
+
+const initialExternalState: ExternalStreamState = {
+  data: null,
+  status: "idle",
+  error: null,
+  lastUpdated: null,
 };
 
 export function useDashboardStream(
@@ -50,6 +67,8 @@ export function useDashboardStream(
   enabled = true
 ) {
   const [stats, setStats] = useState<DashboardStreamStats>(initialStats);
+  const [externalState, setExternalState] =
+    useState<ExternalStreamState>(initialExternalState);
   const cleanupRef = useRef<(() => void) | null>(null);
 
   const handleUpdate = useCallback((payload: DashboardUpdatePayload) => {
@@ -83,6 +102,45 @@ export function useDashboardStream(
         lastUpdateTime: new Date(),
       };
     });
+
+    if (payload.subscription_target === "external_state") {
+      const updateData = payload.data ?? {};
+      const statusCandidate =
+        typeof updateData.status === "string" ? updateData.status : null;
+      const errorCandidate =
+        typeof updateData.error === "string"
+          ? updateData.error
+          : typeof updateData.message === "string"
+            ? updateData.message
+            : null;
+      const hasPayload = Object.prototype.hasOwnProperty.call(updateData, "payload");
+      const isStatusOnly =
+        !hasPayload &&
+        (statusCandidate !== null || errorCandidate !== null) &&
+        Object.keys(updateData).every((key) =>
+          ["status", "error", "observed_at"].includes(key)
+        );
+      const payloadValue = hasPayload ? updateData.payload : isStatusOnly ? null : updateData;
+      const normalizedStatus: ExternalStreamStatus =
+        statusCandidate === "connecting" ||
+        statusCandidate === "connected" ||
+        statusCandidate === "error"
+          ? (statusCandidate as ExternalStreamStatus)
+          : "connected";
+      const timestamp = new Date(payload.timestamp);
+      setExternalState((prev) => ({
+        data: payloadValue ?? prev.data,
+        status: normalizedStatus,
+        error:
+          normalizedStatus === "error"
+            ? errorCandidate ?? prev.error ?? "External source error"
+            : null,
+        lastUpdated:
+          payloadValue !== null || normalizedStatus === "connected"
+            ? timestamp
+            : prev.lastUpdated,
+      }));
+    }
   }, []);
 
   const handleSubscribed = useCallback((payload: DashboardSubscribedPayload) => {
@@ -121,23 +179,17 @@ export function useDashboardStream(
         cleanupRef.current();
         cleanupRef.current = null;
       }
-      setStats((prev) => ({ ...prev, isSubscribed: false }));
+      setStats(initialStats);
+      setExternalState(initialExternalState);
     };
   }, [dashboardNodeId, canvasId, enabled, handleUpdate, handleSubscribed]);
-
-  useEffect(() => {
-    if (!enabled) {
-      // Reset stats when stream is disabled
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setStats(initialStats);
-    }
-  }, [enabled]);
 
   return {
     stats,
     isConnected: stats.isSubscribed,
     lastUpdate: stats.lastUpdateTime,
     recentChanges: stats.recentChanges,
+    externalState,
     _handleUpdate: handleUpdate,
     _handleSubscribed: handleSubscribed,
   };

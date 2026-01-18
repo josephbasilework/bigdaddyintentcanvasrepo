@@ -5,6 +5,7 @@ import type {
   DashboardSubscriptionSnapshot,
   DashboardSubscriptionTarget,
 } from "../../agui/protocol";
+import { getAGUIClient } from "../../agui/client";
 import { useDashboardStream } from "../../hooks/useDashboardStream";
 import { useCanvasStore, type CanvasNode } from "../../state/canvasStore";
 import { SuccessMetricsDashboard } from "./SuccessMetricsDashboard";
@@ -491,6 +492,17 @@ const STREAM_TARGETS: Array<{
   { key: "job", label: "Jobs", accent: "#f97316" },
   { key: "artifact", label: "Artifacts", accent: "#34d399" },
   { key: "tool_output", label: "Tool Output", accent: "#22d3ee" },
+  { key: "external_state", label: "External State", accent: "#a855f7" },
+];
+
+const DASHBOARD_SUBSCRIBE_TARGETS: DashboardSubscriptionTarget[] = [
+  "workspace_state",
+  "node",
+  "edge",
+  "job",
+  "artifact",
+  "tool_output",
+  "external_state",
 ];
 
 const resolveSubscriptionTarget = (subscription: DashboardSubscriptionSnapshot): string => {
@@ -972,18 +984,50 @@ export function DashboardNode({ nodeId }: DashboardNodeProps) {
   }, [nodeId]);
 
   const streamingEnabled = dashboardNumericId !== null && canvasId !== null;
-  const { stats, isConnected, lastUpdate, recentChanges } = useDashboardStream(
+  const {
+    stats,
+    isConnected,
+    lastUpdate,
+    recentChanges,
+    externalState: streamExternalState,
+  } = useDashboardStream(
     dashboardNumericId,
     canvasId,
     streamingEnabled
   );
 
+  const hasExternalSubscription = useMemo(
+    () =>
+      stats.activeSubscriptions.some(
+        (subscription) => resolveSubscriptionTarget(subscription) === "external_state"
+      ),
+    [stats.activeSubscriptions]
+  );
+
+  const useBackendExternal =
+    streamingEnabled && dashboardConfig.type !== "workspace" && hasExternalSubscription;
+
   const externalEnabled =
-    dashboardType !== "success_metrics" && dashboardConfig.type !== "workspace";
-  const externalState = useExternalDashboardData(dashboardConfig, externalEnabled);
+    dashboardType !== "success_metrics" &&
+    dashboardConfig.type !== "workspace" &&
+    !useBackendExternal;
+  const localExternalState = useExternalDashboardData(dashboardConfig, externalEnabled);
+  const resolvedExternalState = useMemo<ExternalDataState>(() => {
+    if (!useBackendExternal) {
+      return localExternalState;
+    }
+    if (
+      streamExternalState.status === "idle" &&
+      streamingEnabled &&
+      dashboardConfig.type !== "workspace"
+    ) {
+      return { ...streamExternalState, status: "connecting" };
+    }
+    return streamExternalState;
+  }, [localExternalState, streamExternalState, useBackendExternal, streamingEnabled, dashboardConfig.type]);
 
   const streamPulse = useUpdatePulse(lastUpdate);
-  const externalPulse = useUpdatePulse(externalState.lastUpdated);
+  const externalPulse = useUpdatePulse(resolvedExternalState.lastUpdated);
 
   const selectionCount =
     selectedNodeIds.length > 0
@@ -1098,29 +1142,29 @@ export function DashboardNode({ nodeId }: DashboardNodeProps) {
 
   const hasExternalSource = dashboardConfig.type !== "workspace";
   const externalStatusLabel = hasExternalSource
-    ? externalState.status === "connected"
+    ? resolvedExternalState.status === "connected"
       ? "Connected"
-      : externalState.status === "connecting"
+      : resolvedExternalState.status === "connecting"
         ? "Connecting"
-        : externalState.status === "error"
+        : resolvedExternalState.status === "error"
           ? "Error"
           : "Idle"
     : "Not configured";
 
   const externalStatusTone = hasExternalSource
-    ? externalState.status === "connected"
+    ? resolvedExternalState.status === "connected"
       ? {
           color: "#34d399",
           background: "rgba(16, 185, 129, 0.15)",
           border: "rgba(52, 211, 153, 0.4)",
         }
-      : externalState.status === "connecting"
+      : resolvedExternalState.status === "connecting"
         ? {
             color: "#fbbf24",
             background: "rgba(245, 158, 11, 0.15)",
             border: "rgba(251, 191, 36, 0.4)",
           }
-        : externalState.status === "error"
+        : resolvedExternalState.status === "error"
           ? {
               color: "#f87171",
               background: "rgba(248, 113, 113, 0.15)",
@@ -1138,18 +1182,18 @@ export function DashboardNode({ nodeId }: DashboardNodeProps) {
       };
 
   const externalStatusDetail = hasExternalSource
-    ? externalState.status === "connecting"
+    ? resolvedExternalState.status === "connecting"
       ? "Connecting to external source."
-      : externalState.status === "error"
+      : resolvedExternalState.status === "error"
         ? "External source reported an error."
-        : externalState.status === "connected"
+        : resolvedExternalState.status === "connected"
           ? "Receiving external updates."
           : "Awaiting external updates."
     : "Configure a data source to view external state.";
 
   const externalLastUpdateLabel = hasExternalSource
-    ? externalState.lastUpdated
-      ? externalState.lastUpdated.toLocaleTimeString()
+    ? resolvedExternalState.lastUpdated
+      ? resolvedExternalState.lastUpdated.toLocaleTimeString()
       : "No updates yet"
     : "Not configured";
 
@@ -1157,7 +1201,7 @@ export function DashboardNode({ nodeId }: DashboardNodeProps) {
     ? "No external data yet"
     : "Configure a data source to view external state.";
 
-  const latestPayload = hasExternalSource ? externalState.data : null;
+  const latestPayload = hasExternalSource ? resolvedExternalState.data : null;
 
   const sourceSummary = hasExternalSource
     ? dashboardConfig.type === "api"
@@ -1180,7 +1224,81 @@ export function DashboardNode({ nodeId }: DashboardNodeProps) {
         )}s`
       : null;
 
-  const handleSaveConfig = useCallback(() => {
+  const refreshDashboardSubscription = useCallback(() => {
+    if (dashboardNumericId === null || canvasId === null) return;
+    const client = getAGUIClient();
+    if (!client) return;
+    try {
+      client.send({
+        source: "ui",
+        target: "agent",
+        type: "dashboard.subscribe",
+        payload: {
+          dashboard_node_id: dashboardNumericId,
+          canvas_id: canvasId,
+          targets: DASHBOARD_SUBSCRIBE_TARGETS,
+        },
+      });
+    } catch (error) {
+      console.warn("Failed to refresh dashboard subscription", error);
+    }
+  }, [dashboardNumericId, canvasId]);
+
+  const syncExternalSubscription = useCallback(
+    async (nextConfig: DashboardSourceConfig) => {
+      if (dashboardNumericId === null || canvasId === null) return;
+      const existing = stats.activeSubscriptions.find(
+        (subscription) => resolveSubscriptionTarget(subscription) === "external_state"
+      );
+      const subscriptionId =
+        existing && existing.id !== undefined ? Number(existing.id) : null;
+
+      if (nextConfig.type === "workspace") {
+        if (subscriptionId !== null && Number.isFinite(subscriptionId)) {
+          const response = await fetch(
+            `${API_BASE_URL}/api/dashboard/subscriptions/${subscriptionId}`,
+            { method: "DELETE" }
+          );
+          if (!response.ok) {
+            throw new Error(`External subscription delete failed (${response.status})`);
+          }
+        }
+        refreshDashboardSubscription();
+        return;
+      }
+
+      const createPayload = {
+        canvas_id: canvasId,
+        dashboard_node_id: dashboardNumericId,
+        subscription_target: "external_state",
+        config: nextConfig,
+        is_active: true,
+      };
+      const updatePayload = {
+        subscription_target: "external_state",
+        config: nextConfig,
+        is_active: true,
+      };
+      const endpoint =
+        subscriptionId !== null && Number.isFinite(subscriptionId)
+          ? `${API_BASE_URL}/api/dashboard/subscriptions/${subscriptionId}`
+          : `${API_BASE_URL}/api/dashboard/subscriptions`;
+      const method =
+        subscriptionId !== null && Number.isFinite(subscriptionId) ? "PUT" : "POST";
+      const response = await fetch(endpoint, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(method === "PUT" ? updatePayload : createPayload),
+      });
+      if (!response.ok) {
+        throw new Error(`External subscription sync failed (${response.status})`);
+      }
+      refreshDashboardSubscription();
+    },
+    [canvasId, dashboardNumericId, stats.activeSubscriptions, refreshDashboardSubscription]
+  );
+
+  const handleSaveConfig = useCallback(async () => {
     if (!nodeId) return;
     try {
       const nextConfig = toConfig(configForm);
@@ -1188,73 +1306,74 @@ export function DashboardNode({ nodeId }: DashboardNodeProps) {
       updateNode(nodeId, {
         metadata: { ...currentMetadata, dashboardConfig: nextConfig },
       });
+      await syncExternalSubscription(nextConfig);
       setConfigOpen(false);
       setConfigError(null);
     } catch (error) {
       setConfigError(error instanceof Error ? error.message : "Invalid configuration");
     }
-  }, [configForm, dashboardNode?.metadata, nodeId, updateNode]);
+  }, [configForm, dashboardNode?.metadata, nodeId, updateNode, syncExternalSubscription]);
 
   const handleWriteBack = useCallback(async () => {
     if (!dashboardConfig.allowWrite) return;
-    if (!window.confirm("Send write-back update to external source?")) {
+    if (dashboardNumericId === null || canvasId === null) {
+      setWriteStatus({ state: "error", message: "Save the workspace before write-back." });
       return;
     }
+
+    const payloadOverride = dashboardConfig.writePayload ?? dashboardConfig.mcpArgs ?? null;
+
+    const sendWriteRequest = async (confirm: boolean) => {
+      const response = await fetch(`${API_BASE_URL}/api/dashboard/external/write`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          canvas_id: canvasId,
+          dashboard_node_id: dashboardNumericId,
+          confirm,
+          payload_override: payloadOverride,
+        }),
+      });
+      const result = (await response.json()) as {
+        success?: boolean;
+        result?: unknown;
+        error?: string | null;
+        requires_confirmation?: boolean;
+        preview?: unknown;
+        diff?: unknown;
+      };
+      if (!response.ok) {
+        throw new Error(result.error ?? `Write-back failed (${response.status})`);
+      }
+      return result;
+    };
 
     setWriteStatus({ state: "sending" });
 
     try {
-      if (dashboardConfig.type === "api") {
-        const normalizedEndpoint = normalizeEndpoint(dashboardConfig.endpoint, ["http:", "https:"]);
-        if (!normalizedEndpoint) {
-          throw new Error("API endpoint is missing or invalid");
+      let result = await sendWriteRequest(false);
+      if (result.requires_confirmation) {
+        const preview = result.preview ?? result.diff;
+        const previewText = preview
+          ? `\n${JSON.stringify(preview, null, 2).slice(0, 400)}`
+          : "";
+        if (!window.confirm(`Confirm write-back to external source?${previewText}`)) {
+          setWriteStatus({ state: "idle" });
+          return;
         }
-        const payload = dashboardConfig.writePayload ?? {};
-        const response = await fetch(normalizedEndpoint, {
-          method: dashboardConfig.writeMethod ?? "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        });
-        if (!response.ok) {
-          throw new Error(`Write-back failed (${response.status})`);
-        }
-        setWriteStatus({ state: "success", message: "Write-back sent" });
-        return;
+        result = await sendWriteRequest(true);
       }
-
-      if (dashboardConfig.type === "mcp") {
-        if (!dashboardConfig.mcpToolName) {
-          throw new Error("MCP tool name is required for write-back");
-        }
-        const response = await fetch(`${API_BASE_URL}/api/mcp/tools/execute`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            tool_name: dashboardConfig.mcpToolName,
-            arguments: dashboardConfig.writePayload ?? dashboardConfig.mcpArgs ?? {},
-            server_id: dashboardConfig.mcpServerId ?? null,
-            user_confirmed: true,
-          }),
-        });
-        if (!response.ok) {
-          throw new Error(`MCP write-back failed (${response.status})`);
-        }
-        const payload = (await response.json()) as { success?: boolean; error?: string | null };
-        if (payload.success === false) {
-          throw new Error(payload.error ?? "MCP write-back failed");
-        }
-        setWriteStatus({ state: "success", message: "MCP write-back sent" });
-        return;
+      if (result.success === false) {
+        throw new Error(result.error ?? "Write-back failed");
       }
-
-      throw new Error("Write-back is not supported for this source type");
+      setWriteStatus({ state: "success", message: "Write-back sent" });
     } catch (error) {
       setWriteStatus({
         state: "error",
         message: error instanceof Error ? error.message : "Write-back failed",
       });
     }
-  }, [dashboardConfig]);
+  }, [dashboardConfig, dashboardNumericId, canvasId]);
 
   // Render SuccessMetricsDashboard if that's the type (after all hooks are called)
   if (dashboardType === "success_metrics") {
@@ -1417,7 +1536,7 @@ export function DashboardNode({ nodeId }: DashboardNodeProps) {
           </div>
         </div>
         <div style={{ fontSize: "11px", color: "#64748b" }}>{externalStatusDetail}</div>
-        {externalState.error && (
+        {resolvedExternalState.error && (
           <div
             style={{
               fontSize: "11px",
@@ -1428,7 +1547,7 @@ export function DashboardNode({ nodeId }: DashboardNodeProps) {
               padding: "6px 8px",
             }}
           >
-            {externalState.error}
+            {resolvedExternalState.error}
           </div>
         )}
         <div

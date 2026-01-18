@@ -17,6 +17,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.models.dashboard_subscription import DashboardSubscriptionTarget
 from app.schemas.event import EventResponse
 from app.schemas.turn import TurnResponse
 
@@ -249,12 +250,12 @@ class EdgeEventPayload(BaseModel):
     id: str
     from_node_id: str | None = None
     to_node_id: str | None = None
-    fromNodeId: str | None = None
-    toNodeId: str | None = None
-    sourceNodeId: str | None = None
-    targetNodeId: str | None = None
+    fromNodeId: str | None = None  # noqa: N815
+    toNodeId: str | None = None  # noqa: N815
+    sourceNodeId: str | None = None  # noqa: N815
+    targetNodeId: str | None = None  # noqa: N815
     relation_type: str | None = None
-    relationType: str | None = None
+    relationType: str | None = None  # noqa: N815
     label: str | None = None
     metadata: dict[str, Any] | None = None
     canvas_id: int | None = None
@@ -730,6 +731,10 @@ class DashboardSubscribePayload(BaseModel):
 
     dashboard_node_id: int = Field(..., description="Dashboard node identifier")
     canvas_id: int = Field(..., description="Canvas identifier")
+    targets: list[DashboardSubscriptionTarget] | None = Field(
+        default=None,
+        description="Optional subscription targets",
+    )
 
 
 class DashboardSubscribeMessage(UIToAgentMessage):

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen, act, fireEvent } from "@testing-library/react";
+import { render, screen, act, fireEvent, within } from "@testing-library/react";
 import { DashboardNode } from "../DashboardNode";
 import { useDashboardStream } from "../../../hooks/useDashboardStream";
 import { useCanvasStore } from "../../../state/canvasStore";
@@ -19,6 +19,7 @@ const emptyStream = {
       job: 0,
       artifact: 0,
       tool_output: 0,
+      external_state: 0,
     },
     recentChanges: [],
     isSubscribed: false,
@@ -28,6 +29,12 @@ const emptyStream = {
   isConnected: false,
   lastUpdate: null,
   recentChanges: [],
+  externalState: {
+    data: null,
+    status: "idle",
+    error: null,
+    lastUpdated: null,
+  },
 };
 
 describe("DashboardNode", () => {
@@ -143,6 +150,7 @@ describe("DashboardNode", () => {
           job: 3,
           artifact: 2,
           tool_output: 5,
+          external_state: 1,
         },
         recentChanges: [
           {
@@ -171,6 +179,12 @@ describe("DashboardNode", () => {
           data: {},
         },
       ],
+      externalState: {
+        data: { status: "ok" },
+        status: "connected",
+        error: null,
+        lastUpdated: now,
+      },
     };
 
     mockUseDashboardStream.mockReturnValue(streamPayload);
@@ -209,10 +223,15 @@ describe("DashboardNode", () => {
 
     render(<DashboardNode nodeId="dash" />);
 
-    expect(screen.getByText("External State")).toBeInTheDocument();
+    const configToggle = screen.getByRole("button", { name: /configure/i });
+    const header = configToggle.parentElement;
+    if (!header) {
+      throw new Error("External state header not found");
+    }
+    expect(within(header).getByText("External State")).toBeInTheDocument();
     expect(screen.getByText("API endpoint not set")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /configure/i }));
+    fireEvent.click(configToggle);
     expect(screen.getByText("Source type")).toBeInTheDocument();
     expect(screen.getByText("Poll interval (ms)")).toBeInTheDocument();
   });
