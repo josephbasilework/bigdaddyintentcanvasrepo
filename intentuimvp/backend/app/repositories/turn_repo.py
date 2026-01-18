@@ -8,6 +8,7 @@ from logging import getLogger
 from typing import Any
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
@@ -56,6 +57,8 @@ class TurnRepository:
         payload: dict[str, Any] | None = None,
         related_node_id: int | None = None,
         related_edge_id: int | None = None,
+        origin_sequence_number: int | None = None,
+        sequence_number: int | None = None,
     ) -> Turn:
         """Create a new turn in the session.
 
@@ -67,27 +70,60 @@ class TurnRepository:
             payload: Optional JSON payload with turn-specific data
             related_node_id: Optional reference to a related node
             related_edge_id: Optional reference to a related edge
+            origin_sequence_number: Sequence number of the turn being modified/deleted
+            sequence_number: Explicit sequence number (must match next sequential value)
 
         Returns:
             Created Turn
         """
-        sequence_number = self.get_next_sequence_number(session_id)
+        explicit_sequence_number = sequence_number is not None
+        if origin_sequence_number is not None:
+            origin_turn = self.get_turn_by_sequence(session_id, origin_sequence_number)
+            if origin_turn is None:
+                raise ValueError(
+                    f"Origin sequence number {origin_sequence_number} not found"
+                )
 
-        turn = Turn(
-            session_id=session_id,
-            sequence_number=sequence_number,
-            actor=actor,
-            type=turn_type,
-            summary=summary,
-            related_node_id=related_node_id,
-            related_edge_id=related_edge_id,
-        )
-        if payload:
-            turn.set_payload(payload)
+        expected_sequence_number = self.get_next_sequence_number(session_id)
+        if sequence_number is None:
+            sequence_number = expected_sequence_number
+        elif sequence_number != expected_sequence_number:
+            raise ValueError(
+                "Sequence number must match the next sequential value "
+                f"({expected_sequence_number})"
+            )
+        if origin_sequence_number is not None and origin_sequence_number >= sequence_number:
+            raise ValueError("Origin sequence number must precede the new turn")
 
-        self.db.add(turn)
-        self.db.commit()
-        self.db.refresh(turn)
+        attempt = 0
+        while True:
+            turn = Turn(
+                session_id=session_id,
+                sequence_number=sequence_number,
+                actor=actor,
+                type=turn_type,
+                summary=summary,
+                related_node_id=related_node_id,
+                related_edge_id=related_edge_id,
+                origin_sequence_number=origin_sequence_number,
+            )
+            if payload:
+                turn.set_payload(payload)
+
+            self.db.add(turn)
+            try:
+                self.db.commit()
+                self.db.refresh(turn)
+                break
+            except IntegrityError:
+                self.db.rollback()
+                if explicit_sequence_number:
+                    raise
+                attempt += 1
+                if attempt >= 3 or sequence_number != expected_sequence_number:
+                    raise
+                expected_sequence_number = self.get_next_sequence_number(session_id)
+                sequence_number = expected_sequence_number
 
         logger.debug(
             f"Created turn {turn.id} (session={session_id}, seq={sequence_number}, "
@@ -176,6 +212,36 @@ class TurnRepository:
             .first()
         )
 
+    def get_latest_turn_for_node(
+        self,
+        session_id: str,
+        node_id: int,
+        turn_types: list[TurnType] | None = None,
+    ) -> Turn | None:
+        """Get the most recent turn for a node within a session."""
+        query = self.db.query(Turn).filter(
+            Turn.session_id == session_id,
+            Turn.related_node_id == node_id,
+        )
+        if turn_types:
+            query = query.filter(Turn.type.in_(turn_types))
+        return query.order_by(Turn.sequence_number.desc()).first()
+
+    def get_latest_turn_for_edge(
+        self,
+        session_id: str,
+        edge_id: int,
+        turn_types: list[TurnType] | None = None,
+    ) -> Turn | None:
+        """Get the most recent turn for an edge within a session."""
+        query = self.db.query(Turn).filter(
+            Turn.session_id == session_id,
+            Turn.related_edge_id == edge_id,
+        )
+        if turn_types:
+            query = query.filter(Turn.type.in_(turn_types))
+        return query.order_by(Turn.sequence_number.desc()).first()
+
     def count_turns(self, session_id: str) -> int:
         """Count the number of turns in a session.
 
@@ -247,6 +313,8 @@ class AsyncTurnRepository:
         payload: dict[str, Any] | None = None,
         related_node_id: int | None = None,
         related_edge_id: int | None = None,
+        origin_sequence_number: int | None = None,
+        sequence_number: int | None = None,
     ) -> Turn:
         """Create a new turn in the session.
 
@@ -258,27 +326,65 @@ class AsyncTurnRepository:
             payload: Optional JSON payload with turn-specific data
             related_node_id: Optional reference to a related node
             related_edge_id: Optional reference to a related edge
+            origin_sequence_number: Sequence number of the turn being modified/deleted
+            sequence_number: Explicit sequence number (must match next sequential value)
 
         Returns:
             Created Turn
         """
-        sequence_number = await self.get_next_sequence_number(session_id)
+        explicit_sequence_number = sequence_number is not None
+        if origin_sequence_number is not None:
+            origin_turn = await self.db.execute(
+                select(Turn).filter(
+                    Turn.session_id == session_id,
+                    Turn.sequence_number == origin_sequence_number,
+                )
+            )
+            if origin_turn.scalar_one_or_none() is None:
+                raise ValueError(
+                    f"Origin sequence number {origin_sequence_number} not found"
+                )
 
-        turn = Turn(
-            session_id=session_id,
-            sequence_number=sequence_number,
-            actor=actor,
-            type=turn_type,
-            summary=summary,
-            related_node_id=related_node_id,
-            related_edge_id=related_edge_id,
-        )
-        if payload:
-            turn.set_payload(payload)
+        expected_sequence_number = await self.get_next_sequence_number(session_id)
+        if sequence_number is None:
+            sequence_number = expected_sequence_number
+        elif sequence_number != expected_sequence_number:
+            raise ValueError(
+                "Sequence number must match the next sequential value "
+                f"({expected_sequence_number})"
+            )
+        if origin_sequence_number is not None and origin_sequence_number >= sequence_number:
+            raise ValueError("Origin sequence number must precede the new turn")
 
-        self.db.add(turn)
-        await self.db.commit()
-        await self.db.refresh(turn)
+        attempt = 0
+        while True:
+            turn = Turn(
+                session_id=session_id,
+                sequence_number=sequence_number,
+                actor=actor,
+                type=turn_type,
+                summary=summary,
+                related_node_id=related_node_id,
+                related_edge_id=related_edge_id,
+                origin_sequence_number=origin_sequence_number,
+            )
+            if payload:
+                turn.set_payload(payload)
+
+            self.db.add(turn)
+            try:
+                await self.db.commit()
+                await self.db.refresh(turn)
+                break
+            except IntegrityError:
+                await self.db.rollback()
+                if explicit_sequence_number:
+                    raise
+                attempt += 1
+                if attempt >= 3 or sequence_number != expected_sequence_number:
+                    raise
+                expected_sequence_number = await self.get_next_sequence_number(session_id)
+                sequence_number = expected_sequence_number
 
         logger.debug(
             f"Created turn {turn.id} (session={session_id}, seq={sequence_number}, "
@@ -340,6 +446,40 @@ class AsyncTurnRepository:
             .order_by(Turn.sequence_number.desc())
             .limit(1)
         )
+        return result.scalar_one_or_none()
+
+    async def get_latest_turn_for_node(
+        self,
+        session_id: str,
+        node_id: int,
+        turn_types: list[TurnType] | None = None,
+    ) -> Turn | None:
+        """Get the most recent turn for a node within a session."""
+        stmt = select(Turn).filter(
+            Turn.session_id == session_id,
+            Turn.related_node_id == node_id,
+        )
+        if turn_types:
+            stmt = stmt.filter(Turn.type.in_(turn_types))
+        stmt = stmt.order_by(Turn.sequence_number.desc()).limit(1)
+        result = await self.db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_latest_turn_for_edge(
+        self,
+        session_id: str,
+        edge_id: int,
+        turn_types: list[TurnType] | None = None,
+    ) -> Turn | None:
+        """Get the most recent turn for an edge within a session."""
+        stmt = select(Turn).filter(
+            Turn.session_id == session_id,
+            Turn.related_edge_id == edge_id,
+        )
+        if turn_types:
+            stmt = stmt.filter(Turn.type.in_(turn_types))
+        stmt = stmt.order_by(Turn.sequence_number.desc()).limit(1)
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def count_turns(self, session_id: str) -> int:

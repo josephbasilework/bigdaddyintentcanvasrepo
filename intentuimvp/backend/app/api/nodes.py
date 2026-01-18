@@ -12,6 +12,7 @@ from app.database import get_async_db
 from app.models.dashboard_subscription import DashboardSubscriptionTarget
 from app.models.node import Node
 from app.repositories.node_repo import NodeRepository
+from app.repositories.turn_repo import AsyncTurnRepository
 from app.schemas.node import (
     NodeCreateRequest,
     NodeListResponse,
@@ -19,7 +20,11 @@ from app.schemas.node import (
     NodeUpdateRequest,
 )
 from app.models.turn import TurnActor, TurnType
-from app.services.turns import log_turn_for_user_async
+from app.services.turns import (
+    log_turn_for_user_async,
+    log_turn_with_session_id_async,
+    resolve_session_id_async,
+)
 from app.services.dashboard_updates import publish_dashboard_update
 
 router = APIRouter()
@@ -272,19 +277,35 @@ async def update_node(
             change_type="updated",
             data=updated_payload,
         )
-        await log_turn_for_user_async(
+        session_id = await resolve_session_id_async(
             db,
             user_id=user_id,
             workspace_id=updated.canvas_id,
-            actor=TurnActor.USER,
-            turn_type=TurnType.NODE_UPDATED,
-            summary=f"Node updated: {updated.label}" if updated.label else "Node updated",
-            payload={
-                "node": updated_payload,
-                "updates": updates,
-            },
-            related_node_id=updated.id,
         )
+        if session_id:
+            turn_repo = AsyncTurnRepository(db)
+            origin_turn = await turn_repo.get_latest_turn_for_node(
+                session_id,
+                updated.id,
+                turn_types=[TurnType.NODE_CREATED, TurnType.NODE_UPDATED],
+            )
+            await log_turn_with_session_id_async(
+                db,
+                session_id=session_id,
+                actor=TurnActor.USER,
+                turn_type=TurnType.NODE_UPDATED,
+                summary=f"Node updated: {updated.label}"
+                if updated.label
+                else "Node updated",
+                payload={
+                    "node": updated_payload,
+                    "updates": updates,
+                },
+                related_node_id=updated.id,
+                origin_sequence_number=origin_turn.sequence_number if origin_turn else None,
+            )
+        else:
+            logger.warning("No session_id available for turn %s", TurnType.NODE_UPDATED)
         logger.info(f"Updated node {node_id} for user {user_id}")
         return updated_payload
     except HTTPException:
@@ -334,14 +355,28 @@ async def delete_node(
         change_type="deleted",
         data=deleted_payload,
     )
-    await log_turn_for_user_async(
+    session_id = await resolve_session_id_async(
         db,
         user_id=user_id,
         workspace_id=node.canvas_id,
-        actor=TurnActor.USER,
-        turn_type=TurnType.NODE_DELETED,
-        summary=f"Node deleted: {node.label}" if node.label else "Node deleted",
-        payload=deleted_payload,
-        related_node_id=node.id,
     )
+    if session_id:
+        turn_repo = AsyncTurnRepository(db)
+        origin_turn = await turn_repo.get_latest_turn_for_node(
+            session_id,
+            node.id,
+            turn_types=[TurnType.NODE_CREATED, TurnType.NODE_UPDATED],
+        )
+        await log_turn_with_session_id_async(
+            db,
+            session_id=session_id,
+            actor=TurnActor.USER,
+            turn_type=TurnType.NODE_DELETED,
+            summary=f"Node deleted: {node.label}" if node.label else "Node deleted",
+            payload=deleted_payload,
+            related_node_id=node.id,
+            origin_sequence_number=origin_turn.sequence_number if origin_turn else None,
+        )
+    else:
+        logger.warning("No session_id available for turn %s", TurnType.NODE_DELETED)
     logger.info(f"Deleted node {node_id} for user {user_id}")

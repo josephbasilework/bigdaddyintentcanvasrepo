@@ -211,12 +211,14 @@ class TestTurnToDict:
             type=TurnType.AGENT_RESPONSE,
             summary="Agent response",
             turn_payload=json.dumps({"data": [1, 2, 3]}),
+            origin_sequence_number=1,
         )
 
         result = turn.to_dict()
 
         assert result["payload"] == {"data": [1, 2, 3]}
         assert result["responseType"] == ResponseType.CONVERSATIONAL.value
+        assert result["originSequenceNumber"] == 1
 
     def test_to_dict_response_type_override(self) -> None:
         """Explicit response type in payload wins."""
@@ -271,12 +273,14 @@ class TestTurnToDict:
         # Verify camelCase keys
         assert "sessionId" in result
         assert "sequenceNumber" in result
+        assert "originSequenceNumber" in result
         assert "relatedNodeId" in result
         assert "relatedEdgeId" in result
 
         # Verify snake_case keys are NOT present
         assert "session_id" not in result
         assert "sequence_number" not in result
+        assert "origin_sequence_number" not in result
         assert "related_node_id" not in result
         assert "related_edge_id" not in result
 

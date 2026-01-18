@@ -172,6 +172,8 @@ def log_turn_with_session_id_sync(
     payload: dict[str, Any] | None = None,
     related_node_id: int | None = None,
     related_edge_id: int | None = None,
+    origin_sequence_number: int | None = None,
+    sequence_number: int | None = None,
 ) -> Turn | None:
     """Create a turn for a known session_id, logging failures."""
     try:
@@ -184,6 +186,8 @@ def log_turn_with_session_id_sync(
             payload=payload,
             related_node_id=related_node_id,
             related_edge_id=related_edge_id,
+            origin_sequence_number=origin_sequence_number,
+            sequence_number=sequence_number,
         )
         _persist_turn_snapshot_sync(db, session_id, turn)
         return turn
@@ -209,6 +213,8 @@ def log_turn_for_user_sync(
     payload: dict[str, Any] | None = None,
     related_node_id: int | None = None,
     related_edge_id: int | None = None,
+    origin_sequence_number: int | None = None,
+    sequence_number: int | None = None,
 ) -> Turn | None:
     """Resolve session and log a turn, logging failures."""
     resolved_session_id = resolve_session_id_sync(
@@ -229,6 +235,8 @@ def log_turn_for_user_sync(
         payload=payload,
         related_node_id=related_node_id,
         related_edge_id=related_edge_id,
+        origin_sequence_number=origin_sequence_number,
+        sequence_number=sequence_number,
     )
 
 
@@ -242,6 +250,8 @@ async def log_turn_with_session_id_async(
     payload: dict[str, Any] | None = None,
     related_node_id: int | None = None,
     related_edge_id: int | None = None,
+    origin_sequence_number: int | None = None,
+    sequence_number: int | None = None,
 ) -> Turn | None:
     """Create a turn for a known session_id, logging failures."""
     try:
@@ -254,6 +264,8 @@ async def log_turn_with_session_id_async(
             payload=payload,
             related_node_id=related_node_id,
             related_edge_id=related_edge_id,
+            origin_sequence_number=origin_sequence_number,
+            sequence_number=sequence_number,
         )
         await _persist_turn_snapshot_async(db, session_id, turn)
         return turn
@@ -279,6 +291,8 @@ async def log_turn_for_user_async(
     payload: dict[str, Any] | None = None,
     related_node_id: int | None = None,
     related_edge_id: int | None = None,
+    origin_sequence_number: int | None = None,
+    sequence_number: int | None = None,
 ) -> Turn | None:
     """Resolve session and log a turn, logging failures."""
     resolved_session_id = await resolve_session_id_async(
@@ -299,6 +313,8 @@ async def log_turn_for_user_async(
         payload=payload,
         related_node_id=related_node_id,
         related_edge_id=related_edge_id,
+        origin_sequence_number=origin_sequence_number,
+        sequence_number=sequence_number,
     )
 
 
@@ -311,6 +327,8 @@ async def log_turn_with_new_async_session(
     payload: dict[str, Any] | None = None,
     related_node_id: int | None = None,
     related_edge_id: int | None = None,
+    origin_sequence_number: int | None = None,
+    sequence_number: int | None = None,
 ) -> Turn | None:
     """Log a turn using a new AsyncSessionLocal session."""
     async with AsyncSessionLocal() as db:
@@ -323,6 +341,8 @@ async def log_turn_with_new_async_session(
             payload=payload,
             related_node_id=related_node_id,
             related_edge_id=related_edge_id,
+            origin_sequence_number=origin_sequence_number,
+            sequence_number=sequence_number,
         )
 
 
@@ -337,6 +357,7 @@ def _persist_turn_snapshot_sync(db: Session, session_id: str, turn: Turn) -> Non
             user_id=session.user_id or "default",
             session_id=session.session_id,
             sequence_number=turn.sequence_number,
+            origin_sequence_number=turn.origin_sequence_number,
             actor=getattr(turn.actor, "value", str(turn.actor)),
             turn_type=getattr(turn.type, "value", str(turn.type)),
             summary=turn.summary,
@@ -366,6 +387,7 @@ async def _persist_turn_snapshot_async(
             user_id=session.user_id or "default",
             session_id=session.session_id,
             sequence_number=turn.sequence_number,
+            origin_sequence_number=turn.origin_sequence_number,
             actor=getattr(turn.actor, "value", str(turn.actor)),
             turn_type=getattr(turn.type, "value", str(turn.type)),
             summary=turn.summary,

@@ -19,6 +19,7 @@ class TurnResponse(BaseModel):
     summary: str
     payload: dict[str, Any] = Field(default_factory=dict)
     responseType: str | None = None
+    originSequenceNumber: int | None = None
     relatedNodeId: int | None = None
     relatedEdgeId: int | None = None
 

@@ -15,6 +15,7 @@ export type TurnResponse = {
   summary: string;
   payload: Record<string, unknown>;
   responseType?: ResponseType | null;
+  originSequenceNumber: number | null;
   relatedNodeId: number | null;
   relatedEdgeId: number | null;
 };

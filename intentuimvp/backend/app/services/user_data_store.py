@@ -273,6 +273,7 @@ class UserDataStore:
         user_id: str,
         session_id: str,
         sequence_number: int,
+        origin_sequence_number: int | None = None,
         actor: str,
         turn_type: str,
         summary: str,
@@ -291,6 +292,7 @@ class UserDataStore:
 
         frontmatter = [
             ("sequence_number", sequence_number),
+            ("origin_sequence_number", origin_sequence_number),
             ("session_id", session_id),
             ("workspace_id", workspace_id),
             ("timestamp", timestamp),
@@ -302,6 +304,10 @@ class UserDataStore:
         ]
 
         body_lines = [f"# Turn {sequence_number}", "", summary, ""]
+        if origin_sequence_number is not None:
+            origin_link = self._turn_link(origin_sequence_number)
+            if origin_link:
+                body_lines.extend([f"Origin turn: {origin_link}", ""])
         if payload:
             body_lines.extend(["## Payload"] + _format_json_block(payload) + [""])
 
@@ -309,6 +315,7 @@ class UserDataStore:
 
         index_entry = {
             "sequence_number": sequence_number,
+            "origin_sequence_number": origin_sequence_number,
             "session_id": session_id,
             "workspace_id": workspace_id,
             "timestamp": timestamp,
@@ -454,6 +461,7 @@ class UserDataStore:
                 user_id=session.user_id or user_id,
                 session_id=session.session_id,
                 sequence_number=turn.sequence_number,
+                origin_sequence_number=turn.origin_sequence_number,
                 actor=getattr(turn.actor, "value", str(turn.actor)),
                 turn_type=getattr(turn.type, "value", str(turn.type)),
                 summary=turn.summary,

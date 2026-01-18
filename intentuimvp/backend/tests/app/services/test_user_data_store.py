@@ -87,15 +87,33 @@ def test_persist_turn_and_artifact(tmp_path: Path) -> None:
         related_node_id=1,
         related_edge_id=None,
     )
+    store.persist_turn(
+        user_id="user-1",
+        session_id="session-1",
+        workspace_id="ws-1",
+        sequence_number=2,
+        origin_sequence_number=1,
+        actor="system",
+        turn_type="node_updated",
+        summary="Updated node",
+        payload=None,
+        timestamp="2026-01-17T03:05:00Z",
+        related_node_id=1,
+        related_edge_id=None,
+    )
 
     turns_dir = tmp_path / "users" / "user-1" / "workspaces" / "ws-1" / "turns"
     turn_path = turns_dir / "turn-0001.md"
     assert turn_path.exists()
+    followup_path = turns_dir / "turn-0002.md"
+    assert followup_path.exists()
     index_path = turns_dir / "index.jsonl"
     assert index_path.exists()
 
     entries = [json.loads(line) for line in index_path.read_text(encoding="utf-8").splitlines()]
     assert entries[0]["job_id"] == "job-1"
+    assert entries[1]["origin_sequence_number"] == 1
+    assert "Origin turn: [[turn-0001]]" in followup_path.read_text(encoding="utf-8")
 
     store.persist_artifact(
         artifact={

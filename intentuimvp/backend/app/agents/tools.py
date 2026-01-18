@@ -35,13 +35,18 @@ from app.models.turn import TurnActor, TurnType
 from app.repositories.canvas_repo import CanvasRepository
 from app.repositories.edge_repo import EdgeRepository
 from app.repositories.node_repo import DuplicatePositionError, NodeRepository
+from app.repositories.turn_repo import AsyncTurnRepository
 from app.services.visualization_layout import (
     LayoutDirection,
     LayoutEdge,
     LayoutType,
     compute_layout_positions,
 )
-from app.services.turns import log_turn_for_user_async
+from app.services.turns import (
+    log_turn_for_user_async,
+    log_turn_with_session_id_async,
+    resolve_session_id_async,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -981,21 +986,39 @@ class ToolManager:
                 if updated_node is None:
                     raise ValueError(f"Node not found: {node_id}")
 
-                await log_turn_for_user_async(
+                session_id = await resolve_session_id_async(
                     session,
                     user_id=DEFAULT_USER_ID,
                     workspace_id=updated_node.canvas_id,
-                    actor=TurnActor.AGENT,
-                    turn_type=TurnType.NODE_UPDATED,
-                    summary=f"Node updated by agent: {updated_node.label}"
-                    if updated_node.label
-                    else "Node updated by agent",
-                    payload={
-                        "node": updated_node.to_dict(),
-                        "updates": updates,
-                    },
-                    related_node_id=updated_node.id,
                 )
+                if session_id:
+                    turn_repo = AsyncTurnRepository(session)
+                    origin_turn = await turn_repo.get_latest_turn_for_node(
+                        session_id,
+                        updated_node.id,
+                        turn_types=[TurnType.NODE_CREATED, TurnType.NODE_UPDATED],
+                    )
+                    await log_turn_with_session_id_async(
+                        session,
+                        session_id=session_id,
+                        actor=TurnActor.AGENT,
+                        turn_type=TurnType.NODE_UPDATED,
+                        summary=f"Node updated by agent: {updated_node.label}"
+                        if updated_node.label
+                        else "Node updated by agent",
+                        payload={
+                            "node": updated_node.to_dict(),
+                            "updates": updates,
+                        },
+                        related_node_id=updated_node.id,
+                        origin_sequence_number=origin_turn.sequence_number
+                        if origin_turn
+                        else None,
+                    )
+                else:
+                    logger.warning(
+                        "No session_id available for turn %s", TurnType.NODE_UPDATED
+                    )
 
             return updated_node.to_dict()
 

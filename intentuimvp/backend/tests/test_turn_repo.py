@@ -195,6 +195,56 @@ class TestTurnRepository:
         assert turn2.sequence_number == 2
         assert turn3.sequence_number == 3
 
+    def test_explicit_sequence_number(self, db_session: Session):
+        """Explicit sequence numbers must match the next sequential value."""
+        repo = TurnRepository(db_session)
+
+        repo.create_turn(
+            session_id="session-1",
+            actor=TurnActor.USER,
+            turn_type=TurnType.USER_INPUT,
+            summary="Turn 1",
+        )
+
+        explicit_turn = repo.create_turn(
+            session_id="session-1",
+            actor=TurnActor.AGENT,
+            turn_type=TurnType.AGENT_RESPONSE,
+            summary="Turn 2",
+            sequence_number=2,
+        )
+
+        assert explicit_turn.sequence_number == 2
+
+        with pytest.raises(ValueError):
+            repo.create_turn(
+                session_id="session-1",
+                actor=TurnActor.SYSTEM,
+                turn_type=TurnType.SYSTEM_MESSAGE,
+                summary="Skipped turn",
+                sequence_number=4,
+            )
+
+    def test_origin_sequence_number(self, db_session: Session):
+        """Origin sequence numbers reference prior turns."""
+        repo = TurnRepository(db_session)
+
+        origin = repo.create_turn(
+            session_id="session-1",
+            actor=TurnActor.USER,
+            turn_type=TurnType.USER_INPUT,
+            summary="Origin",
+        )
+        followup = repo.create_turn(
+            session_id="session-1",
+            actor=TurnActor.SYSTEM,
+            turn_type=TurnType.NODE_UPDATED,
+            summary="Follow-up",
+            origin_sequence_number=origin.sequence_number,
+        )
+
+        assert followup.origin_sequence_number == origin.sequence_number
+
     def test_sequence_numbers_independent_per_session(self, db_session: Session):
         """Test that sequence numbers are independent between sessions."""
         repo = TurnRepository(db_session)

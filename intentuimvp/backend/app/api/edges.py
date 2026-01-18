@@ -14,13 +14,18 @@ from app.models.edge import Edge, RelationType
 from app.models.turn import TurnActor, TurnType
 from app.repositories.edge_repo import EdgeRepository
 from app.repositories.node_repo import NodeRepository
+from app.repositories.turn_repo import AsyncTurnRepository
 from app.schemas.edge import (
     EdgeCreateRequest,
     EdgeListResponse,
     EdgeResponse,
     EdgeUpdateRequest,
 )
-from app.services.turns import log_turn_for_user_async
+from app.services.turns import (
+    log_turn_for_user_async,
+    log_turn_with_session_id_async,
+    resolve_session_id_async,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -305,19 +310,33 @@ async def update_edge(
                 detail="Edge not found",
             )
         updated_payload = _serialize_edge(updated)
-        await log_turn_for_user_async(
+        session_id = await resolve_session_id_async(
             db,
             user_id=user_id,
             workspace_id=updated.canvas_id,
-            actor=TurnActor.USER,
-            turn_type=TurnType.EDGE_UPDATED,
-            summary="Edge updated",
-            payload={
-                "edge": updated_payload,
-                "updates": updates,
-            },
-            related_edge_id=updated.id,
         )
+        if session_id:
+            turn_repo = AsyncTurnRepository(db)
+            origin_turn = await turn_repo.get_latest_turn_for_edge(
+                session_id,
+                updated.id,
+                turn_types=[TurnType.EDGE_CREATED, TurnType.EDGE_UPDATED],
+            )
+            await log_turn_with_session_id_async(
+                db,
+                session_id=session_id,
+                actor=TurnActor.USER,
+                turn_type=TurnType.EDGE_UPDATED,
+                summary="Edge updated",
+                payload={
+                    "edge": updated_payload,
+                    "updates": updates,
+                },
+                related_edge_id=updated.id,
+                origin_sequence_number=origin_turn.sequence_number if origin_turn else None,
+            )
+        else:
+            logger.warning("No session_id available for turn %s", TurnType.EDGE_UPDATED)
         logger.info(f"Updated edge {edge_id} for user {user_id}")
         return updated_payload
     except HTTPException:
@@ -360,14 +379,28 @@ async def delete_edge(
             detail="Edge not found",
         )
     deleted_payload = _serialize_edge(edge)
-    await log_turn_for_user_async(
+    session_id = await resolve_session_id_async(
         db,
         user_id=user_id,
         workspace_id=edge.canvas_id,
-        actor=TurnActor.USER,
-        turn_type=TurnType.EDGE_DELETED,
-        summary="Edge deleted",
-        payload=deleted_payload,
-        related_edge_id=edge.id,
     )
+    if session_id:
+        turn_repo = AsyncTurnRepository(db)
+        origin_turn = await turn_repo.get_latest_turn_for_edge(
+            session_id,
+            edge.id,
+            turn_types=[TurnType.EDGE_CREATED, TurnType.EDGE_UPDATED],
+        )
+        await log_turn_with_session_id_async(
+            db,
+            session_id=session_id,
+            actor=TurnActor.USER,
+            turn_type=TurnType.EDGE_DELETED,
+            summary="Edge deleted",
+            payload=deleted_payload,
+            related_edge_id=edge.id,
+            origin_sequence_number=origin_turn.sequence_number if origin_turn else None,
+        )
+    else:
+        logger.warning("No session_id available for turn %s", TurnType.EDGE_DELETED)
     logger.info(f"Deleted edge {edge_id} for user {user_id}")

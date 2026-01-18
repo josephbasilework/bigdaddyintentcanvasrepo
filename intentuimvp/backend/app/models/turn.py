@@ -13,7 +13,7 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -188,11 +188,19 @@ class Turn(Base):
         type: Type of state change this turn represents
         summary: Human-readable summary of the turn
         payload: JSON object with turn-specific data
+        origin_sequence_number: Sequence number of the prior turn being modified/deleted
         related_node_id: Optional reference to a node involved in this turn
         related_edge_id: Optional reference to an edge involved in this turn
     """
 
     __tablename__ = "turn"
+    __table_args__ = (
+        UniqueConstraint(
+            "session_id",
+            "sequence_number",
+            name="uq_turn_session_sequence",
+        ),
+    )
 
     # Primary key
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -232,6 +240,12 @@ class Turn(Base):
     )
     turn_payload: Mapped[str | None] = mapped_column(
         Text, nullable=True, comment="JSON object with turn-specific data"
+    )
+    origin_sequence_number: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        index=True,
+        comment="Sequence number of prior turn being modified/deleted",
     )
 
     # Related entities (optional foreign keys for canvas relationships)
@@ -278,6 +292,7 @@ class Turn(Base):
             "summary": self.summary,
             "payload": self.get_payload(),
             "responseType": response_type.value if response_type else None,
+            "originSequenceNumber": self.origin_sequence_number,
             "relatedNodeId": self.related_node_id,
             "relatedEdgeId": self.related_edge_id,
         }
