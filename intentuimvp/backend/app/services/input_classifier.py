@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any
 
 from app.context.models import ContextPayload
+from app.context.references import has_explicit_reference
 
 try:  # Optional intent memory lookup for ambiguous inputs
     from app.agents.intent_index import IntentIndexLookup, get_intent_index_lookup
@@ -197,6 +198,9 @@ class InputClassifier:
             command_score = max(command_score, 0.65)
         if payload.attachments:
             command_score = max(command_score, 0.6)
+        explicit_reference = has_explicit_reference(text)
+        if explicit_reference:
+            command_score = max(command_score, 0.65)
 
         candidates = [
             (
@@ -228,6 +232,8 @@ class InputClassifier:
             signals["configuration_signals"] = config_signals
         if config_updates:
             signals["configuration_updates"] = config_updates
+        if explicit_reference:
+            signals["explicit_references"] = True
 
         if best_score < self._ambiguous_threshold:
             ambiguous = await self._resolve_with_intent_memory(

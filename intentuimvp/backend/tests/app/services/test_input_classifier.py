@@ -100,6 +100,16 @@ async def test_ambiguous_uses_intent_memory() -> None:
     assert result.signals["intent_memory_resolution"] == "plan"
 
 
+@pytest.mark.asyncio
+async def test_classify_command_from_explicit_references() -> None:
+    classifier = InputClassifier(intent_index_lookup=None)
+    payload = ContextPayload(text="turn 3 node 12 @Alpha")
+    result = await classifier.classify(payload)
+
+    assert result.input_type == InputClassificationType.COMMAND
+    assert result.signals.get("explicit_references") is True
+
+
 def test_strip_note_prefix() -> None:
     assert strip_note_prefix("note: follow up") == "follow up"
     assert strip_note_prefix("Idea revisit KPIs") == "revisit KPIs"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -8,6 +8,9 @@ import {
   getResponseTypeLabel,
   type TurnResponse,
 } from "@/hooks/turnTypes";
+import { useCanvasStore } from "@/state/canvasStore";
+import { ReferenceLink } from "@/components/References/ReferenceLink";
+import { linkifyReferences } from "@/utils/referenceLinks";
 
 type ChatViewPanelProps = {
   id?: string;
@@ -97,6 +100,14 @@ export function ChatViewPanel({
   error = null,
 }: ChatViewPanelProps) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
+  const nodes = useCanvasStore((state) => state.nodes);
+  const turnIdBySequence = useMemo(() => {
+    const map = new Map<number, number>();
+    turns.forEach((turn) => {
+      map.set(turn.sequenceNumber, turn.id);
+    });
+    return map;
+  }, [turns]);
   useEffect(() => {
     const target = bottomRef.current;
     if (target && typeof target.scrollIntoView === "function") {
@@ -136,6 +147,10 @@ export function ChatViewPanel({
               : null;
             const isClarification =
               !responseType && CLARIFICATION_TYPES.has(turn.type);
+            const linkedContent = linkifyReferences(content, {
+              turnIdBySequence,
+              nodes,
+            });
 
             return (
               <div
@@ -163,7 +178,12 @@ export function ChatViewPanel({
                     responseType ? ` response-${responseType}` : ""
                   }`}
                 >
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    components={{ a: ReferenceLink }}
+                  >
+                    {linkedContent}
+                  </ReactMarkdown>
                 </div>
               </div>
             );
@@ -371,6 +391,17 @@ export function ChatViewPanel({
           padding: 0;
           border: none;
           background: transparent;
+        }
+
+        .chat-bubble :global(a.reference-link) {
+          color: #7dd3fc;
+          text-decoration: underline;
+          text-decoration-thickness: 1px;
+          text-underline-offset: 2px;
+        }
+
+        .chat-bubble :global(a.reference-link:hover) {
+          color: #bae6fd;
         }
 
         .chat-bubble :global(ul),

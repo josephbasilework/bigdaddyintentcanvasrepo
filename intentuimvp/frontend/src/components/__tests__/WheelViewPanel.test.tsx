@@ -1,9 +1,14 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { WheelViewPanel } from "../WheelView/WheelViewPanel";
 import type { TurnResponse } from "@/hooks/turnTypes";
+import { useCanvasStore } from "@/state/canvasStore";
 
 describe("WheelViewPanel", () => {
+  afterEach(() => {
+    useCanvasStore.setState({ nodes: [] });
+  });
+
   const turns: TurnResponse[] = [
     {
       id: 1,
@@ -85,5 +90,51 @@ describe("WheelViewPanel", () => {
     render(<WheelViewPanel turns={responseTurns} />);
 
     expect(screen.getByText("Clarification")).toBeInTheDocument();
+  });
+
+  it("linkifies references in turn summaries", () => {
+    useCanvasStore.setState({
+      nodes: [{ id: "7", type: "text", x: 0, y: 0, z: 0, title: "Project Plan" }],
+    });
+
+    const linkedTurns: TurnResponse[] = [
+      {
+        id: 1,
+        sessionId: "session-1",
+        sequenceNumber: 1,
+        timestamp: "2024-01-01T00:00:01Z",
+        actor: "user",
+        type: "user_input",
+        summary: "User input submitted",
+        payload: { command: "Reference turn 2 and Project Plan." },
+        originSequenceNumber: null,
+        relatedNodeId: null,
+        relatedEdgeId: null,
+      },
+      {
+        id: 2,
+        sessionId: "session-1",
+        sequenceNumber: 2,
+        timestamp: "2024-01-01T00:00:05Z",
+        actor: "system",
+        type: "system_message",
+        summary: "Acknowledged",
+        payload: { message: "Noted." },
+        originSequenceNumber: null,
+        relatedNodeId: null,
+        relatedEdgeId: null,
+      },
+    ];
+
+    render(<WheelViewPanel turns={linkedTurns} />);
+
+    expect(screen.getByRole("link", { name: "turn 2" })).toHaveAttribute(
+      "href",
+      "#turn-2"
+    );
+    expect(screen.getByRole("link", { name: "Project Plan" })).toHaveAttribute(
+      "href",
+      "#node-7"
+    );
   });
 });

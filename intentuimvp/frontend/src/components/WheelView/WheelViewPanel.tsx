@@ -13,6 +13,8 @@ import {
   getResponseTypeLabel,
   type TurnResponse,
 } from "@/hooks/turnTypes";
+import { useCanvasStore, type CanvasNode } from "@/state/canvasStore";
+import { ReferenceText } from "@/components/References/ReferenceText";
 
 type WheelViewPanelProps = {
   id?: string;
@@ -175,6 +177,8 @@ type TurnRowProps = {
   turn: TurnResponse;
   actorGroup: ActorGroup;
   category: TurnCategory;
+  turnIdBySequence: Map<number, number>;
+  nodes: CanvasNode[];
   isExpanded: boolean;
   onToggle: () => void;
   onLink: () => void;
@@ -185,6 +189,8 @@ const TurnRow = ({
   turn,
   actorGroup,
   category,
+  turnIdBySequence,
+  nodes,
   isExpanded,
   onToggle,
   onLink,
@@ -253,7 +259,13 @@ const TurnRow = ({
             <span className="wheel-turn-type">{turn.type}</span>
             <time className="wheel-turn-time">{formatTimestamp(turn.timestamp)}</time>
           </div>
-          <div className="wheel-turn-summary">{buildSummary(turn)}</div>
+          <div className="wheel-turn-summary">
+            <ReferenceText
+              text={buildSummary(turn)}
+              turnIdBySequence={turnIdBySequence}
+              nodes={nodes}
+            />
+          </div>
         </div>
         <button
           type="button"
@@ -298,13 +310,25 @@ const TurnRow = ({
           {payloadText && payloadText !== turn.summary && (
             <div className="wheel-detail-block">
               <div className="wheel-detail-label">Payload summary</div>
-              <div className="wheel-detail-text">{payloadText}</div>
+              <div className="wheel-detail-text">
+                <ReferenceText
+                  text={payloadText}
+                  turnIdBySequence={turnIdBySequence}
+                  nodes={nodes}
+                />
+              </div>
             </div>
           )}
           {rationale && (
             <div className="wheel-detail-block">
               <div className="wheel-detail-label">Rationale</div>
-              <div className="wheel-detail-text">{rationale}</div>
+              <div className="wheel-detail-text">
+                <ReferenceText
+                  text={rationale}
+                  turnIdBySequence={turnIdBySequence}
+                  nodes={nodes}
+                />
+              </div>
             </div>
           )}
           <div className="wheel-detail-block">
@@ -327,6 +351,7 @@ export function WheelViewPanel({
   isLoading = false,
   error = null,
 }: WheelViewPanelProps) {
+  const nodes = useCanvasStore((state) => state.nodes);
   const [actorFilters, setActorFilters] = useState<ActorGroup[]>([...ACTOR_GROUPS]);
   const [typeFilter, setTypeFilter] = useState<TurnCategory | "all">("all");
   const [expandedTurnIds, setExpandedTurnIds] = useState<Set<number>>(new Set());
@@ -334,6 +359,13 @@ export function WheelViewPanel({
   const [viewportHeight, setViewportHeight] = useState(360);
   const [heightMap, setHeightMap] = useState<Map<number, number>>(new Map());
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const turnIdBySequence = useMemo(() => {
+    const map = new Map<number, number>();
+    turns.forEach((turn) => {
+      map.set(turn.sequenceNumber, turn.id);
+    });
+    return map;
+  }, [turns]);
 
   const orderedTurns = useMemo(() => {
     const copy = [...turns];
@@ -630,6 +662,8 @@ export function WheelViewPanel({
                   turn={turn}
                   actorGroup={actorGroup}
                   category={category}
+                  turnIdBySequence={turnIdBySequence}
+                  nodes={nodes}
                   isExpanded={isExpanded}
                   onToggle={() => toggleExpanded(turn.id)}
                   onLink={() => handleLink(turn.id)}
@@ -937,6 +971,19 @@ export function WheelViewPanel({
           font-size: 0.95rem;
           color: #e2e8f0;
           line-height: 1.45;
+        }
+
+        .wheel-turn-summary :global(a.reference-link),
+        .wheel-detail-text :global(a.reference-link) {
+          color: #7dd3fc;
+          text-decoration: underline;
+          text-decoration-thickness: 1px;
+          text-underline-offset: 2px;
+        }
+
+        .wheel-turn-summary :global(a.reference-link:hover),
+        .wheel-detail-text :global(a.reference-link:hover) {
+          color: #bae6fd;
         }
 
         .wheel-turn-toggle {

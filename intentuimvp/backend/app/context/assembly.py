@@ -8,9 +8,10 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.context.models import ContextPayload, SelectionScope
+from app.context.references import parse_references
 from app.database import AsyncSessionLocal
 from app.models.intent import AttachmentDB
 from app.models.node import Node
@@ -33,8 +34,6 @@ except Exception:  # pragma: no cover - optional dependency surface
     get_intent_memory_store = None  # type: ignore[assignment]
 
 
-_NODE_REF_RE = re.compile(r"\bnode\s*#?\s*(\d+)\b", re.I)
-_TURN_REF_RE = re.compile(r"\bturn\s*#?\s*(\d+)\b", re.I)
 _WORD_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -218,8 +217,11 @@ class ContextAssembler:
                 metadata=node_ctx.metadata,
             )
 
-        explicit_node_ids = _parse_ids(_NODE_REF_RE, payload.text)
-        explicit_turn_ids = _parse_ints(_TURN_REF_RE, payload.text)
+        parsed_refs = parse_references(payload.text)
+        explicit_node_ids = set(parsed_refs.node_ids)
+        explicit_turn_ids = set(parsed_refs.turn_numbers)
+        explicit_node_handles = set(parsed_refs.node_handles)
+        explicit_named_entities = set(parsed_refs.named_entities)
 
         node_ids_to_fetch: set[int] = set()
         for node_id in selected_ids:
@@ -244,6 +246,8 @@ class ContextAssembler:
             or node_ids_to_fetch
             or resolved_workspace_id is not None
             or payload.attachments
+            or explicit_node_handles
+            or explicit_named_entities
         ):
             async with AsyncSessionLocal() as session:
                 if session_id and resolved_workspace_id is None:
@@ -276,6 +280,20 @@ class ContextAssembler:
 
                 candidate_nodes: list[Node] = []
                 if resolved_workspace_id is not None:
+                    if explicit_node_handles:
+                        handle_nodes = await _fetch_nodes_by_compact_labels(
+                            session,
+                            resolved_workspace_id,
+                            explicit_node_handles,
+                        )
+                        _merge_nodes(nodes_by_id, handle_nodes)
+                    if explicit_named_entities:
+                        entity_nodes = await _fetch_nodes_by_compact_labels(
+                            session,
+                            resolved_workspace_id,
+                            explicit_named_entities,
+                        )
+                        _merge_nodes(nodes_by_id, entity_nodes)
                     candidate_nodes = await _fetch_candidate_nodes(
                         session,
                         resolved_workspace_id,
@@ -312,6 +330,47 @@ class ContextAssembler:
             workspace_id=resolved_workspace_id,
             session_id=session_id,
         )
+
+        resolved_handle_ids, unresolved_handles = _resolve_handle_refs(
+            explicit_node_handles,
+            nodes_by_id,
+        )
+        explicit_node_ids.update(resolved_handle_ids)
+
+        resolved_entity_ids, unresolved_entities = _resolve_named_entity_refs(
+            explicit_named_entities,
+            nodes_by_id,
+        )
+        explicit_node_ids.update(resolved_entity_ids)
+
+        if unresolved_handles or unresolved_entities:
+            async with AsyncSessionLocal() as session:
+                if resolved_workspace_id is None and session_id:
+                    session_repo = AsyncSessionRepository(session)
+                    session_row = await session_repo.get_by_session_id(session_id)
+                    if session_row is not None:
+                        resolved_workspace_id = session_row.workspace_id
+                if resolved_workspace_id is not None:
+                    if unresolved_handles:
+                        handle_nodes = await _fetch_nodes_by_compact_labels(
+                            session,
+                            resolved_workspace_id,
+                            unresolved_handles,
+                        )
+                        _merge_nodes(nodes_by_id, handle_nodes)
+                        explicit_node_ids.update(
+                            _resolve_handle_refs(unresolved_handles, nodes_by_id)[0]
+                        )
+                    if unresolved_entities:
+                        entity_nodes = await _fetch_nodes_by_compact_labels(
+                            session,
+                            resolved_workspace_id,
+                            unresolved_entities,
+                        )
+                        _merge_nodes(nodes_by_id, entity_nodes)
+                        explicit_node_ids.update(
+                            _resolve_named_entity_refs(unresolved_entities, nodes_by_id)[0]
+                        )
 
         for node_id in [*selected_ids, *explicit_node_ids]:
             if node_id not in nodes_by_id:
@@ -478,14 +537,6 @@ class ContextAssembler:
         return scores
 
 
-def _parse_ids(pattern: re.Pattern[str], text: str) -> set[str]:
-    return {match.group(1) for match in pattern.finditer(text)}
-
-
-def _parse_ints(pattern: re.Pattern[str], text: str) -> set[int]:
-    return {int(match.group(1)) for match in pattern.finditer(text)}
-
-
 def _coerce_int(value: int | str | None) -> int | None:
     if value is None:
         return None
@@ -496,6 +547,61 @@ def _coerce_int(value: int | str | None) -> int | None:
     return None
 
 
+def _normalize_compact(value: str) -> str:
+    cleaned = re.sub(r"[^a-z0-9]+", "", value.lower())
+    return cleaned.strip()
+
+
+def _build_compact_index(nodes_by_id: dict[str, ContextNode]) -> dict[str, list[str]]:
+    index: dict[str, list[str]] = {}
+    for node in nodes_by_id.values():
+        if not node.title:
+            continue
+        key = _normalize_compact(node.title)
+        if not key:
+            continue
+        index.setdefault(key, []).append(node.id)
+    return index
+
+
+def _resolve_handle_refs(
+    handles: set[str],
+    nodes_by_id: dict[str, ContextNode],
+) -> tuple[set[str], set[str]]:
+    if not handles:
+        return set(), set()
+    index = _build_compact_index(nodes_by_id)
+    resolved: set[str] = set()
+    unresolved: set[str] = set()
+    for handle in handles:
+        key = _normalize_compact(handle)
+        matches = index.get(key)
+        if matches:
+            resolved.update(matches)
+        else:
+            unresolved.add(handle)
+    return resolved, unresolved
+
+
+def _resolve_named_entity_refs(
+    entities: set[str],
+    nodes_by_id: dict[str, ContextNode],
+) -> tuple[set[str], set[str]]:
+    if not entities:
+        return set(), set()
+    index = _build_compact_index(nodes_by_id)
+    resolved: set[str] = set()
+    unresolved: set[str] = set()
+    for entity in entities:
+        key = _normalize_compact(entity)
+        matches = index.get(key)
+        if matches:
+            resolved.update(matches)
+        else:
+            unresolved.add(entity)
+    return resolved, unresolved
+
+
 async def _fetch_nodes_by_ids(
     session: Any,
     node_ids: Iterable[int],
@@ -504,6 +610,23 @@ async def _fetch_nodes_by_ids(
     if not ids:
         return []
     result = await session.execute(select(Node).where(Node.id.in_(ids)))
+    return list(result.scalars().all())
+
+
+async def _fetch_nodes_by_compact_labels(
+    session: Any,
+    canvas_id: int,
+    labels: Iterable[str],
+) -> list[Node]:
+    values = {_normalize_compact(label) for label in labels if label}
+    if not values:
+        return []
+    label_expr = func.lower(Node.label)
+    for token in (" ", "-", "_"):
+        label_expr = func.replace(label_expr, token, "")
+    result = await session.execute(
+        select(Node).where(Node.canvas_id == canvas_id, label_expr.in_(sorted(values)))
+    )
     return list(result.scalars().all())
 
 
@@ -640,10 +763,11 @@ def _score_turns(
             input_embedding = None
 
     for seq, turn in all_turns.items():
+        summary_text = _resolve_turn_summary(turn)
         context_turn = ContextTurn(
             id=turn.id,
             sequence_number=turn.sequence_number,
-            summary=turn.summary,
+            summary=summary_text,
             actor=turn.actor,
             turn_type=turn.type,
             timestamp=turn.timestamp.isoformat() if turn.timestamp else "",
@@ -663,12 +787,12 @@ def _score_turns(
         similarity = 0.0
         if input_embedding is not None and embedding_provider is not None:
             try:
-                embedding = _coerce_embedding(embedding_provider(turn.summary))
+                embedding = _coerce_embedding(embedding_provider(summary_text))
             except Exception:
                 embedding = None
             similarity = _cosine_similarity(input_embedding, embedding)
         if similarity <= 0.0 and input_tokens:
-            similarity = _token_similarity(input_tokens, _tokenize(turn.summary))
+            similarity = _token_similarity(input_tokens, _tokenize(summary_text))
         if similarity >= config.similarity_threshold:
             _apply_reason(
                 context_turn,
@@ -677,7 +801,7 @@ def _score_turns(
             )
 
         if memory_signal:
-            overlap = _token_overlap(memory_signal.tokens, _tokenize(turn.summary))
+            overlap = _token_overlap(memory_signal.tokens, _tokenize(summary_text))
             if overlap > 0:
                 _apply_reason(
                     context_turn,
@@ -773,6 +897,51 @@ def _node_text(node: ContextNode) -> str:
         if isinstance(summary, str):
             parts.append(summary)
     return " ".join(part for part in parts if part)
+
+
+def _extract_payload_text(payload: Mapping[str, Any]) -> str | None:
+    if isinstance(payload.get("title"), str) and isinstance(payload.get("message"), str):
+        return f"{payload['title']}: {payload['message']}"
+    candidates = [
+        payload.get("message"),
+        payload.get("status"),
+        payload.get("error"),
+        payload.get("prompt"),
+        payload.get("text"),
+        payload.get("content"),
+        payload.get("result"),
+    ]
+    for candidate in candidates:
+        if isinstance(candidate, str):
+            return candidate
+    nested = payload.get("result")
+    if isinstance(nested, Mapping):
+        return _extract_payload_text(nested)
+    return None
+
+
+def _resolve_turn_summary(turn: Turn) -> str:
+    payload = turn.get_payload()
+    if turn.type == TurnType.USER_INPUT:
+        command = payload.get("command")
+        if isinstance(command, str) and command.strip():
+            return command.strip()
+    if turn.type == TurnType.ASSUMPTION_CONFIRMED:
+        final_text = payload.get("final_text")
+        if isinstance(final_text, str) and final_text.strip():
+            return f"Clarification confirmed: {final_text.strip()}"
+    if turn.type == TurnType.ASSUMPTION_REJECTED:
+        original_text = payload.get("original_text")
+        if isinstance(original_text, str) and original_text.strip():
+            return f"Clarification rejected: {original_text.strip()}"
+    if turn.type == TurnType.ASSUMPTION_MODIFIED:
+        final_text = payload.get("final_text")
+        if isinstance(final_text, str) and final_text.strip():
+            return f"Clarification updated: {final_text.strip()}"
+    payload_text = _extract_payload_text(payload)
+    if payload_text and payload_text.strip():
+        return payload_text.strip()
+    return turn.summary
 
 
 def _format_node_lines(nodes: Iterable[ContextNode], max_content_chars: int) -> list[str]:
