@@ -153,6 +153,17 @@ class Settings(BaseSettings):
         default=True, description="Enable automatic daily backups"
     )
 
+    # Hooks
+    hooks_enabled: bool = Field(
+        default=True, description="Enable deterministic hook processing"
+    )
+    hooks_scheduler_interval_seconds: int = Field(
+        default=60,
+        ge=5,
+        le=3600,
+        description="Interval in seconds for scheduled hook checks",
+    )
+
     # Redis (for job queue)
     redis_url: str = Field(
         default="redis://localhost:6379/0",

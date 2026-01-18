@@ -4,6 +4,7 @@ import { Canvas, CanvasWorkspace } from "@/components/Canvas";
 import { FloatingInput } from "@/components/ContextInput/FloatingInput";
 import { ChatViewPanel } from "@/components/ChatView";
 import { EventsViewPanel } from "@/components/EventsView";
+import { HooksPanel } from "@/components/Hooks";
 import { WheelViewPanel } from "@/components/WheelView";
 import { MCPInstallPanel } from "@/components/MCP";
 import { AssumptionsPanel } from "@/components/Assumptions";
@@ -415,7 +416,7 @@ export default function Home() {
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [draftCommand, setDraftCommand] = useState("");
   const [activeView, setActiveView] = useState<
-    "chat" | "wheel" | "events" | "mcp" | "context" | null
+    "chat" | "wheel" | "events" | "mcp" | "context" | "hooks" | null
   >(null);
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
@@ -832,6 +833,7 @@ export default function Home() {
   const isEventsOpen = activeView === "events";
   const isMcpOpen = activeView === "mcp";
   const isContextOpen = activeView === "context";
+  const isHooksOpen = activeView === "hooks";
 
   const wheelFilters = useViewFiltersStore((state) => state.wheel);
   const eventsFilters = useViewFiltersStore((state) => state.events);
@@ -1400,7 +1402,7 @@ export default function Home() {
   };
 
   const handleViewToggle = (
-    view: "chat" | "wheel" | "events" | "mcp" | "context"
+    view: "chat" | "wheel" | "events" | "mcp" | "context" | "hooks"
   ) => {
     setActiveView((prev) => (prev === view ? null : view));
   };
@@ -1433,6 +1435,10 @@ export default function Home() {
       error={contextError}
       onRefresh={refreshContextPreview}
     />
+  ) : null;
+
+  const hooksPanel = isHooksOpen ? (
+    <HooksPanel id="hooks-panel" />
   ) : null;
 
   const wheelPanel = isWheelOpen ? (
@@ -1475,6 +1481,8 @@ export default function Home() {
           ? wheelPanel
           : isEventsOpen
             ? eventsPanel
+            : isHooksOpen
+              ? hooksPanel
             : null;
 
   const panelContent =
@@ -1582,6 +1590,12 @@ export default function Home() {
             isOpen: isEventsOpen,
             onToggle: () => handleViewToggle("events"),
             ariaControls: "events-view-panel",
+          },
+          {
+            label: "Hooks",
+            isOpen: isHooksOpen,
+            onToggle: () => handleViewToggle("hooks"),
+            ariaControls: "hooks-panel",
           },
         ]}
       />

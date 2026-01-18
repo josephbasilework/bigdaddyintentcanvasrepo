@@ -21,6 +21,7 @@ from app.api.dashboard_subscriptions import router as dashboard_subscriptions_ro
 from app.api.edges import router as edges_router
 from app.api.events import router as events_router
 from app.api.health import router as health_router
+from app.api.hooks import router as hooks_router
 from app.api.jobs import router as jobs_router
 from app.api.mcp import router as mcp_router
 from app.api.nodes import router as nodes_router
@@ -35,6 +36,7 @@ from app.database import SessionLocal
 from app.logging_config import configure_logging
 from app.middleware import LoggingMiddleware
 from app.services.backup_service import BackupService
+from app.services.hooks import run_due_scheduled_hooks
 from app.services.intent_index import IntentIndexStore
 from app.ws import router as ws_router
 
@@ -139,9 +141,12 @@ async def lifespan(app: FastAPI):
     logger.info("Gateway API key configured")
     print("Gateway API key configured")
 
-    # Initialize backup scheduler if enabled
-    if settings.backup_enabled:
+    scheduler: BackgroundScheduler | None = None
+    if settings.backup_enabled or settings.hooks_enabled:
         scheduler = BackgroundScheduler()
+
+    # Initialize backup scheduler if enabled
+    if scheduler and settings.backup_enabled:
         scheduler.add_job(
             _run_scheduled_backups,
             "cron",
@@ -159,17 +164,32 @@ async def lifespan(app: FastAPI):
             id="daily_intent_prune",
             name="Daily intent pruning job",
         )
-        scheduler.start()
-        _scheduler = scheduler
         logger.info(
             f"Backup scheduler started: daily at {settings.backup_schedule_hour:02d}:00"
         )
         print(f"Backup scheduler started: daily at {settings.backup_schedule_hour:02d}:00")
         logger.info("Intent pruning scheduler started: daily at 02:00")
         print("Intent pruning scheduler started: daily at 02:00")
-    else:
+    elif not settings.backup_enabled:
         logger.info("Backup scheduler disabled")
         print("Backup scheduler disabled")
+
+    if scheduler and settings.hooks_enabled:
+        scheduler.add_job(
+            run_due_scheduled_hooks,
+            "interval",
+            seconds=settings.hooks_scheduler_interval_seconds,
+            id="scheduled_hooks",
+            name="Scheduled hook runner",
+        )
+        logger.info(
+            "Hook scheduler started: interval %ss",
+            settings.hooks_scheduler_interval_seconds,
+        )
+
+    if scheduler:
+        scheduler.start()
+        _scheduler = scheduler
 
     yield
 
@@ -228,6 +248,7 @@ def create_app() -> FastAPI:
     app.include_router(telemetry_router, tags=["telemetry"])
     app.include_router(turns_router, tags=["turns"])
     app.include_router(events_router, tags=["events"])
+    app.include_router(hooks_router, tags=["hooks"])
 
     # CopilotKit endpoint (PRD Section 9.3 EI-004)
     setup_copilotkit(app)

@@ -439,6 +439,12 @@ def log_turn_with_session_id_sync(
             related_node_id,
             related_edge_id,
         )
+        try:
+            from app.services.hooks import dispatch_event_hooks_sync
+
+            dispatch_event_hooks_sync(turn)
+        except Exception:
+            logger.warning("Failed to dispatch hooks for turn %s", turn.id, exc_info=True)
         return turn
     except Exception:
         logger.warning(
@@ -541,6 +547,12 @@ async def log_turn_with_session_id_async(
             related_node_id,
             related_edge_id,
         )
+        try:
+            from app.services.hooks import dispatch_event_hooks_async
+
+            await dispatch_event_hooks_async(turn)
+        except Exception:
+            logger.warning("Failed to dispatch hooks for turn %s", turn.id, exc_info=True)
         return turn
     except Exception:
         logger.warning(

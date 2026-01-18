@@ -10,6 +10,7 @@ from app.models.dashboard_subscription import (
 )
 from app.models.edge import Edge, RelationType
 from app.models.event import Event
+from app.models.hook import Hook
 from app.models.job import Job
 from app.models.node import Node, NodeType
 from app.models.preferences import Preferences
@@ -33,6 +34,7 @@ __all__ = [
     "RelationType",
     "Preferences",
     "Job",
+    "Hook",
     "JobArtifact",
     "Turn",
     "ResponseType",
