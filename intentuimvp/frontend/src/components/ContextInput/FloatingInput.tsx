@@ -1,11 +1,64 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
 import { NodeContextBanner } from "./NodeContextBanner";
 import type { ConversationScope } from "@/state/conversationStore";
 import type { AttachmentItem } from "@/lib/attachments";
 import { formatBytes } from "@/lib/attachments";
+
+export type VoiceRecordingPayload = {
+  blob: Blob;
+  durationMs: number;
+  mimeType: string;
+  transcript: string;
+};
+
+type SpeechRecognitionAlternativeLike = {
+  transcript: string;
+  confidence: number;
+};
+
+type SpeechRecognitionResultLike = {
+  isFinal: boolean;
+  length: number;
+  [index: number]: SpeechRecognitionAlternativeLike;
+};
+
+type SpeechRecognitionEventLike = {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+};
+
+type SpeechRecognitionErrorLike = {
+  error: string;
+  message?: string;
+};
+
+type SpeechRecognitionInstance = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorLike) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+};
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
+
+const resolveSpeechRecognitionCtor = (): SpeechRecognitionConstructor | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const w = window as typeof window & {
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    SpeechRecognition?: SpeechRecognitionConstructor;
+  };
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+};
 
 interface FloatingInputProps {
   /** Callback when user submits input (pressed Enter) */
@@ -38,6 +91,12 @@ interface FloatingInputProps {
   conversationScope?: ConversationScope;
   /** Callback when user clears the node context */
   onClearContext?: () => void;
+  /** Whether to show voice input controls */
+  enableVoiceInput?: boolean;
+  /** Callback to persist a voice recording as an audio block */
+  onVoiceRecordingComplete?: (payload: VoiceRecordingPayload) => void | Promise<void>;
+  /** Language tag for speech recognition */
+  voiceLanguage?: string;
 }
 
 interface SelectionScopeItem {
@@ -126,10 +185,32 @@ export function FloatingInput({
   panelToggles,
   conversationScope,
   onClearContext,
+  enableVoiceInput = true,
+  onVoiceRecordingComplete,
+  voiceLanguage = "en-US",
 }: FloatingInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState("");
   const [isDragActive, setIsDragActive] = useState(false);
+  const [isListening, setIsListening] = useState(false);
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [isSavingRecording, setIsSavingRecording] = useState(false);
+  const [voiceTranscript, setVoiceTranscript] = useState("");
+  const [voiceInterim, setVoiceInterim] = useState("");
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [isVoicePanelOpen, setIsVoicePanelOpen] = useState(false);
+  const speechRecognitionCtor = useMemo(() => resolveSpeechRecognitionCtor(), []);
+  const speechRecognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const finalTranscriptRef = useRef("");
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const recordingStartRef = useRef<number | null>(null);
+  const lastRecordingRef = useRef<{
+    blob: Blob;
+    durationMs: number;
+    mimeType: string;
+  } | null>(null);
   const selectionItems = selection ?? [];
   const selectionCount = selectionItems.length;
   const maxSelectionChips = 4;
@@ -164,6 +245,16 @@ export function FloatingInput({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      speechRecognitionRef.current?.abort();
+      if (mediaRecorderRef.current?.state === "recording") {
+        mediaRecorderRef.current.stop();
+      }
+      mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    };
+  }, []);
+
   // Basic sanitization: trim and limit length
   const sanitizeInput = (input: string): string => {
     return input.trim().slice(0, maxLength);
@@ -175,6 +266,181 @@ export function FloatingInput({
       onSubmit?.(sanitized);
       setValue("");
       onValueChange?.("");
+    }
+  };
+
+  const combinedVoiceTranscript = sanitizeInput(
+    [voiceTranscript, voiceInterim].filter(Boolean).join(" ")
+  );
+  const isSpeechSupported = Boolean(speechRecognitionCtor);
+  const canRecordAudio =
+    Boolean(onVoiceRecordingComplete) &&
+    typeof window !== "undefined" &&
+    typeof MediaRecorder !== "undefined" &&
+    typeof navigator !== "undefined" &&
+    Boolean(navigator.mediaDevices?.getUserMedia);
+  const shouldShowVoicePanel =
+    enableVoiceInput &&
+    (isVoicePanelOpen ||
+      isListening ||
+      voiceTranscript.length > 0 ||
+      voiceInterim.length > 0 ||
+      Boolean(voiceError));
+
+  const clearVoiceSession = () => {
+    setIsVoicePanelOpen(false);
+    setVoiceTranscript("");
+    setVoiceInterim("");
+    setVoiceError(null);
+    finalTranscriptRef.current = "";
+    lastRecordingRef.current = null;
+  };
+
+  const handleSpeechResult = (event: SpeechRecognitionEventLike) => {
+    let interim = "";
+    for (let i = event.resultIndex; i < event.results.length; i += 1) {
+      const result = event.results[i];
+      const segment = result?.[0]?.transcript ?? "";
+      if (result.isFinal) {
+        finalTranscriptRef.current = `${finalTranscriptRef.current} ${segment}`.trim();
+      } else {
+        interim += segment;
+      }
+    }
+    setVoiceTranscript(finalTranscriptRef.current);
+    setVoiceInterim(interim.trim());
+  };
+
+  const startVoiceCapture = async () => {
+    if (!enableVoiceInput) return;
+    if (!speechRecognitionCtor) {
+      setVoiceError("Voice recognition is not supported in this browser.");
+      setIsVoicePanelOpen(true);
+      return;
+    }
+    setVoiceError(null);
+    setVoiceTranscript("");
+    setVoiceInterim("");
+    finalTranscriptRef.current = "";
+    setIsVoicePanelOpen(true);
+    setIsListening(true);
+
+    const recognition = new speechRecognitionCtor();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = voiceLanguage;
+    recognition.onresult = handleSpeechResult;
+    recognition.onerror = (event) => {
+      setVoiceError(`Voice recognition error: ${event.error}`);
+    };
+    recognition.onend = () => {
+      setIsListening(false);
+      setVoiceInterim("");
+    };
+    speechRecognitionRef.current = recognition;
+
+    try {
+      recognition.start();
+    } catch {
+      setIsListening(false);
+      setVoiceError("Unable to start voice recognition.");
+    }
+
+    if (onVoiceRecordingComplete && !canRecordAudio) {
+      setVoiceError("Audio recording is not supported in this browser.");
+      return;
+    }
+    if (onVoiceRecordingComplete && canRecordAudio) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaStreamRef.current = stream;
+        const recorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = recorder;
+        audioChunksRef.current = [];
+        recordingStartRef.current = Date.now();
+        recorder.ondataavailable = (event) => {
+          if (event.data && event.data.size > 0) {
+            audioChunksRef.current.push(event.data);
+          }
+        };
+        recorder.onstop = () => {
+          const chunks = audioChunksRef.current;
+          if (chunks.length > 0) {
+            const mimeType = recorder.mimeType || chunks[0].type || "audio/webm";
+            const blob = new Blob(chunks, { type: mimeType });
+            const durationMs = recordingStartRef.current
+              ? Date.now() - recordingStartRef.current
+              : 0;
+            lastRecordingRef.current = { blob, durationMs, mimeType };
+          }
+          audioChunksRef.current = [];
+          recordingStartRef.current = null;
+          setIsRecordingAudio(false);
+          mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+          mediaStreamRef.current = null;
+        };
+        recorder.start();
+        setIsRecordingAudio(true);
+      } catch {
+        setVoiceError("Microphone access denied. Check permissions.");
+      }
+    }
+  };
+
+  const stopVoiceCapture = () => {
+    if (!isListening) return;
+    setIsListening(false);
+    speechRecognitionRef.current?.stop();
+    speechRecognitionRef.current = null;
+    if (mediaRecorderRef.current?.state === "recording") {
+      mediaRecorderRef.current.stop();
+    } else {
+      setIsRecordingAudio(false);
+    }
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop());
+    mediaStreamRef.current = null;
+  };
+
+  const toggleVoiceCapture = () => {
+    if (isListening) {
+      stopVoiceCapture();
+    } else {
+      void startVoiceCapture();
+    }
+  };
+
+  const handleVoiceInsert = () => {
+    if (!combinedVoiceTranscript) return;
+    setValue(combinedVoiceTranscript);
+    onValueChange?.(combinedVoiceTranscript);
+    inputRef.current?.focus();
+  };
+
+  const handleVoiceSubmit = () => {
+    if (!combinedVoiceTranscript) return;
+    onSubmit?.(combinedVoiceTranscript);
+    setValue("");
+    onValueChange?.("");
+  };
+
+  const handleVoiceSave = async () => {
+    if (!onVoiceRecordingComplete || isSavingRecording) return;
+    const recording = lastRecordingRef.current;
+    if (!recording) {
+      setVoiceError("No audio recording available to save.");
+      return;
+    }
+    setIsSavingRecording(true);
+    setVoiceError(null);
+    try {
+      await onVoiceRecordingComplete({
+        ...recording,
+        transcript: combinedVoiceTranscript,
+      });
+    } catch {
+      setVoiceError("Failed to save audio block.");
+    } finally {
+      setIsSavingRecording(false);
     }
   };
 
@@ -430,21 +696,108 @@ export function FloatingInput({
           ))}
         </div>
       )}
-      <input
-        ref={inputRef}
-        type="text"
-        value={value}
-        onChange={(e) => {
-          const nextValue = e.target.value;
-          setValue(nextValue);
-          onValueChange?.(nextValue);
-        }}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder}
-        maxLength={maxLength}
-        className="floating-input"
-        aria-label="Command input"
-      />
+      {shouldShowVoicePanel && (
+        <div className="voice-panel" role="status" aria-live="polite">
+          <div className="voice-panel-header">
+            <div className="voice-status">
+              <span className={`voice-status-pill${isListening ? " is-live" : ""}`}>
+                {isListening ? "Listening..." : "Voice input"}
+              </span>
+              {isRecordingAudio && (
+                <span className="voice-status-tag">Recording audio</span>
+              )}
+            </div>
+            <button
+              type="button"
+              className="voice-panel-close"
+              onClick={clearVoiceSession}
+              aria-label="Dismiss voice input"
+            >
+              x
+            </button>
+          </div>
+          <div className="voice-transcript">
+            {combinedVoiceTranscript ? (
+              <>
+                <span className="voice-transcript-final">{voiceTranscript}</span>
+                {voiceInterim && (
+                  <span className="voice-transcript-interim">
+                    {voiceInterim}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="voice-transcript-placeholder">
+                {isListening
+                  ? "Start speaking..."
+                  : "No transcript yet. Use the mic to capture a command."}
+              </span>
+            )}
+          </div>
+          <div className="voice-actions">
+            <button
+              type="button"
+              className="voice-action-button"
+              onClick={handleVoiceInsert}
+              disabled={!combinedVoiceTranscript}
+            >
+              Insert
+            </button>
+            <button
+              type="button"
+              className="voice-action-button voice-action-primary"
+              onClick={handleVoiceSubmit}
+              disabled={!combinedVoiceTranscript}
+            >
+              Send
+            </button>
+            {onVoiceRecordingComplete && (
+              <button
+                type="button"
+                className="voice-action-button"
+                onClick={handleVoiceSave}
+                disabled={!lastRecordingRef.current || isSavingRecording}
+              >
+                {isSavingRecording ? "Saving audio..." : "Save audio block"}
+              </button>
+            )}
+          </div>
+          {voiceError && <div className="voice-error">{voiceError}</div>}
+        </div>
+      )}
+      <div className="input-row">
+        <input
+          ref={inputRef}
+          type="text"
+          value={value}
+          onChange={(e) => {
+            const nextValue = e.target.value;
+            setValue(nextValue);
+            onValueChange?.(nextValue);
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          maxLength={maxLength}
+          className="floating-input"
+          aria-label="Command input"
+        />
+        {enableVoiceInput && (
+          <button
+            type="button"
+            className={`voice-button${isListening ? " is-active" : ""}`}
+            onClick={toggleVoiceCapture}
+            aria-label={isListening ? "Stop voice input" : "Start voice input"}
+            disabled={!isSpeechSupported}
+            title={
+              isSpeechSupported
+                ? "Toggle voice input"
+                : "Voice recognition not supported in this browser"
+            }
+          >
+            {isListening ? "Stop" : "Mic"}
+          </button>
+        )}
+      </div>
       <style jsx>{`
         .floating-input-container {
           position: fixed;
@@ -750,6 +1103,131 @@ export function FloatingInput({
           outline-offset: 2px;
         }
 
+        .voice-panel {
+          display: flex;
+          flex-direction: column;
+          gap: 0.5rem;
+          padding: 0.6rem 0.75rem;
+          margin-bottom: 0.5rem;
+          border-radius: 0.75rem;
+          background: rgba(15, 23, 42, 0.85);
+          border: 1px solid rgba(56, 189, 248, 0.35);
+          color: #e2e8f0;
+          box-shadow: 0 10px 20px rgba(0, 0, 0, 0.35);
+        }
+
+        .voice-panel-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 0.5rem;
+        }
+
+        .voice-status {
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          flex-wrap: wrap;
+        }
+
+        .voice-status-pill {
+          padding: 0.2rem 0.5rem;
+          border-radius: 999px;
+          border: 1px solid rgba(148, 163, 184, 0.5);
+          font-size: 0.7rem;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: #cbd5f5;
+        }
+
+        .voice-status-pill.is-live {
+          border-color: rgba(248, 113, 113, 0.6);
+          color: #fecaca;
+          box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.2);
+        }
+
+        .voice-status-tag {
+          font-size: 0.7rem;
+          color: #93c5fd;
+        }
+
+        .voice-panel-close {
+          border: none;
+          background: transparent;
+          color: #94a3b8;
+          font-size: 0.9rem;
+          cursor: pointer;
+        }
+
+        .voice-panel-close:hover {
+          color: #e2e8f0;
+        }
+
+        .voice-transcript {
+          font-size: 0.85rem;
+          line-height: 1.4;
+          display: flex;
+          flex-direction: column;
+          gap: 0.2rem;
+        }
+
+        .voice-transcript-placeholder {
+          color: #94a3b8;
+          font-style: italic;
+        }
+
+        .voice-transcript-final {
+          color: #e2e8f0;
+          white-space: pre-wrap;
+        }
+
+        .voice-transcript-interim {
+          color: #94a3b8;
+          font-style: italic;
+          white-space: pre-wrap;
+        }
+
+        .voice-actions {
+          display: flex;
+          align-items: center;
+          flex-wrap: wrap;
+          gap: 0.4rem;
+        }
+
+        .voice-action-button {
+          padding: 0.35rem 0.75rem;
+          border-radius: 999px;
+          border: 1px solid rgba(71, 85, 105, 0.6);
+          background: rgba(15, 23, 42, 0.9);
+          color: #e2e8f0;
+          font-size: 0.75rem;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          cursor: pointer;
+        }
+
+        .voice-action-button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .voice-action-primary {
+          border-color: rgba(56, 189, 248, 0.6);
+          color: #e0f2fe;
+          box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.2);
+        }
+
+        .voice-error {
+          color: #fca5a5;
+          font-size: 0.75rem;
+        }
+
+        .input-row {
+          display: flex;
+          align-items: center;
+          gap: 0.5rem;
+        }
+
         .slash-templates {
           position: absolute;
           bottom: calc(100% + 0.5rem);
@@ -817,6 +1295,7 @@ export function FloatingInput({
         }
 
         .floating-input {
+          flex: 1;
           width: 100%;
           padding: 0.875rem 1.25rem;
           font-size: 1rem;
@@ -853,6 +1332,35 @@ export function FloatingInput({
           color: #94a3b8;
         }
 
+        .voice-button {
+          width: 44px;
+          height: 44px;
+          border-radius: 999px;
+          border: 1px solid rgba(148, 163, 184, 0.4);
+          background: rgba(15, 23, 42, 0.9);
+          color: #e2e8f0;
+          font-size: 0.8rem;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          cursor: pointer;
+        }
+
+        .voice-button:hover {
+          border-color: rgba(56, 189, 248, 0.6);
+          color: #e0f2fe;
+        }
+
+        .voice-button.is-active {
+          border-color: rgba(248, 113, 113, 0.7);
+          color: #fecaca;
+          box-shadow: 0 0 0 1px rgba(248, 113, 113, 0.35);
+        }
+
+        .voice-button:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
         @media (max-width: 640px) {
           .floating-input-container {
             bottom: 1rem;
@@ -887,6 +1395,12 @@ export function FloatingInput({
           .floating-input {
             padding: 0.75rem 1rem;
             font-size: 0.9375rem;
+          }
+
+          .voice-button {
+            width: 40px;
+            height: 40px;
+            font-size: 0.7rem;
           }
         }
 

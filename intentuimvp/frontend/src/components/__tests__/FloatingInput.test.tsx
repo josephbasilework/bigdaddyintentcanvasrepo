@@ -306,4 +306,16 @@ describe("FloatingInput", () => {
 
     expect(handleClear).toHaveBeenCalledTimes(1);
   });
+
+  it("renders a voice input toggle by default", () => {
+    render(<FloatingInput />);
+    const voiceButton = screen.getByRole("button", { name: "Start voice input" });
+    expect(voiceButton).toBeInTheDocument();
+  });
+
+  it("hides the voice input toggle when disabled", () => {
+    render(<FloatingInput enableVoiceInput={false} />);
+    const voiceButton = screen.queryByRole("button", { name: /voice input/i });
+    expect(voiceButton).not.toBeInTheDocument();
+  });
 });

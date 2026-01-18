@@ -1,7 +1,10 @@
 "use client";
 
 import { Canvas, CanvasWorkspace } from "@/components/Canvas";
-import { FloatingInput } from "@/components/ContextInput/FloatingInput";
+import {
+  FloatingInput,
+  type VoiceRecordingPayload,
+} from "@/components/ContextInput/FloatingInput";
 import { ChatViewPanel } from "@/components/ChatView";
 import { EventsViewPanel } from "@/components/EventsView";
 import { HooksPanel } from "@/components/Hooks";
@@ -65,6 +68,20 @@ const EDGE_RELATION_TYPES: Set<CanvasEdgeRelationType> = new Set([
   "derived_from",
   "critiques",
 ]);
+
+const blobToBase64 = (blob: Blob): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+      reject(new Error("Failed to read audio data"));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read audio data"));
+    reader.readAsDataURL(blob);
+  });
 
 type CommandSubmissionLog = {
   id: string;
@@ -418,6 +435,7 @@ export default function Home() {
   const [activeView, setActiveView] = useState<
     "chat" | "wheel" | "events" | "mcp" | "context" | "hooks" | null
   >(null);
+  const canvasId = useCanvasStore((state) => state.canvasId);
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
   const addNode = useCanvasStore((state) => state.addNode);
@@ -1159,6 +1177,116 @@ export default function Home() {
     // The handleWebSocketMessage callback will add the node when it receives "node.created"
   };
 
+  const resolveVoiceNodePosition = useCallback(() => {
+    const lastNode = nodes[nodes.length - 1];
+    if (lastNode) {
+      return {
+        x: lastNode.x + 40,
+        y: lastNode.y + 40,
+        z: lastNode.z ?? 0,
+      };
+    }
+    return { x: 60, y: 60, z: 0 };
+  }, [nodes]);
+
+  const handleVoiceRecordingComplete = useCallback(
+    async (payload: VoiceRecordingPayload) => {
+      if (!canvasId) {
+        setRoutingError("Canvas not ready. Please reload and try again.");
+        return;
+      }
+      setRoutingError(null);
+      setStatusMessage("Saving voice note...");
+      try {
+        const audioData = await blobToBase64(payload.blob);
+        const audioResponse = await fetch(`${API_BASE_URL}/api/audio/blocks`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            canvas_id: canvasId,
+            audio_data: audioData,
+            duration: payload.durationMs / 1000,
+          }),
+        });
+        if (!audioResponse.ok) {
+          const errorText = await audioResponse.text();
+          throw new Error(`Audio upload failed (${audioResponse.status}): ${errorText}`);
+        }
+        const audioBlock = (await audioResponse.json()) as {
+          id: number;
+          audioUri: string;
+          duration: number | null;
+          status: string;
+          transcription?: string | null;
+        };
+        const transcript = payload.transcript.trim();
+        const labelBase = transcript ? `Voice: ${transcript}` : "Voice note";
+        const label =
+          labelBase.length > 48
+            ? `${labelBase.slice(0, 45).trimEnd()}...`
+            : labelBase;
+        const position = resolveVoiceNodePosition();
+        const metadata = {
+          audio: {
+            blockId: audioBlock.id,
+            uri: audioBlock.audioUri,
+            duration: audioBlock.duration ?? payload.durationMs / 1000,
+            status: audioBlock.status,
+            transcription: transcript || audioBlock.transcription,
+          },
+        };
+
+        const nodeResponse = await fetch(`${API_BASE_URL}/api/nodes`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            canvas_id: canvasId,
+            label,
+            type: "audio",
+            content: transcript || null,
+            position,
+            metadata,
+          }),
+        });
+        if (!nodeResponse.ok) {
+          const errorText = await nodeResponse.text();
+          throw new Error(`Node creation failed (${nodeResponse.status}): ${errorText}`);
+        }
+        const nodePayload = (await nodeResponse.json()) as {
+          id: number | string;
+          type: string;
+          label?: string;
+          content?: string | null;
+          position?: { x?: number; y?: number; z?: number };
+          metadata?: Record<string, unknown>;
+        };
+        const nodeId = String(nodePayload.id);
+        addNode(
+          {
+            id: nodeId,
+            type: (nodePayload.type as CanvasNode["type"]) || "audio",
+            x: nodePayload.position?.x ?? position.x,
+            y: nodePayload.position?.y ?? position.y,
+            z: nodePayload.position?.z ?? position.z,
+            title: nodePayload.label ?? label,
+            content: nodePayload.content ?? transcript,
+            metadata: nodePayload.metadata ?? metadata,
+          },
+          { source: "remote" }
+        );
+        selectNode(nodeId);
+      } catch (error) {
+        console.error("Voice recording save failed:", error);
+        const message =
+          error instanceof Error ? error.message : "Failed to save voice note.";
+        setRoutingError(message);
+      } finally {
+        setStatusMessage("Ready for commands.");
+      }
+    },
+    [addNode, canvasId, resolveVoiceNodePosition, selectNode]
+  );
+
   const handleCommandSubmit = async (value: string) => {
     setRoutingError(null);
     const normalizedValue = value.trim().toLowerCase();
@@ -1560,6 +1688,7 @@ export default function Home() {
         panelContent={panelContent}
         conversationScope={conversationScope}
         onClearContext={handleClearContext}
+        onVoiceRecordingComplete={handleVoiceRecordingComplete}
         panelToggles={[
           {
             label: "Chat",
