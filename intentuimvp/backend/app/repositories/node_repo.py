@@ -1,5 +1,7 @@
 """Repository for Node CRUD operations."""
 
+from __future__ import annotations
+
 import json
 from logging import getLogger
 from typing import Any
@@ -160,6 +162,7 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
         position: dict | None = None,
         content: str | None = None,
         node_metadata: dict | None = None,
+        created_by_turn_id: int | None = None,
     ) -> Node:
         """Create a new node.
 
@@ -170,6 +173,7 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
             position: Position dictionary {"x": 0, "y": 0, "z": 0}
             content: Optional node content
             node_metadata: Additional metadata dictionary
+            created_by_turn_id: Optional turn ID for attribution (for agent-created nodes)
 
         Returns:
             Created node
@@ -192,6 +196,7 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
             content=content,
             position=position_json,
             node_metadata=metadata_json,
+            created_by_turn_id=created_by_turn_id,
         )
 
     async def update_position(self, node_id: int, position: dict) -> Node | None:
@@ -260,3 +265,55 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
             List of nodes
         """
         return await super().list(offset=offset, limit=limit, order_by=order_by)
+
+    async def get_by_turn_id(self, turn_id: int) -> list[Node]:
+        """Get all nodes created by a specific turn.
+
+        Args:
+            turn_id: The turn ID to filter by
+
+        Returns:
+            List of nodes created by the specified turn
+        """
+        stmt = (
+            select(Node)
+            .where(Node.created_by_turn_id == turn_id)
+            .order_by(Node.id)
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_by_turn_ids(self, turn_ids: list[int]) -> list[Node]:
+        """Get all nodes created by any of the specified turns.
+
+        Args:
+            turn_ids: List of turn IDs to filter by
+
+        Returns:
+            List of nodes created by the specified turns
+        """
+        if not turn_ids:
+            return []
+        stmt = (
+            select(Node)
+            .where(Node.created_by_turn_id.in_(turn_ids))
+            .order_by(Node.id)
+        )
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def delete_by_turn_id(self, turn_id: int) -> list[int]:
+        """Delete all nodes created by a specific turn.
+
+        Args:
+            turn_id: The turn ID to filter by
+
+        Returns:
+            List of deleted node IDs
+        """
+        nodes = await self.get_by_turn_id(turn_id)
+        deleted_ids = []
+        for node in nodes:
+            if await self.delete(node.id):
+                deleted_ids.append(node.id)
+        return deleted_ids

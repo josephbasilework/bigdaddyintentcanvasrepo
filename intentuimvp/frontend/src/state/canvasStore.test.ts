@@ -720,4 +720,139 @@ describe('canvasStore', () => {
       expect(result.current.nodes.length).toBe(initialRenderCount + 1);
     });
   });
+
+  describe('turn attribution', () => {
+    it('should store createdByTurnId on nodes', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      let nodeId = '';
+
+      act(() => {
+        nodeId = result.current.addNode({
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Agent Created Node',
+          createdByTurnId: 42,
+        });
+      });
+
+      const node = result.current.nodes.find((n) => n.id === nodeId);
+      expect(node?.createdByTurnId).toBe(42);
+    });
+
+    it('should get nodes by turn ID', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      act(() => {
+        result.current.addNode({
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Node from turn 1',
+          createdByTurnId: 1,
+        });
+        result.current.addNode({
+          type: 'text',
+          x: 100,
+          y: 0,
+          z: 0,
+          title: 'Another node from turn 1',
+          createdByTurnId: 1,
+        });
+        result.current.addNode({
+          type: 'text',
+          x: 200,
+          y: 0,
+          z: 0,
+          title: 'Node from turn 2',
+          createdByTurnId: 2,
+        });
+        result.current.addNode({
+          type: 'text',
+          x: 300,
+          y: 0,
+          z: 0,
+          title: 'Node without attribution',
+        });
+      });
+
+      const turn1Nodes = result.current.getNodesByTurnId(1);
+      expect(turn1Nodes).toHaveLength(2);
+      expect(turn1Nodes.every((n) => n.createdByTurnId === 1)).toBe(true);
+
+      const turn2Nodes = result.current.getNodesByTurnId(2);
+      expect(turn2Nodes).toHaveLength(1);
+
+      const noNodes = result.current.getNodesByTurnId(99999);
+      expect(noNodes).toHaveLength(0);
+    });
+
+    it('should remove nodes by turn ID', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      act(() => {
+        result.current.addNode({
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Node from turn 5',
+          createdByTurnId: 5,
+        });
+        result.current.addNode({
+          type: 'text',
+          x: 100,
+          y: 0,
+          z: 0,
+          title: 'Another node from turn 5',
+          createdByTurnId: 5,
+        });
+        result.current.addNode({
+          type: 'text',
+          x: 200,
+          y: 0,
+          z: 0,
+          title: 'Node from turn 6',
+          createdByTurnId: 6,
+        });
+      });
+
+      expect(result.current.nodes).toHaveLength(3);
+
+      let removedIds: string[] = [];
+      act(() => {
+        removedIds = result.current.removeNodesByTurnId(5);
+      });
+
+      expect(removedIds).toHaveLength(2);
+      expect(result.current.nodes).toHaveLength(1);
+      expect(result.current.nodes[0].createdByTurnId).toBe(6);
+    });
+
+    it('should return empty array when removing nodes for non-existent turn', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      act(() => {
+        result.current.addNode({
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Node with attribution',
+          createdByTurnId: 1,
+        });
+      });
+
+      let removedIds: string[] = [];
+      act(() => {
+        removedIds = result.current.removeNodesByTurnId(99999);
+      });
+
+      expect(removedIds).toEqual([]);
+      expect(result.current.nodes).toHaveLength(1);
+    });
+  });
 });

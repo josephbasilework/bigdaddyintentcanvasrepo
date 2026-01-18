@@ -13,16 +13,15 @@ import logging
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC
-from uuid import uuid4
 from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agui import AgentNotificationMessage, AgentRequestMessage
-from app.agui.schemas import AgentNotificationPayload, AgentRequestPayload
-from app.ws.websocket import manager as ws_manager
+from app.agui import AgentRequestMessage
+from app.agui.schemas import AgentRequestPayload
 from app.api.assumption_store import get_assumption_store
 from app.context.models import parse_assumption
 from app.database import AsyncSessionLocal
@@ -36,17 +35,18 @@ from app.repositories.canvas_repo import CanvasRepository
 from app.repositories.edge_repo import EdgeRepository
 from app.repositories.node_repo import DuplicatePositionError, NodeRepository
 from app.repositories.turn_repo import AsyncTurnRepository
+from app.services.turns import (
+    log_turn_for_user_async,
+    log_turn_with_session_id_async,
+    resolve_session_id_async,
+)
 from app.services.visualization_layout import (
     LayoutDirection,
     LayoutEdge,
     LayoutType,
     compute_layout_positions,
 )
-from app.services.turns import (
-    log_turn_for_user_async,
-    log_turn_with_session_id_async,
-    resolve_session_id_async,
-)
+from app.ws.websocket import manager as ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -722,7 +722,7 @@ class ToolManager:
                 "z": final_position.z,
                 "metadata": params.metadata,
             }
-            await log_turn_for_user_async(
+            turn = await log_turn_for_user_async(
                 session,
                 user_id=DEFAULT_USER_ID,
                 workspace_id=canvas.id,
@@ -735,7 +735,15 @@ class ToolManager:
                 related_node_id=node.id,
             )
 
-            return {"id": node.id}
+            # Update node with turn attribution
+            if turn is not None:
+                async with AsyncSessionLocal() as attr_session:
+                    attr_node_repo = NodeRepository(attr_session)
+                    await attr_node_repo.update(
+                        node.id, created_by_turn_id=turn.id
+                    )
+
+            return {"id": node.id, "created_by_turn_id": turn.id if turn else None}
 
         async def canvas_create_visualization(
             layout: VisualizationLayoutParams | dict[str, Any],
@@ -827,7 +835,7 @@ class ToolManager:
                         "metadata": node_metadata,
                     }
 
-                    await log_turn_for_user_async(
+                    turn = await log_turn_for_user_async(
                         session,
                         user_id=DEFAULT_USER_ID,
                         workspace_id=canvas.id,
@@ -837,6 +845,10 @@ class ToolManager:
                         payload=node_payload,
                         related_node_id=node.id,
                     )
+
+                    # Update node with turn attribution
+                    if turn is not None:
+                        await node_repo.update(node.id, created_by_turn_id=turn.id)
 
                 for edge in params.edges:
                     from_node = created_nodes[edge.from_id]

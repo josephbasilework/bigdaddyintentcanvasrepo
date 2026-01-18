@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from app.models.canvas import Canvas
     from app.models.dashboard_subscription import DashboardSubscription
     from app.models.edge import Edge
+    from app.models.turn import Turn
 
 
 class NodeType(str, Enum):
@@ -49,6 +50,13 @@ class Node(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False
     )
+    # Turn attribution: records which turn created this node (for agent-created nodes)
+    created_by_turn_id: Mapped[int | None] = mapped_column(
+        ForeignKey("turn.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="ID of the turn that created this node (for attribution)",
+    )
 
     # Relationships
     canvas: Mapped[Canvas] = relationship("Canvas", back_populates="nodes")
@@ -62,6 +70,10 @@ class Node(Base):
         "DashboardSubscription",
         back_populates="dashboard_node",
         foreign_keys="DashboardSubscription.dashboard_node_id",
+    )
+    # Relationship to the turn that created this node
+    created_by_turn: Mapped[Turn | None] = relationship(
+        "Turn", foreign_keys=[created_by_turn_id]
     )
 
     def get_position(self) -> dict:
@@ -91,4 +103,5 @@ class Node(Base):
             "position": self.get_position(),
             "metadata": self.get_metadata(),
             "created_at": self.created_at.isoformat(),
+            "createdByTurnId": self.created_by_turn_id,
         }

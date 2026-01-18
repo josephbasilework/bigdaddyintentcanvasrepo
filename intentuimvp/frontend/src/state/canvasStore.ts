@@ -50,6 +50,8 @@ export interface CanvasNode {
   dagData?: DAGData;
   /** Job-specific data (only for type='job') */
   jobData?: JobData;
+  /** Turn ID that created this node (for agent-created nodes) */
+  createdByTurnId?: number | null;
 }
 
 type NodeDimensions = {
@@ -308,6 +310,7 @@ const buildNodePayload = (node: CanvasNode): Record<string, unknown> => ({
   z: node.z,
   position: { x: node.x, y: node.y, z: node.z },
   metadata: node.metadata,
+  createdByTurnId: node.createdByTurnId,
 });
 
 const buildEdgePayload = (edge: CanvasEdge): Record<string, unknown> => ({
@@ -417,6 +420,10 @@ interface CanvasState {
   canUndo: () => boolean;
   canRedo: () => boolean;
   clearHistory: () => void;
+
+  // Turn attribution actions
+  getNodesByTurnId: (turnId: number) => CanvasNode[];
+  removeNodesByTurnId: (turnId: number, context?: CanvasActionContext) => string[];
 }
 
 // Create the store
@@ -878,6 +885,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     // Clear all history
     clearHistory: () => {
       set({ past: [], future: [] });
+    },
+
+    // Get nodes created by a specific turn
+    getNodesByTurnId: (turnId: number) => {
+      return get().nodes.filter((node) => node.createdByTurnId === turnId);
+    },
+
+    // Remove all nodes created by a specific turn (for "undo agent action" capability)
+    removeNodesByTurnId: (turnId: number, context?: CanvasActionContext) => {
+      const nodesToRemove = get().nodes.filter((node) => node.createdByTurnId === turnId);
+      if (nodesToRemove.length === 0) {
+        return [];
+      }
+      const nodeIdsToRemove = nodesToRemove.map((node) => node.id);
+      get().removeNodes(nodeIdsToRemove, context);
+      return nodeIdsToRemove;
     },
   };
 });

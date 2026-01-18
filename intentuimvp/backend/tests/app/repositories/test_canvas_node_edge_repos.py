@@ -321,6 +321,138 @@ class TestNodeRepository:
         # Verify deleted
         assert await node_repo.get_by_id(node.id) is None
 
+    async def test_create_node_with_turn_attribution(self, async_db: AsyncSession) -> None:
+        """Test creating a node with turn attribution."""
+        canvas_repo = CanvasRepository(async_db)
+        node_repo = NodeRepository(async_db)
+
+        canvas = await canvas_repo.create_canvas(user_id="test_user", name="Test")
+
+        # Create node with turn attribution (using a mock turn ID)
+        node = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Agent-created Node",
+            type=NodeType.TEXT,
+            created_by_turn_id=42,  # Mock turn ID
+        )
+
+        assert node.id is not None
+        assert node.created_by_turn_id == 42
+
+        # Retrieve and verify
+        retrieved = await node_repo.get_by_id(node.id)
+        assert retrieved is not None
+        assert retrieved.created_by_turn_id == 42
+
+    async def test_get_by_turn_id(self, async_db: AsyncSession) -> None:
+        """Test getting nodes by turn ID."""
+        canvas_repo = CanvasRepository(async_db)
+        node_repo = NodeRepository(async_db)
+
+        canvas = await canvas_repo.create_canvas(user_id="test_user", name="Test")
+
+        # Create nodes with different turn IDs
+        await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Node from turn 1",
+            created_by_turn_id=1,
+        )
+        await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Another node from turn 1",
+            created_by_turn_id=1,
+        )
+        await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Node from turn 2",
+            created_by_turn_id=2,
+        )
+        await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Node without attribution",
+        )
+
+        # Get nodes for turn 1
+        turn1_nodes = await node_repo.get_by_turn_id(1)
+        assert len(turn1_nodes) == 2
+
+        # Get nodes for turn 2
+        turn2_nodes = await node_repo.get_by_turn_id(2)
+        assert len(turn2_nodes) == 1
+
+        # Get nodes for non-existent turn
+        no_nodes = await node_repo.get_by_turn_id(99999)
+        assert len(no_nodes) == 0
+
+    async def test_get_by_turn_ids(self, async_db: AsyncSession) -> None:
+        """Test getting nodes by multiple turn IDs."""
+        canvas_repo = CanvasRepository(async_db)
+        node_repo = NodeRepository(async_db)
+
+        canvas = await canvas_repo.create_canvas(user_id="test_user", name="Test")
+
+        # Create nodes with different turn IDs
+        await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Node from turn 1",
+            created_by_turn_id=1,
+        )
+        await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Node from turn 2",
+            created_by_turn_id=2,
+        )
+        await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Node from turn 3",
+            created_by_turn_id=3,
+        )
+
+        # Get nodes for turns 1 and 2
+        nodes = await node_repo.get_by_turn_ids([1, 2])
+        assert len(nodes) == 2
+
+        # Empty list returns empty
+        nodes = await node_repo.get_by_turn_ids([])
+        assert len(nodes) == 0
+
+    async def test_delete_by_turn_id(self, async_db: AsyncSession) -> None:
+        """Test deleting all nodes by turn ID."""
+        canvas_repo = CanvasRepository(async_db)
+        node_repo = NodeRepository(async_db)
+
+        canvas = await canvas_repo.create_canvas(user_id="test_user", name="Test")
+
+        # Create nodes with turn attribution
+        node1 = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Node 1 from turn 5",
+            created_by_turn_id=5,
+        )
+        node2 = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Node 2 from turn 5",
+            created_by_turn_id=5,
+        )
+        node3 = await node_repo.create_node(
+            canvas_id=canvas.id,
+            label="Node from turn 6",
+            created_by_turn_id=6,
+        )
+
+        # Delete nodes from turn 5
+        deleted_ids = await node_repo.delete_by_turn_id(5)
+        assert len(deleted_ids) == 2
+        assert node1.id in deleted_ids
+        assert node2.id in deleted_ids
+
+        # Verify nodes are deleted
+        assert await node_repo.get_by_id(node1.id) is None
+        assert await node_repo.get_by_id(node2.id) is None
+
+        # Verify node from turn 6 still exists
+        assert await node_repo.get_by_id(node3.id) is not None
+
 
 @pytest.mark.asyncio
 class TestEdgeRepository:

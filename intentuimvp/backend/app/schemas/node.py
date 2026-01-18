@@ -127,6 +127,9 @@ class NodeResponse(BaseModel):
     position: NodePosition
     metadata: dict
     created_at: str
+    created_by_turn_id: int | None = Field(
+        default=None, description="ID of the turn that created this node (for attribution)"
+    )
 
 
 class NodeListResponse(BaseModel):
@@ -134,3 +137,18 @@ class NodeListResponse(BaseModel):
 
     nodes: list[NodeResponse]
     count: int
+
+
+class BatchDeleteByTurnRequest(BaseModel):
+    """Request body for batch deleting nodes by turn."""
+
+    turn_id: int = Field(..., description="The turn ID whose nodes should be deleted")
+
+
+class BatchDeleteByTurnResponse(BaseModel):
+    """Response model for batch delete by turn."""
+
+    deleted_node_ids: list[int] = Field(
+        default_factory=list, description="IDs of deleted nodes"
+    )
+    deleted_count: int = Field(description="Number of nodes deleted")

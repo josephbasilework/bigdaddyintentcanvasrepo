@@ -217,3 +217,51 @@ class TestNodeEndpoints:
 
         get_response = client.get(f"/api/nodes/{node_id}")
         assert get_response.status_code == 404
+
+    def test_node_response_includes_turn_attribution(
+        self,
+        client: testclient.TestClient,
+        sync_session_local,
+    ) -> None:
+        """Test that node response includes created_by_turn_id field."""
+        canvas_id = create_canvas(sync_session_local)
+        payload = {
+            "canvas_id": canvas_id,
+            "label": "Node with attribution",
+            "type": "text",
+        }
+        response = client.post("/api/nodes", json=payload)
+        assert response.status_code == 201
+        data = response.json()
+        # User-created nodes don't have turn attribution (only agent-created nodes do)
+        assert "created_by_turn_id" in data
+        # The field exists but is null for user-created nodes
+        assert data["created_by_turn_id"] is None
+
+    def test_get_nodes_by_turn_empty(
+        self,
+        client: testclient.TestClient,
+        sync_session_local,
+    ) -> None:
+        """Test getting nodes by turn ID when no nodes match."""
+        create_canvas(sync_session_local)
+        # Use a non-existent turn ID
+        response = client.get("/api/nodes/by-turn/99999")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["nodes"] == []
+        assert data["count"] == 0
+
+    def test_batch_delete_by_turn_empty(
+        self,
+        client: testclient.TestClient,
+        sync_session_local,
+    ) -> None:
+        """Test batch delete when no nodes match the turn ID."""
+        create_canvas(sync_session_local)
+        payload = {"turn_id": 99999}
+        response = client.post("/api/nodes/batch-delete-by-turn", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["deleted_node_ids"] == []
+        assert data["deleted_count"] == 0

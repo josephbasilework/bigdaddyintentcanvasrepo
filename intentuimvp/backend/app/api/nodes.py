@@ -11,21 +11,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_async_db
 from app.models.dashboard_subscription import DashboardSubscriptionTarget
 from app.models.node import Node
+from app.models.turn import TurnActor, TurnType
 from app.repositories.node_repo import NodeRepository
 from app.repositories.turn_repo import AsyncTurnRepository
 from app.schemas.node import (
+    BatchDeleteByTurnRequest,
+    BatchDeleteByTurnResponse,
     NodeCreateRequest,
     NodeListResponse,
     NodeResponse,
     NodeUpdateRequest,
 )
-from app.models.turn import TurnActor, TurnType
+from app.services.dashboard_updates import publish_dashboard_update
 from app.services.turns import (
     log_turn_for_user_async,
     log_turn_with_session_id_async,
     resolve_session_id_async,
 )
-from app.services.dashboard_updates import publish_dashboard_update
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -54,6 +56,7 @@ def _serialize_node(node: Node) -> dict[str, Any]:
         "position": node.get_position(),
         "metadata": node.get_metadata(),
         "created_at": node.created_at.isoformat(),
+        "created_by_turn_id": node.created_by_turn_id,
     }
 
 
@@ -384,3 +387,137 @@ async def delete_node(
     else:
         logger.warning("No session_id available for turn %s", TurnType.NODE_DELETED)
     logger.info(f"Deleted node {node_id} for user {user_id}")
+
+
+@router.post(
+    "/api/nodes/batch-delete-by-turn",
+    response_model=BatchDeleteByTurnResponse,
+    status_code=status.HTTP_200_OK,
+)
+async def batch_delete_by_turn(
+    payload: BatchDeleteByTurnRequest,
+    db: AsyncSession = Depends(get_async_db),
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Delete all nodes created by a specific turn.
+
+    This endpoint enables batch deletion of agent-created nodes by referencing
+    the turn that created them. Useful for "undo what the agent just did" operations.
+
+    Args:
+        payload: Contains the turn_id whose nodes should be deleted
+        db: Database session
+        user_id: Authenticated user ID
+
+    Returns:
+        List of deleted node IDs and count
+
+    Raises:
+        HTTPException: If deletion fails
+    """
+    try:
+        repo = NodeRepository(db)
+
+        # Get all nodes created by this turn before deleting
+        nodes = await repo.get_by_turn_id(payload.turn_id)
+
+        if not nodes:
+            logger.info(
+                f"No nodes found for turn {payload.turn_id} (user {user_id})"
+            )
+            return {"deleted_node_ids": [], "deleted_count": 0}
+
+        # Get canvas_id from first node for session resolution
+        canvas_id = nodes[0].canvas_id
+
+        # Collect node info for logging before deletion
+        deleted_nodes_info = []
+        for node in nodes:
+            deleted_nodes_info.append(_serialize_node(node))
+
+        # Delete all nodes
+        deleted_ids = await repo.delete_by_turn_id(payload.turn_id)
+
+        # Publish dashboard updates for each deleted node
+        for node_info in deleted_nodes_info:
+            await publish_dashboard_update(
+                canvas_id=canvas_id,
+                target=DashboardSubscriptionTarget.NODE,
+                source_id=str(node_info["id"]),
+                change_type="deleted",
+                data=node_info,
+            )
+
+        # Log turn for batch deletion
+        session_id = await resolve_session_id_async(
+            db,
+            user_id=user_id,
+            workspace_id=canvas_id,
+        )
+        if session_id:
+            await log_turn_with_session_id_async(
+                db,
+                session_id=session_id,
+                actor=TurnActor.USER,
+                turn_type=TurnType.NODE_DELETED,
+                summary=f"Batch deleted {len(deleted_ids)} nodes from turn {payload.turn_id}",
+                payload={
+                    "batch_delete": True,
+                    "source_turn_id": payload.turn_id,
+                    "deleted_node_ids": deleted_ids,
+                    "deleted_nodes": deleted_nodes_info,
+                },
+                origin_sequence_number=None,
+            )
+        else:
+            logger.warning("No session_id available for batch delete turn logging")
+
+        logger.info(
+            f"Batch deleted {len(deleted_ids)} nodes from turn {payload.turn_id} "
+            f"for user {user_id}"
+        )
+        return {"deleted_node_ids": deleted_ids, "deleted_count": len(deleted_ids)}
+
+    except Exception as e:
+        logger.error(
+            f"Failed to batch delete nodes for turn {payload.turn_id}: {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to batch delete nodes",
+        ) from e
+
+
+@router.get(
+    "/api/nodes/by-turn/{turn_id}",
+    response_model=NodeListResponse,
+)
+async def get_nodes_by_turn(
+    turn_id: int,
+    db: AsyncSession = Depends(get_async_db),
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Get all nodes created by a specific turn.
+
+    This endpoint allows querying nodes by their originating turn,
+    useful for understanding what content an agent created in a specific action.
+
+    Args:
+        turn_id: The turn ID to filter by
+        db: Database session
+        user_id: Authenticated user ID
+
+    Returns:
+        List of nodes created by the specified turn
+    """
+    repo = NodeRepository(db)
+    nodes = await repo.get_by_turn_id(turn_id)
+
+    logger.info(
+        f"Retrieved {len(nodes)} nodes for turn {turn_id} (user {user_id})"
+    )
+    return {
+        "nodes": [_serialize_node(node) for node in nodes],
+        "count": len(nodes),
+    }
