@@ -219,6 +219,33 @@ export interface CanvasDocument {
   updatedAt: Date;
 }
 
+const buildDocumentForNode = (
+  node: CanvasNode,
+  existing?: CanvasDocument,
+  touchUpdatedAt: boolean = false
+): CanvasDocument => {
+  const createdAt = existing?.createdAt ?? new Date();
+  const updatedAt = touchUpdatedAt ? new Date() : existing?.updatedAt ?? createdAt;
+  return {
+    id: existing?.id ?? node.id,
+    nodeId: node.id,
+    title: node.title || existing?.title || "Untitled",
+    content: node.content ?? existing?.content ?? "",
+    createdAt,
+    updatedAt,
+  };
+};
+
+const syncDocumentsWithNodes = (
+  nodes: CanvasNode[],
+  documents: CanvasDocument[]
+): CanvasDocument[] => {
+  const docsByNodeId = new Map(documents.map((doc) => [doc.nodeId, doc]));
+  return nodes
+    .filter((node) => node.type === "document")
+    .map((node) => buildDocumentForNode(node, docsByNodeId.get(node.id)));
+};
+
 export type NodeSelectionOptions = {
   additive?: boolean;
   toggle?: boolean;
@@ -316,8 +343,20 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
       withHistory((state) => {
         const expansion = resolveAutoExpansion(state.nodes, newNode);
         didExpand = expansion.didExpand;
+        let nextDocuments = state.documents;
+        if (newNode.type === "document") {
+          const existingDoc = state.documents.find((doc) => doc.nodeId === newNode.id);
+          if (existingDoc) {
+            nextDocuments = state.documents.map((doc) =>
+              doc.nodeId === newNode.id ? buildDocumentForNode(newNode, existingDoc) : doc
+            );
+          } else {
+            nextDocuments = [...state.documents, buildDocumentForNode(newNode)];
+          }
+        }
         return {
           nodes: [...expansion.nodes, newNode],
+          documents: nextDocuments,
           ...(didExpand ? { isAutoExpanding: true } : {}),
         };
       });
@@ -455,11 +494,37 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
 
     // Update node properties
     updateNode: (nodeId, updates) => {
-      withHistory((state) => ({
-        nodes: state.nodes.map((node) =>
+      withHistory((state) => {
+        const existingNode = state.nodes.find((node) => node.id === nodeId);
+        const nextNodes = state.nodes.map((node) =>
           node.id === nodeId ? { ...node, ...updates } : node
-        ),
-      }));
+        );
+        if (!existingNode) {
+          return { nodes: nextNodes };
+        }
+        const nextType = updates.type ?? existingNode.type;
+        let nextDocuments = state.documents;
+        if (nextType === "document") {
+          const existingDoc = state.documents.find((doc) => doc.nodeId === nodeId);
+          const shouldTouch = "title" in updates || "content" in updates;
+          const mergedNode: CanvasNode = {
+            ...existingNode,
+            ...updates,
+            type: nextType,
+          };
+          if (existingDoc) {
+            const nextDoc = buildDocumentForNode(mergedNode, existingDoc, shouldTouch);
+            nextDocuments = state.documents.map((doc) =>
+              doc.nodeId === nodeId ? nextDoc : doc
+            );
+          } else {
+            nextDocuments = [...state.documents, buildDocumentForNode(mergedNode, undefined, shouldTouch)];
+          }
+        } else {
+          nextDocuments = state.documents.filter((doc) => doc.nodeId !== nodeId);
+        }
+        return { nodes: nextNodes, documents: nextDocuments };
+      });
     },
 
     // Clear selection
@@ -469,7 +534,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
 
     // Set all nodes (for bulk loading) - doesn't record history
     setNodes: (nodes) => {
-      set({ nodes });
+      set((state) => ({
+        nodes,
+        documents: syncDocumentsWithNodes(nodes, state.documents),
+      }));
     },
 
     // Add an edge between two nodes

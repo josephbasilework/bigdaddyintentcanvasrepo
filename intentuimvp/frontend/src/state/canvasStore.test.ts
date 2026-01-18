@@ -630,6 +630,76 @@ describe('canvasStore', () => {
     });
   });
 
+  describe('document nodes', () => {
+    it('should create a document entry when adding a document node', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      let nodeId = '';
+
+      act(() => {
+        nodeId = result.current.addNode({
+          type: 'document',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Doc Title',
+          content: 'Doc content',
+        });
+      });
+
+      const document = result.current.documents.find((doc) => doc.nodeId === nodeId);
+      expect(document?.title).toBe('Doc Title');
+      expect(document?.content).toBe('Doc content');
+    });
+
+    it('should update document entries when document nodes change', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      let nodeId = '';
+
+      act(() => {
+        nodeId = result.current.addNode({
+          type: 'document',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Doc Title',
+          content: 'Doc content',
+        });
+        result.current.updateNode(nodeId, {
+          title: 'Updated Title',
+          content: 'Updated content',
+        });
+      });
+
+      const document = result.current.documents.find((doc) => doc.nodeId === nodeId);
+      expect(document?.title).toBe('Updated Title');
+      expect(document?.content).toBe('Updated content');
+      expect(document?.updatedAt.getTime()).toBeGreaterThanOrEqual(
+        document?.createdAt.getTime() ?? 0
+      );
+    });
+
+    it('should remove documents when nodes change type', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      let nodeId = '';
+
+      act(() => {
+        nodeId = result.current.addNode({
+          type: 'document',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Doc Title',
+        });
+        result.current.updateNode(nodeId, { type: 'text' });
+      });
+
+      expect(result.current.documents).toHaveLength(0);
+    });
+  });
+
   describe('reactivity', () => {
     it('should trigger re-renders when state changes', () => {
       const { result } = renderHook(() => useCanvasStore());

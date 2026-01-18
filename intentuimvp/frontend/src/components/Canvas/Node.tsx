@@ -1,6 +1,6 @@
 "use client";
 
-import { CSSProperties, useState, useRef, useId, useCallback } from "react";
+import { CSSProperties, useState, useRef, useId, useCallback, useMemo } from "react";
 import Draggable, { DraggableData } from "react-draggable";
 import { useTransformComponent } from "react-zoom-pan-pinch";
 import {
@@ -18,6 +18,8 @@ import { PlanNode } from "./PlanNode";
 import { DAGNode } from "./DAGNode";
 import { DashboardNode } from "./DashboardNode";
 import { JobNode } from "./JobNode";
+import { DocumentBlock } from "./DocumentBlock";
+import { MarkdownPreview } from "./MarkdownPreview";
 import { CalendarSyncDialog } from "./CalendarSyncDialog";
 import { PerspectiveRerunDialog } from "./PerspectiveRerunDialog";
 import {
@@ -34,6 +36,22 @@ import {
 } from "../../utils/calendarSync";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+const MAX_DOCUMENT_PREVIEW_CHARS = 280;
+const MAX_DOCUMENT_PREVIEW_LINES = 6;
+
+const buildDocumentPreview = (content?: string): string => {
+  if (!content) return "";
+  const lines = content.split(/\r?\n/).slice(0, MAX_DOCUMENT_PREVIEW_LINES);
+  let preview = lines.join("\n").trim();
+  if (preview.length > MAX_DOCUMENT_PREVIEW_CHARS) {
+    preview = `${preview.slice(0, MAX_DOCUMENT_PREVIEW_CHARS).trimEnd()}...`;
+  }
+  return preview;
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
 
 interface NodeProps {
   node: CanvasNode;
@@ -79,9 +97,11 @@ export function Node({
   );
   const showCalendarSyncButton = isSelected && hasCalendarSuggestions;
   const isTextNode = node.type === "text";
+  const isDocumentNode = node.type === "document";
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [isEditingDocument, setIsEditingDocument] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState<{
@@ -111,6 +131,11 @@ export function Node({
   const editTitleId = useId();
   const editContentId = useId();
   const editDialogTitleId = useId();
+
+  const documentPreview = useMemo(
+    () => buildDocumentPreview(node.content),
+    [node.content]
+  );
 
   const contentSummary = node.content
     ? node.content.length > 140
@@ -205,6 +230,10 @@ export function Node({
       setIsEditingTitle(true);
       return;
     }
+    if (isDocumentNode) {
+      setIsEditingDocument(true);
+      return;
+    }
     setIsEditing(true);
   };
 
@@ -294,6 +323,37 @@ export function Node({
       openExpanded();
     },
     [handleContentClose, isExpanded, openExpanded]
+  );
+
+  const handleDocumentOpen = useCallback((event?: React.MouseEvent<HTMLButtonElement>) => {
+    if (event) {
+      event.stopPropagation();
+    }
+    setIsEditingDocument(true);
+  }, []);
+
+  const handleDocumentCancel = useCallback(() => {
+    setIsEditingDocument(false);
+  }, []);
+
+  const handleDocumentSave = useCallback(
+    (nodeId: string, title: string, content: string) => {
+      const trimmed = title.trim();
+      const nextTitle = trimmed.length > 0 ? trimmed : "Untitled";
+      const baseMetadata = isRecord(node.metadata) ? node.metadata : {};
+      const documentMetadata = isRecord(baseMetadata.document) ? baseMetadata.document : {};
+      const nextMetadata = {
+        ...baseMetadata,
+        document: {
+          ...documentMetadata,
+          format: "markdown",
+          lastEditedAt: new Date().toISOString(),
+        },
+      };
+      updateNode(nodeId, { title: nextTitle, content, metadata: nextMetadata });
+      setIsEditingDocument(false);
+    },
+    [node.metadata, updateNode]
   );
 
   const handleDelete = () => {
@@ -805,6 +865,28 @@ export function Node({
                 {isExpanded ? "Collapse" : "Expand"}
               </button>
             )}
+            {isDocumentNode && (
+              <button
+                type="button"
+                onClick={handleDocumentOpen}
+                onMouseDown={(event) => event.stopPropagation()}
+                onTouchStart={(event) => event.stopPropagation()}
+                aria-label={`Open ${node.title} document`}
+                className="canvas-node__button"
+                style={{
+                  border: "1px solid rgba(148, 163, 184, 0.5)",
+                  backgroundColor: "rgba(15, 23, 42, 0.6)",
+                  color: "#e2e8f0",
+                  borderRadius: "999px",
+                  padding: "4px 10px",
+                  fontSize: "11px",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Open
+              </button>
+            )}
             {showCalendarSyncButton && (
               <button
                 type="button"
@@ -871,6 +953,25 @@ export function Node({
                   : undefined
               }
             />
+          ) : node.type === "document" ? (
+            documentPreview ? (
+              <div
+                style={{
+                  maxHeight: "140px",
+                  overflow: "hidden",
+                  padding: "8px",
+                  borderRadius: "8px",
+                  border: "1px solid rgba(148, 163, 184, 0.2)",
+                  backgroundColor: "rgba(15, 23, 42, 0.5)",
+                }}
+              >
+                <MarkdownPreview content={documentPreview} variant="compact" />
+              </div>
+            ) : (
+              <div style={{ fontSize: "12px", color: "#94a3b8" }}>
+                No document content yet.
+              </div>
+            )
           ) : node.type === "text" ? (
             isExpanded ? (
               <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
@@ -1013,6 +1114,16 @@ export function Node({
           onConnect={onStartConnect ? handleConnect : undefined}
           onAnnotate={node.type === "graph" ? handleEditAnnotation : undefined}
           onEditDependencies={handleEditDependencies}
+        />
+      )}
+
+      {isEditingDocument && (
+        <DocumentBlock
+          nodeId={node.id}
+          title={node.title}
+          content={node.content || ""}
+          onSave={handleDocumentSave}
+          onCancel={handleDocumentCancel}
         />
       )}
 
