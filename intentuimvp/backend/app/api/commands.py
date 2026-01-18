@@ -74,7 +74,7 @@ def enqueue_command(submission: CommandSubmission) -> None:
 
 async def _route_command_submission(submission: CommandSubmission) -> None:
     """Route a command submission through the context router and execute handler."""
-    from app.handlers import get_handler_executor
+    from app.handlers import HandlerContext, get_handler_executor
 
     router = get_input_router()
     executor = get_handler_executor()
@@ -104,7 +104,16 @@ async def _route_command_submission(submission: CommandSubmission) -> None:
         )
 
         # Execute the handler
-        result = await executor.execute(decision, correlation_id=submission.correlation_id)
+        context = HandlerContext(
+            user_id="default_user",
+            session_id=submission.session_id,
+            workspace_id=None,
+        )
+        result = await executor.execute(
+            decision,
+            correlation_id=submission.correlation_id,
+            context=context,
+        )
         logger.info(
             "Handler executed",
             extra={

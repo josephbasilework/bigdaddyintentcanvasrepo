@@ -64,6 +64,7 @@ type SelectionScope = {
   selected_nodes: string[];
   selected_edges: string[];
   node_context?: NodeContext[];
+  primary_node_id?: string;
 };
 
 type WorkflowRound = IntentWorkflowRound & {
@@ -393,6 +394,7 @@ export default function Home() {
     selected_nodes: selectionIds,
     selected_edges: [],
     node_context: nodeContext.length > 0 ? nodeContext : undefined,
+    primary_node_id: selectedNodeId ?? undefined,
   };
 
   // Sync conversation scope with primary selected node

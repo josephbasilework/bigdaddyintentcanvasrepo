@@ -87,18 +87,49 @@ class Assumption:
 
 
 @dataclass
+class NodeContext:
+    """Contextual details for a node selected in the UI."""
+
+    id: str
+    title: str
+    node_type: str
+    content: str | None = None
+    metadata: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        payload: dict[str, Any] = {
+            "id": self.id,
+            "title": self.title,
+            "node_type": self.node_type,
+        }
+        if self.content is not None:
+            payload["content"] = self.content
+        if self.metadata is not None:
+            payload["metadata"] = self.metadata
+        return payload
+
+
+@dataclass
 class SelectionScope:
     """Selection scope from the UI (selected nodes and edges)."""
 
     selected_nodes: list[str] = field(default_factory=list)
     selected_edges: list[str] = field(default_factory=list)
+    node_context: list[NodeContext] = field(default_factory=list)
+    primary_node_id: str | None = None
 
-    def to_dict(self) -> dict[str, list[str]]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        payload: dict[str, Any] = {
             "selected_nodes": self.selected_nodes,
             "selected_edges": self.selected_edges,
         }
+        if self.node_context:
+            payload["node_context"] = [node.to_dict() for node in self.node_context]
+        if self.primary_node_id:
+            payload["primary_node_id"] = self.primary_node_id
+        return payload
 
 
 def parse_assumption(payload: Mapping[str, Any]) -> Assumption:
@@ -150,7 +181,7 @@ class ContextPayload:
     Attributes:
         text: The user's text input.
         attachments: Optional list of attachment identifiers.
-        selection: Optional selection scope for the command.
+        selection: Optional selection scope for the command (nodes, edges, node context).
     """
 
     text: str
@@ -192,10 +223,62 @@ class ContextPayload:
 
         selected_nodes = raw.get("selected_nodes", raw.get("selectedNodes"))
         selected_edges = raw.get("selected_edges", raw.get("selectedEdges"))
+        node_context_payload = raw.get("node_context", raw.get("nodeContext"))
+        primary_node_id = raw.get(
+            "primary_node_id",
+            raw.get(
+                "primaryNodeId",
+                raw.get("expanded_node_id", raw.get("expandedNodeId")),
+            ),
+        )
+
+        node_context = ContextPayload._parse_node_context(node_context_payload)
         return SelectionScope(
             selected_nodes=coerce_list(selected_nodes),
             selected_edges=coerce_list(selected_edges),
+            node_context=node_context,
+            primary_node_id=str(primary_node_id).strip()
+            if primary_node_id is not None
+            else None,
         )
+
+    @staticmethod
+    def _parse_node_context(value: Any) -> list[NodeContext]:
+        if value is None:
+            return []
+        if isinstance(value, NodeContext):
+            return [value]
+        items: list[Any]
+        if isinstance(value, list | tuple | set):
+            items = list(value)
+        else:
+            items = [value]
+        contexts: list[NodeContext] = []
+        for item in items:
+            if isinstance(item, NodeContext):
+                contexts.append(item)
+                continue
+            if not isinstance(item, Mapping):
+                continue
+            raw_id = item.get("id")
+            if raw_id is None:
+                continue
+            title = item.get("title", item.get("label", ""))
+            node_type = item.get("node_type", item.get("nodeType", item.get("type", "text")))
+            content = item.get("content")
+            metadata = item.get("metadata")
+            if metadata is not None and not isinstance(metadata, Mapping):
+                metadata = {"value": metadata}
+            contexts.append(
+                NodeContext(
+                    id=str(raw_id).strip(),
+                    title=str(title).strip() if title is not None else "",
+                    node_type=str(node_type).strip() if node_type is not None else "text",
+                    content=str(content).strip() if content is not None else None,
+                    metadata=dict(metadata) if isinstance(metadata, Mapping) else None,
+                )
+            )
+        return contexts
 
 
 @dataclass

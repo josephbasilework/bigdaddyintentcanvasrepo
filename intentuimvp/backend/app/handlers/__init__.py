@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Any
 
 from app.agents.tools import (
@@ -26,6 +27,7 @@ from app.agui import (
     ToolResultPayload,
 )
 from app.agui.schemas import AgentProgressPayload as AgentProgressPayloadSchema
+from app.context.assembly import get_context_assembler
 from app.context.models import ContextPayload, RoutingDecision
 from app.database import SessionLocal
 from app.models.node import NodeType
@@ -69,6 +71,15 @@ class HandlerExecutionError(Exception):
         super().__init__(f"Handler {handler} failed: {reason}")
 
 
+@dataclass(frozen=True)
+class HandlerContext:
+    """Execution context for handlers (session, workspace, user)."""
+
+    user_id: str | None = None
+    session_id: str | None = None
+    workspace_id: str | int | None = None
+
+
 class HandlerExecutor:
     """Executes handlers based on routing decisions.
 
@@ -83,12 +94,15 @@ class HandlerExecutor:
         self,
         decision: RoutingDecision,
         correlation_id: str | None = None,
+        *,
+        context: HandlerContext | None = None,
     ) -> dict[str, Any]:
         """Execute a handler based on routing decision.
 
         Args:
             decision: The routing decision from context router.
             correlation_id: Optional correlation ID for tracking.
+            context: Optional execution context for session-aware handling.
 
         Returns:
             Handler execution result with tool outputs.
@@ -138,7 +152,7 @@ class HandlerExecutor:
                 case "analyze_handler":
                     result = await self._analyze_handler(payload, run_id)
                 case "plan_handler":
-                    result = await self._plan_handler(payload, run_id)
+                    result = await self._plan_handler(payload, run_id, context)
                 case "help_handler":
                     result = await self._help_handler(payload, run_id)
                 case "clear_handler":
@@ -458,12 +472,14 @@ class HandlerExecutor:
         self,
         payload: ContextPayload,
         run_id: str,
+        context: HandlerContext | None = None,
     ) -> dict[str, Any]:
         """Handle plan commands by creating a plan node.
 
         Args:
             payload: The context payload with user input.
             run_id: Run identifier for tracking.
+            context: Execution context for assembling relevant nodes/turns.
 
         Returns:
             Result with created node ID.
@@ -478,15 +494,32 @@ class HandlerExecutor:
 
         await self._send_progress(run_id, "plan_handler", "Generating structured plan...", 0.25)
 
+        context_summary = ""
+        job_user_id = DEFAULT_USER_ID
+        if context is not None:
+            try:
+                if context.user_id:
+                    job_user_id = context.user_id
+                assembler = get_context_assembler()
+                window = await assembler.assemble(
+                    payload,
+                    user_id=context.user_id,
+                    session_id=context.session_id,
+                    workspace_id=context.workspace_id,
+                )
+                context_summary = window.to_prompt()
+            except Exception:
+                logger.warning("Context assembly failed; continuing without it", exc_info=True)
+
         try:
             from app.jobs.worker import planner_job
 
             planner_result = await planner_job(
                 {
-                    "user_id": DEFAULT_USER_ID,
+                    "user_id": job_user_id,
                 },
                 goal=text,
-                context="",
+                context=context_summary,
             )
         except Exception as exc:
             logger.error("Planner job failed; falling back to plan node only", exc_info=True)
