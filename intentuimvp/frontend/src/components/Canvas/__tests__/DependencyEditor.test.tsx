@@ -63,7 +63,7 @@ describe("DependencyEditor", () => {
     expect(screen.getByRole("option", { name: "Node 3" })).toBeInTheDocument();
   });
 
-  it("excludes already connected nodes from available targets", () => {
+  it("allows already connected nodes as targets for additional relations", () => {
     const edges: CanvasEdge[] = [
       { id: "edge-1", sourceNodeId: "node-1", targetNodeId: "node-2", relationType: "depends_on" },
     ];
@@ -73,9 +73,9 @@ describe("DependencyEditor", () => {
     const onClose = vi.fn();
     render(<DependencyEditor nodeId="node-1" onClose={onClose} />);
 
-    // Node 2 should not be available since it's already connected
-    expect(screen.queryByRole("option", { name: "Node 2" })).not.toBeInTheDocument();
-    // Node 3 should still be available
+    // Node 2 should still be available to allow multiple relations
+    expect(screen.getByRole("option", { name: "Node 2" })).toBeInTheDocument();
+    // Node 3 should also be available
     expect(screen.getByRole("option", { name: "Node 3" })).toBeInTheDocument();
   });
 
@@ -125,6 +125,32 @@ describe("DependencyEditor", () => {
         label: "Blocks",
       })
     );
+  });
+
+  it("prevents adding a duplicate dependency with the same relation and label", () => {
+    const edges: CanvasEdge[] = [
+      {
+        id: "edge-1",
+        sourceNodeId: "node-1",
+        targetNodeId: "node-2",
+        relationType: "depends_on",
+        label: "Depends on",
+      },
+    ];
+    const store = createMockStore({ edges });
+    mockUseCanvasStore.mockReturnValue(store);
+
+    const onClose = vi.fn();
+    render(<DependencyEditor nodeId="node-1" onClose={onClose} />);
+
+    const select = screen.getByRole("combobox", { name: /add dependency/i });
+    fireEvent.change(select, { target: { value: "node-2" } });
+
+    const addButton = screen.getByRole("button", { name: /^add$/i });
+    fireEvent.click(addButton);
+
+    expect(store.addEdge).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/already exists/i);
   });
 
   it("updates the new dependency label when the relation type changes", () => {
@@ -177,7 +203,7 @@ describe("DependencyEditor", () => {
     render(<DependencyEditor nodeId="node-1" onClose={onClose} />);
 
     expect(screen.getByText(/outgoing dependencies \(1\)/i)).toBeInTheDocument();
-    expect(screen.getByText("Node 2")).toBeInTheDocument();
+    expect(screen.getAllByText("Node 2").length).toBeGreaterThanOrEqual(1);
   });
 
   it("displays incoming dependencies", () => {

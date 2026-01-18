@@ -79,14 +79,10 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
     return { outgoingEdges: outgoing, incomingEdges: incoming };
   }, [edges, nodes, nodeId]);
 
-  // Get available nodes that can be connected to (excluding self and already connected)
+  // Get available nodes that can be connected to (excluding self)
   const availableTargets = useMemo(() => {
-    const connectedIds = new Set([
-      nodeId,
-      ...outgoingEdges.map((e) => e.otherNode.id),
-    ]);
-    return nodes.filter((n) => !connectedIds.has(n.id));
-  }, [nodes, nodeId, outgoingEdges]);
+    return nodes.filter((n) => n.id !== nodeId);
+  }, [nodes, nodeId]);
 
   const getEdgeLabelValue = useCallback(
     (edge: CanvasEdge) => edgeLabelDrafts[edge.id] ?? edge.label ?? "",
@@ -180,6 +176,21 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
     if (!selectedTargetId) return;
 
     const label = newLabel.trim() || getEdgeRelationLabel(newRelationType) || undefined;
+    const normalizedLabel = label ?? "";
+    const isDuplicate = edges.some((edge) => {
+      const edgeLabel = edge.label ?? getEdgeRelationLabel(edge.relationType) ?? "";
+      return (
+        edge.sourceNodeId === nodeId &&
+        edge.targetNodeId === selectedTargetId &&
+        (edge.relationType ?? DEFAULT_DEPENDENCY_RELATION) === newRelationType &&
+        edgeLabel === normalizedLabel
+      );
+    });
+
+    if (isDuplicate) {
+      setDependencyError("This dependency already exists.");
+      return;
+    }
     if (newRelationType === "depends_on") {
       const candidateEdge: CanvasEdge = {
         id: `candidate-${nodeId}-${selectedTargetId}`,
@@ -226,6 +237,7 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
       const isCustomLabel = currentLabel !== "" && currentLabel !== currentDefault;
       const nextDefault = getEdgeRelationLabel(relationType) ?? "";
       const nextLabel = isCustomLabel ? currentLabel : nextDefault;
+      const normalizedNextLabel = nextLabel.trim();
 
       if (relationType === "depends_on") {
         const candidateEdge: CanvasEdge = {
@@ -237,6 +249,22 @@ export function DependencyEditor({ nodeId, onClose }: DependencyEditorProps) {
           setDependencyError(DEPENDENCY_CYCLE_MESSAGE);
           return;
         }
+      }
+
+      const duplicate = edges.some((other) => {
+        if (other.id === edgeId) return false;
+        const otherLabel = other.label ?? getEdgeRelationLabel(other.relationType) ?? "";
+        return (
+          other.sourceNodeId === edge.sourceNodeId &&
+          other.targetNodeId === edge.targetNodeId &&
+          (other.relationType ?? DEFAULT_DEPENDENCY_RELATION) === relationType &&
+          otherLabel === normalizedNextLabel
+        );
+      });
+
+      if (duplicate) {
+        setDependencyError("This dependency already exists.");
+        return;
       }
 
       setDependencyError(null);

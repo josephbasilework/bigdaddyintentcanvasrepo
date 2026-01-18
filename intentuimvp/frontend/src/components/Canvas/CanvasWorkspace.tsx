@@ -7,6 +7,7 @@ import {
   CanvasEdge,
   CanvasNode,
   CanvasEdgeRelationType,
+  CanvasEdgeAnnotation,
   DAGData,
   DAGTask,
   JobData,
@@ -14,6 +15,7 @@ import {
 } from "../../state/canvasStore";
 import { Node } from "./Node";
 import { EdgesLayer } from "./Edge";
+import { EdgeAnnotation } from "./EdgeAnnotation";
 import { EDGE_RELATION_OPTIONS, getEdgeRelationLabel } from "./edgeRelations";
 import {
   DEPENDENCY_CYCLE_MESSAGE,
@@ -404,10 +406,14 @@ export const normalizeEdge = (value: unknown, index: number): CanvasEdge | null 
       ? (typeValue as CanvasEdgeRelationType)
       : undefined;
 
+  const metadataValue = value.metadata ?? value.edge_metadata ?? value.edgeMetadata;
+  const metadata = isRecord(metadataValue) ? metadataValue : undefined;
+
   const edge: CanvasEdge = { id, sourceNodeId, targetNodeId };
   if (label) edge.label = label;
   if (type) edge.type = type;
   if (relationType) edge.relationType = relationType;
+  if (metadata) edge.metadata = metadata;
   return edge;
 };
 
@@ -458,6 +464,7 @@ export function CanvasWorkspace() {
     setNodes,
     setEdges,
     addEdge,
+    updateEdge,
     setSelectedNodes,
     setCanvasMeta,
   } = useCanvasStore();
@@ -473,6 +480,8 @@ export function CanvasWorkspace() {
   const [connectLabel, setConnectLabel] = useState(DEFAULT_RELATION_LABEL);
   const [connectLabelTouched, setConnectLabelTouched] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [connectPreview, setConnectPreview] = useState<{ x: number; y: number } | null>(null);
+  const [activeEdgeId, setActiveEdgeId] = useState<string | null>(null);
   const connectRelationId = useId();
   const connectLabelId = useId();
   const selectionStartRef = useRef<{
@@ -484,6 +493,8 @@ export function CanvasWorkspace() {
     move?: (event: MouseEvent) => void;
     up?: (event: MouseEvent) => void;
   } | null>(null);
+  const connectDragRef = useRef<{ startX: number; startY: number; didDrag: boolean } | null>(null);
+  const connectSourcePointRef = useRef<{ x: number; y: number } | null>(null);
   const skipClickRef = useRef(false);
   const [selectionBox, setSelectionBox] = useState<{
     left: number;
@@ -506,6 +517,9 @@ export function CanvasWorkspace() {
   const handleCancelConnect = useCallback(() => {
     setConnectSourceNodeId(null);
     setConnectError(null);
+    setConnectPreview(null);
+    connectDragRef.current = null;
+    connectSourcePointRef.current = null;
   }, []);
 
   const handleStartConnect = useCallback((nodeId: string) => {
@@ -514,6 +528,17 @@ export function CanvasWorkspace() {
     setConnectLabel(DEFAULT_RELATION_LABEL);
     setConnectLabelTouched(false);
     setConnectError(null);
+    setConnectPreview(null);
+    connectDragRef.current = null;
+    connectSourcePointRef.current = null;
+  }, []);
+
+  const findNodeIdFromPoint = useCallback((x: number, y: number): string | null => {
+    if (typeof document === "undefined") return null;
+    const element = document.elementFromPoint(x, y);
+    if (!element) return null;
+    const nodeElement = element.closest<HTMLElement>("[data-node-id]");
+    return nodeElement?.dataset.nodeId ?? null;
   }, []);
 
   const handleConnectTarget = useCallback((targetNodeId: string) => {
@@ -524,40 +549,115 @@ export function CanvasWorkspace() {
       return;
     }
 
-    const hasEdge = edges.some(
-      (edge) => edge.sourceNodeId === connectSourceNodeId && edge.targetNodeId === targetNodeId
+    const resolveEdgeLabel = (edge: CanvasEdge): string =>
+      edge.label ?? getEdgeRelationLabel(edge.relationType) ?? "";
+
+    const trimmedLabel = connectLabel.trim();
+    const resolvedLabel = trimmedLabel || getEdgeRelationLabel(connectRelationType) || "";
+    const duplicateEdge = edges.some(
+      (edge) =>
+        edge.sourceNodeId === connectSourceNodeId &&
+        edge.targetNodeId === targetNodeId &&
+        (edge.relationType ?? DEFAULT_RELATION_TYPE) === connectRelationType &&
+        resolveEdgeLabel(edge) === resolvedLabel
     );
 
-    if (!hasEdge) {
-      const trimmedLabel = connectLabel.trim();
-      const resolvedLabel = trimmedLabel || getEdgeRelationLabel(connectRelationType) || undefined;
-      const candidateEdge: CanvasEdge = {
-        id: `candidate-${connectSourceNodeId}-${targetNodeId}`,
-        sourceNodeId: connectSourceNodeId,
-        targetNodeId,
-        relationType: connectRelationType,
-        ...(resolvedLabel ? { label: resolvedLabel } : {}),
-      };
-      if (
-        connectRelationType === "depends_on" &&
-        wouldCreateDependencyCycle(edges, candidateEdge)
-      ) {
-        setConnectError(DEPENDENCY_CYCLE_MESSAGE);
-        return;
-      }
-
-      const edgePayload: Omit<CanvasEdge, "id"> = {
-        sourceNodeId: connectSourceNodeId,
-        targetNodeId,
-        relationType: connectRelationType,
-        ...(resolvedLabel ? { label: resolvedLabel } : {}),
-      };
-      addEdge(edgePayload);
+    if (duplicateEdge) {
+      setConnectError("An edge with this relation already exists.");
+      return;
     }
+
+    const candidateEdge: CanvasEdge = {
+      id: `candidate-${connectSourceNodeId}-${targetNodeId}`,
+      sourceNodeId: connectSourceNodeId,
+      targetNodeId,
+      relationType: connectRelationType,
+      ...(resolvedLabel ? { label: resolvedLabel } : {}),
+    };
+    if (
+      connectRelationType === "depends_on" &&
+      wouldCreateDependencyCycle(edges, candidateEdge)
+    ) {
+      setConnectError(DEPENDENCY_CYCLE_MESSAGE);
+      return;
+    }
+
+    const edgePayload: Omit<CanvasEdge, "id"> = {
+      sourceNodeId: connectSourceNodeId,
+      targetNodeId,
+      relationType: connectRelationType,
+      ...(resolvedLabel ? { label: resolvedLabel } : {}),
+    };
+    addEdge(edgePayload);
 
     setConnectSourceNodeId(null);
     setConnectError(null);
   }, [addEdge, connectLabel, connectRelationType, connectSourceNodeId, edges]);
+
+  const handleStartConnectDrag = useCallback(
+    (nodeId: string, event: React.PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      handleStartConnect(nodeId);
+
+      connectDragRef.current = {
+        startX: event.clientX,
+        startY: event.clientY,
+        didDrag: false,
+      };
+
+      if (typeof document !== "undefined") {
+        const sourceElement = document.querySelector<HTMLElement>(`[data-node-id="${nodeId}"]`);
+        if (sourceElement) {
+          const rect = sourceElement.getBoundingClientRect();
+          connectSourcePointRef.current = {
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2,
+          };
+        } else {
+          connectSourcePointRef.current = { x: event.clientX, y: event.clientY };
+        }
+      }
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const dragState = connectDragRef.current;
+        if (!dragState) return;
+        const dx = moveEvent.clientX - dragState.startX;
+        const dy = moveEvent.clientY - dragState.startY;
+        const distance = Math.hypot(dx, dy);
+        if (distance > 6) {
+          dragState.didDrag = true;
+        }
+        if (dragState.didDrag) {
+          setConnectPreview({ x: moveEvent.clientX, y: moveEvent.clientY });
+        }
+      };
+
+      const handleMouseUp = (upEvent: MouseEvent) => {
+        window.removeEventListener("mousemove", handleMouseMove);
+        const dragState = connectDragRef.current;
+        connectDragRef.current = null;
+        setConnectPreview(null);
+        connectSourcePointRef.current = null;
+
+        if (!dragState) return;
+        if (!dragState.didDrag) {
+          return;
+        }
+
+        const targetNodeId = findNodeIdFromPoint(upEvent.clientX, upEvent.clientY);
+        if (targetNodeId) {
+          handleConnectTarget(targetNodeId);
+        } else {
+          setConnectError("Drop on a node to connect.");
+        }
+      };
+
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleMouseUp, { once: true });
+    },
+    [findNodeIdFromPoint, handleConnectTarget, handleStartConnect]
+  );
 
   const handleRelationTypeChange = useCallback(
     (event: React.ChangeEvent<HTMLSelectElement>) => {
@@ -586,6 +686,28 @@ export function CanvasWorkspace() {
     setConnectLabelTouched(!labelMatchesDefault);
     setConnectError(null);
   }, [connectRelationType]);
+
+  const handleAnnotateEdge = useCallback((edgeId: string) => {
+    setActiveEdgeId(edgeId);
+  }, []);
+
+  const handleCloseEdgeAnnotation = useCallback(() => {
+    setActiveEdgeId(null);
+  }, []);
+
+  const handleSaveEdgeAnnotation = useCallback(
+    (annotation: CanvasEdgeAnnotation) => {
+      if (!activeEdgeId) return;
+      const edge = edges.find((item) => item.id === activeEdgeId);
+      const nextMetadata = {
+        ...(edge?.metadata ?? {}),
+        annotation,
+      };
+      updateEdge(activeEdgeId, { metadata: nextMetadata });
+      setActiveEdgeId(null);
+    },
+    [activeEdgeId, edges, updateEdge]
+  );
 
   const cleanupSelectionHandlers = useCallback(() => {
     if (!selectionHandlersRef.current) return;
@@ -665,6 +787,9 @@ export function CanvasWorkspace() {
     setConnectLabel(DEFAULT_RELATION_LABEL);
     setConnectLabelTouched(false);
     setConnectError(null);
+    setConnectPreview(null);
+    connectDragRef.current = null;
+    connectSourcePointRef.current = null;
   }, [connectSourceNodeId]);
 
   useEffect(() => () => {
@@ -732,7 +857,10 @@ export function CanvasWorkspace() {
   }, [setCanvasMeta, setNodes, setEdges]);
 
   const handleCanvasMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget) return;
+    const target = event.target as HTMLElement | null;
+    const isEdgeLayerClick =
+      target instanceof SVGSVGElement && target.dataset.edgeLayer === "true";
+    if (!isEdgeLayerClick && event.target !== event.currentTarget) return;
     if (connectSourceNodeId) return;
 
     const isSelectionGesture = event.shiftKey || event.metaKey || event.ctrlKey;
@@ -781,8 +909,11 @@ export function CanvasWorkspace() {
       skipClickRef.current = false;
       return;
     }
+    const target = e.target as HTMLElement | null;
+    const isEdgeLayerClick =
+      target instanceof SVGSVGElement && target.dataset.edgeLayer === "true";
     // Only clear selection if clicking directly on canvas (not on a node)
-    if (e.target === e.currentTarget) {
+    if (e.target === e.currentTarget || isEdgeLayerClick) {
       if (connectSourceNodeId) {
         setConnectSourceNodeId(null);
       }
@@ -943,6 +1074,49 @@ export function CanvasWorkspace() {
       document.body
     )
     : null;
+  const activeEdge = activeEdgeId ? edges.find((edge) => edge.id === activeEdgeId) : null;
+  const annotationValue = activeEdge?.metadata?.annotation;
+  const activeAnnotation = isRecord(annotationValue)
+    ? (annotationValue as CanvasEdgeAnnotation)
+    : undefined;
+  const activeEdgeLabel = activeEdge
+    ? activeEdge.label ?? getEdgeRelationLabel(activeEdge.relationType) ?? "Edge"
+    : "";
+  const connectPreviewOverlay =
+    connectPreview && connectSourcePointRef.current && typeof document !== "undefined"
+      ? createPortal(
+        <svg
+          aria-hidden="true"
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            pointerEvents: "none",
+            zIndex: 10000,
+          }}
+        >
+          <line
+            x1={connectSourcePointRef.current.x}
+            y1={connectSourcePointRef.current.y}
+            x2={connectPreview.x}
+            y2={connectPreview.y}
+            stroke="rgba(148, 163, 184, 0.9)"
+            strokeWidth="2"
+            strokeDasharray="6,6"
+            strokeLinecap="round"
+          />
+          <circle
+            cx={connectPreview.x}
+            cy={connectPreview.y}
+            r="4"
+            fill="rgba(148, 163, 184, 0.9)"
+          />
+        </svg>,
+        document.body
+      )
+      : null;
 
   return (
     <div
@@ -962,12 +1136,13 @@ export function CanvasWorkspace() {
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {loadStatusMessage}
       </div>
-      <EdgesLayer />
+      <EdgesLayer onAnnotate={handleAnnotateEdge} />
       {nodes.map((node) => (
         <Node
           key={node.id}
           node={node}
           onStartConnect={handleStartConnect}
+          onStartConnectDrag={handleStartConnectDrag}
           connectSourceNodeId={connectSourceNodeId}
           onConnectTarget={handleConnectTarget}
         />
@@ -1026,8 +1201,17 @@ export function CanvasWorkspace() {
           </div>
         </div>
       )}
+      {connectPreviewOverlay}
       {connectBanner}
       {selectionOverlay}
+      {activeEdge && (
+        <EdgeAnnotation
+          annotation={activeAnnotation}
+          edgeLabel={activeEdgeLabel}
+          onSave={handleSaveEdgeAnnotation}
+          onCancel={handleCloseEdgeAnnotation}
+        />
+      )}
       <SaveStatusIndicator saveStatus={saveStatus} saveError={saveError} />
     </div>
   );

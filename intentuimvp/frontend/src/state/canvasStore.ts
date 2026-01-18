@@ -39,6 +39,23 @@ export interface GraphNodeAnnotation {
   status?: 'active' | 'archived' | 'draft' | 'review';
 }
 
+/**
+ * Edge annotation data.
+ * Stored in edge metadata for annotated relationships.
+ */
+export interface CanvasEdgeAnnotation {
+  /** Freeform comment about the relationship */
+  comment?: string;
+  /** Tags for categorization */
+  tags?: string[];
+  /** Status of the edge annotation */
+  status?: 'active' | 'archived' | 'draft' | 'review';
+}
+
+export interface CanvasEdgeMetadata extends Record<string, unknown> {
+  annotation?: CanvasEdgeAnnotation;
+}
+
 // Types for canvas entities
 export interface CanvasNode {
   id: string;
@@ -236,6 +253,7 @@ export interface CanvasEdge {
   label?: string;
   type?: 'solid' | 'dashed' | 'dotted';
   relationType?: CanvasEdgeRelationType;
+  metadata?: CanvasEdgeMetadata;
 }
 
 export interface CanvasDocument {
@@ -328,6 +346,7 @@ const buildEdgePayload = (edge: CanvasEdge): Record<string, unknown> => ({
   toNodeId: edge.targetNodeId,
   relationType: edge.relationType,
   label: edge.label,
+  ...(edge.metadata ? { metadata: edge.metadata } : {}),
 });
 
 const extractSequenceNumber = (payload: unknown): number | null => {

@@ -56,6 +56,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 interface NodeProps {
   node: CanvasNode;
   onStartConnect?: (nodeId: string) => void;
+  onStartConnectDrag?: (nodeId: string, event: React.PointerEvent<HTMLButtonElement>) => void;
   connectSourceNodeId?: string | null;
   onConnectTarget?: (nodeId: string) => void;
 }
@@ -69,6 +70,7 @@ interface NodeProps {
 export function Node({
   node,
   onStartConnect,
+  onStartConnectDrag,
   connectSourceNodeId,
   onConnectTarget,
 }: NodeProps) {
@@ -416,6 +418,11 @@ export function Node({
     event.stopPropagation();
     event.preventDefault();
     handleConnect();
+  };
+
+  const handleConnectPointerDown = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (!onStartConnectDrag) return;
+    onStartConnectDrag(node.id, event);
   };
 
   const handleCalendarSyncOpen = () => {
@@ -915,6 +922,7 @@ export function Node({
               <button
                 type="button"
                 onClick={handleConnectClick}
+                onPointerDown={handleConnectPointerDown}
                 onMouseDown={(event) => event.stopPropagation()}
                 onTouchStart={(event) => event.stopPropagation()}
                 aria-label={`Connect from ${node.title}`}

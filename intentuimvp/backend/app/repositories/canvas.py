@@ -267,6 +267,8 @@ class CanvasRepository:
 
             label_value = edge_data.get("label")
             label = label_value if isinstance(label_value, str) else None
+            metadata_value = edge_data.get("metadata") or edge_data.get("edge_metadata")
+            metadata = metadata_value if isinstance(metadata_value, dict) else None
 
             edge = Edge(
                 canvas_id=canvas.id,
@@ -278,6 +280,7 @@ class CanvasRepository:
                     or edge_data.get("type")
                 ),
                 label=label,
+                edge_metadata=json.dumps(metadata) if metadata else None,
             )
             self.db.add(edge)
 
@@ -435,6 +438,8 @@ class CanvasRepository:
 
                 label_value = edge_data.get("label")
                 label = label_value if isinstance(label_value, str) else None
+                metadata_value = edge_data.get("metadata") or edge_data.get("edge_metadata")
+                metadata = metadata_value if isinstance(metadata_value, dict) else None
 
                 edge = Edge(
                     canvas_id=canvas.id,
@@ -446,6 +451,7 @@ class CanvasRepository:
                         or edge_data.get("type")
                     ),
                     label=label,
+                    edge_metadata=json.dumps(metadata) if metadata else None,
                 )
                 self.db.add(edge)
                 logger.debug(f"Created edge {from_node_id} -> {to_node_id}")
@@ -509,6 +515,7 @@ class CanvasRepository:
                     "toNodeId": edge.to_node_id,
                     "relationType": edge.relation_type,
                     "label": edge.label,
+                    "metadata": edge.get_metadata(),
                     "created_at": edge.created_at.isoformat(),
                 }
                 for edge in sorted(canvas.edges, key=lambda e: e.id)

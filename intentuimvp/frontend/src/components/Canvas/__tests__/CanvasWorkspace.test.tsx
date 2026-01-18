@@ -338,6 +338,38 @@ describe("normalizeEdge", () => {
     });
   });
 
+  it("should include metadata when provided", () => {
+    const result = normalizeEdge(
+      {
+        id: "edge-meta",
+        sourceNodeId: "node-a",
+        targetNodeId: "node-b",
+        relationType: "supports",
+        metadata: {
+          annotation: {
+            comment: "Edge note",
+            tags: ["review"],
+            status: "draft",
+          },
+        },
+      },
+      0
+    );
+    expect(result).toEqual({
+      id: "edge-meta",
+      sourceNodeId: "node-a",
+      targetNodeId: "node-b",
+      relationType: "supports",
+      metadata: {
+        annotation: {
+          comment: "Edge note",
+          tags: ["review"],
+          status: "draft",
+        },
+      },
+    });
+  });
+
   it("should handle legacy fromNodeId and toNodeId fields", () => {
     const result = normalizeEdge(
       { fromNodeId: "from-node", toNodeId: "to-node" },

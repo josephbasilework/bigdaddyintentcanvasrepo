@@ -240,6 +240,48 @@ class TestWorkspaceEndpoint:
         assert edge["relationType"] == "supports"
         assert edge["label"] == "Supports"
 
+    def test_save_workspace_persists_edge_metadata(
+        self,
+        client: testclient.TestClient,
+    ) -> None:
+        """Test PUT /api/workspace persists edge metadata."""
+        payload = {
+            "nodes": [
+                {"id": "node-a", "label": "Node A", "x": 10, "y": 20, "z": 0},
+                {"id": "node-b", "label": "Node B", "x": 30, "y": 40, "z": 0},
+            ],
+            "edges": [
+                {
+                    "sourceNodeId": "node-a",
+                    "targetNodeId": "node-b",
+                    "relationType": "supports",
+                    "label": "Supports",
+                    "metadata": {
+                        "annotation": {
+                            "comment": "Edge note",
+                            "tags": ["review"],
+                            "status": "draft",
+                        }
+                    },
+                }
+            ],
+            "name": "edge_metadata_test",
+        }
+
+        response = client.put("/api/workspace", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        edge = data["edges"][0]
+        assert edge["metadata"]["annotation"]["comment"] == "Edge note"
+        assert edge["metadata"]["annotation"]["tags"] == ["review"]
+        assert edge["metadata"]["annotation"]["status"] == "draft"
+
+        reload = client.get("/api/workspace")
+        assert reload.status_code == 200
+        loaded = reload.json()
+        loaded_edge = loaded["edges"][0]
+        assert loaded_edge["metadata"]["annotation"]["comment"] == "Edge note"
+
     def test_save_workspace_rejects_dependency_cycle(
         self,
         client: testclient.TestClient,

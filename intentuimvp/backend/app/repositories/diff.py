@@ -8,6 +8,7 @@ instead of full replacement.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from logging import getLogger
 from typing import Any
 
@@ -202,6 +203,16 @@ def compute_node_diff(
     return changes
 
 
+def _normalize_metadata(metadata: dict[str, Any] | None) -> str | None:
+    """Normalize metadata to a stable string for comparisons."""
+    if not metadata:
+        return None
+    try:
+        return json.dumps(metadata, sort_keys=True)
+    except TypeError:
+        return json.dumps(str(metadata))
+
+
 def _edge_key(edge: Edge) -> tuple:
     """Generate a key for edge comparison.
 
@@ -209,9 +220,15 @@ def _edge_key(edge: Edge) -> tuple:
         edge: Database edge
 
     Returns:
-        Tuple of (from_node_id, to_node_id, relation_type, label)
+        Tuple of (from_node_id, to_node_id, relation_type, label, metadata)
     """
-    return (edge.from_node_id, edge.to_node_id, edge.relation_type, edge.label)
+    return (
+        edge.from_node_id,
+        edge.to_node_id,
+        edge.relation_type,
+        edge.label,
+        _normalize_metadata(edge.get_metadata()),
+    )
 
 
 def compute_edge_diff(
@@ -291,7 +308,15 @@ def compute_edge_diff(
         label_value = edge_data.get("label")
         label = label_value if isinstance(label_value, str) else None
 
-        edge_key = (from_node_id, to_node_id, relation_type, label)
+        metadata_value = edge_data.get("metadata") or edge_data.get("edge_metadata")
+        metadata = metadata_value if isinstance(metadata_value, dict) else None
+        edge_key = (
+            from_node_id,
+            to_node_id,
+            relation_type,
+            label,
+            _normalize_metadata(metadata),
+        )
 
         if edge_key not in existing_edge_keys:
             # New edge
