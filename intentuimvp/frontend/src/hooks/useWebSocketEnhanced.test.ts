@@ -90,11 +90,13 @@ describe("useWebSocketEnhanced", () => {
   beforeEach(() => {
     global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
     MockWebSocket.reset();
+    localStorage.clear();
   });
 
   afterEach(() => {
     MockWebSocket.reset();
     global.WebSocket = OriginalWebSocket;
+    localStorage.clear();
   });
 
   it("queues events while disconnected and flushes on open", async () => {
@@ -129,6 +131,76 @@ describe("useWebSocketEnhanced", () => {
     const flushed = onEventsFlushed.mock.calls[0][0];
     expect(flushed).toHaveLength(1);
     expect(flushed[0].data).toEqual({ type: "ping" });
+  });
+
+  it("restores queued events from storage on load", async () => {
+    MockWebSocket.autoOpen = false;
+    localStorage.setItem("intentui_workspace_session_id", "session-123");
+    localStorage.setItem(
+      "intentui_ws_queue_v1:session-123",
+      JSON.stringify([
+        {
+          id: "queue-1",
+          data: { type: "ping" },
+          timestamp: 1700000000000,
+        },
+      ])
+    );
+
+    const { result } = renderHook(() =>
+      useWebSocketEnhanced({
+        url: "ws://localhost:8000/ws",
+      })
+    );
+
+    await waitFor(() => expect(result.current.queuedEventCount).toBe(1));
+    expect(result.current.queuedEvents[0].id).toBe("queue-1");
+    expect(result.current.queuedEvents[0].data).toEqual({ type: "ping" });
+  });
+
+  it("updates and deletes queued events with persistence", async () => {
+    MockWebSocket.autoOpen = false;
+    localStorage.setItem("intentui_workspace_session_id", "session-123");
+
+    const { result } = renderHook(() =>
+      useWebSocketEnhanced({
+        url: "ws://localhost:8000/ws",
+      })
+    );
+
+    await waitFor(() => expect(MockWebSocket.instances.length).toBe(1));
+
+    act(() => {
+      result.current.send({ type: "ping" });
+    });
+
+    await waitFor(() => expect(result.current.queuedEventCount).toBe(1));
+
+    const queuedId = result.current.queuedEvents[0].id;
+
+    act(() => {
+      result.current.updateQueuedEvent(queuedId, { type: "pong" });
+    });
+
+    await waitFor(() =>
+      expect(result.current.queuedEvents[0].data).toEqual({ type: "pong" })
+    );
+
+    const stored = localStorage.getItem("intentui_ws_queue_v1:session-123");
+    const storedQueue = stored ? (JSON.parse(stored) as Array<{ data: unknown }>) : [];
+    expect(storedQueue[0]?.data).toEqual({ type: "pong" });
+
+    act(() => {
+      result.current.deleteQueuedEvent(queuedId);
+    });
+
+    await waitFor(() => expect(result.current.queuedEventCount).toBe(0));
+
+    const storedAfter = localStorage.getItem("intentui_ws_queue_v1:session-123");
+    const storedAfterQueue = storedAfter
+      ? (JSON.parse(storedAfter) as Array<{ data: unknown }>)
+      : [];
+    expect(storedAfterQueue).toHaveLength(0);
   });
 
   it("detects sequence gaps and triggers snapshot sync", async () => {

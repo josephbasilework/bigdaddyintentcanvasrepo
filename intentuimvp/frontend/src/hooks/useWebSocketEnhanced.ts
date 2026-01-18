@@ -9,6 +9,11 @@ import { recordWsReconnect } from "@/lib/performance";
 const SESSION_ID_STORAGE_KEY = "intentui_workspace_session_id";
 
 /**
+ * Storage key prefix for persisting queued events.
+ */
+const QUEUE_STORAGE_PREFIX = "intentui_ws_queue_v1";
+
+/**
  * Generate a UUID v4 session ID.
  */
 function generateSessionId(): string {
@@ -72,6 +77,8 @@ export interface WebSocketMessage {
  * Event queue entry for messages sent during disconnection.
  */
 export interface QueuedEvent {
+  /** Stable identifier for editing/deleting queued events */
+  id: string;
   /** The event data to send */
   data: string | object;
   /** Timestamp when the event was queued */
@@ -79,6 +86,111 @@ export interface QueuedEvent {
   /** Sequence number (if available) */
   sequence?: number;
 }
+
+/**
+ * Create a stable queue item ID.
+ */
+const createQueueId = (): string => {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `queue-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
+const getQueueStorageKey = (sessionId: string): string =>
+  `${QUEUE_STORAGE_PREFIX}:${sessionId}`;
+
+const coerceQueuedEvent = (value: unknown): QueuedEvent | null => {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as {
+    id?: unknown;
+    data?: unknown;
+    timestamp?: unknown;
+    sequence?: unknown;
+  };
+
+  if (candidate.data === undefined) {
+    return null;
+  }
+
+  let data: string | object;
+  if (typeof candidate.data === "string") {
+    data = candidate.data;
+  } else if (candidate.data && typeof candidate.data === "object") {
+    data = candidate.data as object;
+  } else {
+    data = String(candidate.data ?? "");
+  }
+
+  const timestamp =
+    typeof candidate.timestamp === "number" ? candidate.timestamp : Date.now();
+
+  const id = typeof candidate.id === "string" ? candidate.id : createQueueId();
+
+  const sequence =
+    typeof candidate.sequence === "number" ? candidate.sequence : undefined;
+
+  return {
+    id,
+    data,
+    timestamp,
+    sequence,
+  };
+};
+
+const loadPersistedQueue = (
+  sessionId: string,
+  maxQueueSize: number
+): QueuedEvent[] => {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const stored = localStorage.getItem(getQueueStorageKey(sessionId));
+    if (!stored) {
+      return [];
+    }
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    const normalized = parsed
+      .map(coerceQueuedEvent)
+      .filter((event): event is QueuedEvent => Boolean(event));
+    if (normalized.length <= maxQueueSize) {
+      return normalized;
+    }
+    return normalized.slice(0, maxQueueSize);
+  } catch (error) {
+    console.warn("WebSocket: Failed to restore queued events", error);
+    return [];
+  }
+};
+
+const extractSequenceFromData = (data: string | object): number | undefined => {
+  if (!data || typeof data !== "object") {
+    return undefined;
+  }
+
+  const candidate = data as {
+    sequence?: unknown;
+    payload?: { sequence?: unknown } | null;
+  };
+
+  if (typeof candidate.sequence === "number") {
+    return candidate.sequence;
+  }
+
+  if (candidate.payload && typeof candidate.payload.sequence === "number") {
+    return candidate.payload.sequence;
+  }
+
+  return undefined;
+};
 
 /**
  * Enhanced WebSocket options with reconnection features.
@@ -132,6 +244,21 @@ export interface UseWebSocketReturn {
   queuedEventCount: number;
 
   /**
+   * Full queue of events waiting for reconnection.
+   */
+  queuedEvents: QueuedEvent[];
+
+  /**
+   * Update a queued event payload before it is replayed.
+   */
+  updateQueuedEvent: (id: string, data: string | object) => void;
+
+  /**
+   * Remove a queued event before it is replayed.
+   */
+  deleteQueuedEvent: (id: string) => void;
+
+  /**
    * Last received sequence number.
    */
   lastSequence: number | null;
@@ -151,6 +278,21 @@ export interface UseWebSocketReturn {
    * Clear the session ID and start a fresh session on next connect.
    */
   clearSession: () => void;
+
+  /**
+   * Whether queued events are currently being flushed on reconnect.
+   */
+  isFlushingQueue: boolean;
+
+  /**
+   * Count of the most recent flush batch.
+   */
+  lastFlushedEventCount: number;
+
+  /**
+   * Timestamp of the most recent flush, if any.
+   */
+  lastFlushTimestamp: number | null;
 }
 
 /**
@@ -223,16 +365,47 @@ export function useWebSocketEnhanced(
   >("connecting");
 
   const [queuedEventCount, setQueuedEventCount] = useState(0);
+  const [queuedEvents, setQueuedEvents] = useState<QueuedEvent[]>([]);
   const [lastSequence, setLastSequence] = useState<number | null>(null);
   const [hasSequenceGap, setHasSequenceGap] = useState(false);
+  const [isFlushingQueue, setIsFlushingQueue] = useState(false);
+  const [lastFlushedEventCount, setLastFlushedEventCount] = useState(0);
+  const [lastFlushTimestamp, setLastFlushTimestamp] = useState<number | null>(null);
+
+  const persistQueue = useCallback((queue: QueuedEvent[]) => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      localStorage.setItem(
+        getQueueStorageKey(sessionIdRef.current),
+        JSON.stringify(queue)
+      );
+    } catch (error) {
+      console.warn("WebSocket: Failed to persist queued events", error);
+    }
+  }, []);
+
+  const syncQueueState = useCallback(
+    (queue: QueuedEvent[]) => {
+      eventQueueRef.current = queue;
+      setQueuedEventCount(queue.length);
+      setQueuedEvents(queue);
+      persistQueue(queue);
+    },
+    [persistQueue]
+  );
 
   /**
    * Clear the session ID and create a fresh one.
    * Useful for "logout" or "new workspace" scenarios.
    */
   const clearSession = useCallback(() => {
+    const previousSessionId = sessionIdRef.current;
     if (typeof window !== "undefined") {
       localStorage.removeItem(SESSION_ID_STORAGE_KEY);
+      localStorage.removeItem(getQueueStorageKey(previousSessionId));
     }
     const newId = generateSessionId();
     sessionIdRef.current = newId;
@@ -240,7 +413,8 @@ export function useWebSocketEnhanced(
     if (typeof window !== "undefined") {
       localStorage.setItem(SESSION_ID_STORAGE_KEY, newId);
     }
-  }, []);
+    syncQueueState([]);
+  }, [syncQueueState]);
 
   /**
    * Calculate reconnection delay with exponential backoff.
@@ -275,28 +449,49 @@ export function useWebSocketEnhanced(
         return false;
       }
 
-      let sequence: number | undefined;
-      if (typeof data === "object" && data !== null) {
-        const candidate = data as {
-          sequence?: unknown;
-          payload?: { sequence?: unknown } | null;
-        };
-        if (typeof candidate.sequence === "number") {
-          sequence = candidate.sequence;
-        } else if (candidate.payload && typeof candidate.payload.sequence === "number") {
-          sequence = candidate.payload.sequence;
-        }
-      }
-
-      eventQueueRef.current.push({
+      const nextEvent: QueuedEvent = {
+        id: createQueueId(),
         data,
         timestamp: Date.now(),
-        sequence,
-      });
-      setQueuedEventCount(eventQueueRef.current.length);
+        sequence: extractSequenceFromData(data),
+      };
+
+      const nextQueue = [...eventQueueRef.current, nextEvent];
+      syncQueueState(nextQueue);
       return true;
     },
-    [maxQueueSize]
+    [maxQueueSize, syncQueueState]
+  );
+
+  const updateQueuedEvent = useCallback(
+    (id: string, data: string | object) => {
+      const nextQueue = eventQueueRef.current.map((event) => {
+        if (event.id !== id) {
+          return event;
+        }
+        return {
+          ...event,
+          data,
+          sequence: extractSequenceFromData(data),
+        };
+      });
+      syncQueueState(nextQueue);
+    },
+    [syncQueueState]
+  );
+
+  const deleteQueuedEvent = useCallback(
+    (id: string) => {
+      if (eventQueueRef.current.length === 0) {
+        return;
+      }
+      const nextQueue = eventQueueRef.current.filter((event) => event.id !== id);
+      if (nextQueue.length === eventQueueRef.current.length) {
+        return;
+      }
+      syncQueueState(nextQueue);
+    },
+    [syncQueueState]
   );
 
   /**
@@ -308,46 +503,55 @@ export function useWebSocketEnhanced(
     }
 
     const queuedEvents = [...eventQueueRef.current];
-    eventQueueRef.current = [];
-    setQueuedEventCount(0);
+    syncQueueState([]);
+    setIsFlushingQueue(true);
+    setLastFlushedEventCount(queuedEvents.length);
 
     console.log(`WebSocket: Flushing ${queuedEvents.length} queued events`);
 
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       // Re-queue if not connected
-      eventQueueRef.current = [...queuedEvents, ...eventQueueRef.current];
-      setQueuedEventCount(eventQueueRef.current.length);
+      syncQueueState([...queuedEvents, ...eventQueueRef.current]);
+      setIsFlushingQueue(false);
       return;
     }
 
     // Send all queued events
     const flushed: QueuedEvent[] = [];
     const retryQueue: QueuedEvent[] = [];
-    for (const event of queuedEvents) {
-      try {
-        const message =
-          typeof event.data === "string"
-            ? event.data
-            : JSON.stringify(event.data);
-        ws.send(message);
-        flushed.push(event);
-      } catch (error) {
-        console.error("WebSocket: Failed to send queued event", error);
-        retryQueue.push(event);
-        if (!ws || ws.readyState !== WebSocket.OPEN) {
-          break;
+    try {
+      for (const event of queuedEvents) {
+        try {
+          const message =
+            typeof event.data === "string"
+              ? event.data
+              : JSON.stringify(event.data);
+          ws.send(message);
+          flushed.push(event);
+        } catch (error) {
+          console.error("WebSocket: Failed to send queued event", error);
+          retryQueue.push(event);
+          if (!ws || ws.readyState !== WebSocket.OPEN) {
+            break;
+          }
         }
       }
+    } finally {
+      setIsFlushingQueue(false);
     }
 
     if (retryQueue.length > 0) {
-      eventQueueRef.current = [...retryQueue, ...eventQueueRef.current];
-      setQueuedEventCount(eventQueueRef.current.length);
+      syncQueueState([...retryQueue, ...eventQueueRef.current]);
+    }
+
+    if (flushed.length > 0) {
+      setLastFlushedEventCount(flushed.length);
+      setLastFlushTimestamp(Date.now());
     }
 
     onEventsFlushed?.(flushed);
-  }, [onEventsFlushed]);
+  }, [onEventsFlushed, syncQueueState]);
 
   const extractSequence = useCallback((message: WebSocketMessage): number | null => {
     if (typeof message.sequence === "number") {
@@ -667,9 +871,8 @@ export function useWebSocketEnhanced(
     setConnectionState("closed");
 
     // Clear event queue on manual disconnect
-    eventQueueRef.current = [];
-    setQueuedEventCount(0);
-  }, [clearReconnectTimeout]);
+    syncQueueState([]);
+  }, [clearReconnectTimeout, syncQueueState]);
 
   /**
    * Manually trigger a reconnection.
@@ -678,8 +881,21 @@ export function useWebSocketEnhanced(
     isManualCloseRef.current = false;
     reconnectAttemptsRef.current = 0;
     clearReconnectTimeout();
+    if (hasSequenceGapRef.current) {
+      hasSequenceGapRef.current = false;
+      setHasSequenceGap(false);
+      lastSequenceRef.current = null;
+      setLastSequence(null);
+    }
     connect();
   }, [connect, clearReconnectTimeout]);
+
+  useEffect(() => {
+    const restored = loadPersistedQueue(sessionIdRef.current, maxQueueSize);
+    eventQueueRef.current = restored;
+    setQueuedEventCount(restored.length);
+    setQueuedEvents(restored);
+  }, [maxQueueSize, sessionId]);
 
   // Update connectRef to break circular type dependency
   useEffect(() => {
@@ -701,9 +917,15 @@ export function useWebSocketEnhanced(
     disconnect,
     reconnect,
     queuedEventCount,
+    queuedEvents,
+    updateQueuedEvent,
+    deleteQueuedEvent,
     lastSequence,
     hasSequenceGap,
     sessionId,
     clearSession,
+    isFlushingQueue,
+    lastFlushedEventCount,
+    lastFlushTimestamp,
   };
 }

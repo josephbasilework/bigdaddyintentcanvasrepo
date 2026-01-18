@@ -7,6 +7,7 @@ import { EventsViewPanel } from "@/components/EventsView";
 import { WheelViewPanel } from "@/components/WheelView";
 import { MCPInstallPanel } from "@/components/MCP";
 import { AssumptionsPanel } from "@/components/Assumptions";
+import { OfflineQueuePanel } from "@/components/OfflineQueue/OfflineQueuePanel";
 import type {
   Assumption,
   AssumptionSet,
@@ -556,7 +557,15 @@ export default function Home() {
   );
 
   // Connect to WebSocket for real-time updates
-  const { sessionId: wsSessionId } = useWebSocketEnhanced({
+  const {
+    sessionId: wsSessionId,
+    connectionState: wsConnectionState,
+    queuedEvents,
+    updateQueuedEvent,
+    deleteQueuedEvent,
+    isFlushingQueue,
+    lastFlushedEventCount,
+  } = useWebSocketEnhanced({
     url: WS_URL,
     onMessage: handleWebSocketMessage,
   });
@@ -1037,6 +1046,14 @@ export default function Home() {
           </div>
         )}
       </Canvas>
+      <OfflineQueuePanel
+        connectionState={wsConnectionState}
+        queuedEvents={queuedEvents}
+        onUpdateEvent={updateQueuedEvent}
+        onDeleteEvent={deleteQueuedEvent}
+        isFlushingQueue={isFlushingQueue}
+        lastFlushedEventCount={lastFlushedEventCount}
+      />
       <FloatingInput
         onSubmit={handleCommandSubmit}
         onFilesDrop={handleFilesDrop}
