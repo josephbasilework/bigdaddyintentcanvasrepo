@@ -9,6 +9,7 @@ from app.models.dashboard_subscription import (
     DashboardSubscriptionTarget,
 )
 from app.models.edge import Edge, RelationType
+from app.models.event import Event
 from app.models.job import Job
 from app.models.node import Node, NodeType
 from app.models.preferences import Preferences
@@ -26,6 +27,7 @@ __all__ = [
     "DashboardSubscription",
     "DashboardSubscriptionTarget",
     "Edge",
+    "Event",
     "Node",
     "NodeType",
     "RelationType",

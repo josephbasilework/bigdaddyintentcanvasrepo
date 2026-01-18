@@ -58,6 +58,10 @@ class TurnType(str, Enum):
     SYSTEM_MESSAGE = "system_message"
     EXTERNAL_STATE_CHANGE = "external_state_change"
 
+    # Hook lifecycle
+    HOOK_FIRED = "hook_fired"
+    HOOK_FAILED = "hook_failed"
+
     # Assumption reconciliation (FR-003)
     ASSUMPTION_PRESENTED = "assumption_presented"
     ASSUMPTION_CONFIRMED = "assumption_confirmed"

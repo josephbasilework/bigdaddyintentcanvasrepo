@@ -15,6 +15,7 @@ from app.api.backup import router as backup_router
 from app.api.commands import router as commands_router
 from app.api.context import router as context_router
 from app.api.edges import router as edges_router
+from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.api.jobs import router as jobs_router
 from app.api.mcp import router as mcp_router
@@ -218,6 +219,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs_router, tags=["jobs"])
     app.include_router(telemetry_router, tags=["telemetry"])
     app.include_router(turns_router, tags=["turns"])
+    app.include_router(events_router, tags=["events"])
 
     # CopilotKit endpoint (PRD Section 9.3 EI-004)
     setup_copilotkit(app)

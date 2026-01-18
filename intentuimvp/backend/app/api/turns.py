@@ -9,6 +9,7 @@ from app.database import get_async_db
 from app.models.turn import TurnActor, TurnType
 from app.repositories.turn_repo import AsyncTurnRepository
 from app.schemas.turn import TurnListResponse, TurnResponse
+from app.services.events import resolve_event_type
 
 router = APIRouter()
 
@@ -47,6 +48,16 @@ async def list_turns(
         turn_type=turn_type,
     )
     return TurnListResponse(
-        turns=[TurnResponse(**turn.to_dict()) for turn in turns],
+        turns=[
+            TurnResponse(
+                **{
+                    **turn.to_dict(),
+                    "eventType": resolve_event_type(
+                        turn.type, turn.actor, turn.get_payload()
+                    ),
+                }
+            )
+            for turn in turns
+        ],
         count=len(turns),
     )

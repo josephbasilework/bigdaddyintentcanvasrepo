@@ -18,7 +18,10 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.agents.base import BaseAgent
+from app.database import AsyncSessionLocal
 from app.logging_config import get_correlation_id
+from app.models.turn import TurnActor, TurnType
+from app.services.turns import log_turn_for_user_async, log_turn_with_new_async_session
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +32,47 @@ DEFAULT_GATEWAY_MODEL = os.getenv("GATEWAY_MODEL", "gemini-3-flash-preview")
 # Type aliases for hooks
 AgentHook = Callable[[str, dict[str, Any]], Awaitable[None]]
 AgentPredicate = Callable[[str, dict[str, Any]], bool]
+
+
+def _extract_context_value(
+    source: dict[str, Any] | None, keys: list[str]
+) -> str | int | None:
+    if not isinstance(source, dict):
+        return None
+    for key in keys:
+        value = source.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _extract_hook_context(
+    input_data: dict[str, Any],
+) -> tuple[str | None, str | None, str | int | None]:
+    session_id = _extract_context_value(input_data, ["session_id", "sessionId"])
+    user_id = _extract_context_value(input_data, ["user_id", "userId", "user"])
+    workspace_id = _extract_context_value(
+        input_data, ["workspace_id", "workspaceId", "canvas_id", "canvasId"]
+    )
+
+    nested_context = input_data.get("context")
+    session_id = session_id or _extract_context_value(
+        nested_context, ["session_id", "sessionId"]
+    )
+    user_id = user_id or _extract_context_value(nested_context, ["user_id", "userId", "user"])
+    workspace_id = workspace_id or _extract_context_value(
+        nested_context, ["workspace_id", "workspaceId", "canvas_id", "canvasId"]
+    )
+
+    return (
+        str(session_id) if session_id is not None else None,
+        str(user_id) if user_id is not None else None,
+        workspace_id,
+    )
+
+
+def _hook_label(hook: AgentHook) -> str:
+    return getattr(hook, "__name__", hook.__class__.__name__ or "hook")
 
 
 @dataclass
@@ -225,6 +269,68 @@ class AgentOrchestrator:
         """
         self._post_hooks.append(hook)
 
+    async def _emit_hook_turn(
+        self,
+        *,
+        agent_name: str,
+        hook: AgentHook,
+        stage: str,
+        input_data: dict[str, Any],
+        failed: bool = False,
+        error: str | None = None,
+    ) -> None:
+        session_id, user_id, workspace_id = _extract_hook_context(input_data)
+        if not session_id and not user_id:
+            return
+
+        hook_name = _hook_label(hook)
+        summary = (
+            f"Hook failed ({stage}): {hook_name}"
+            if failed
+            else f"Hook fired ({stage}): {hook_name}"
+        )
+        payload = {
+            "hook": hook_name,
+            "stage": stage,
+            "agent_name": agent_name,
+        }
+        if error:
+            payload["error"] = error
+
+        turn_type = TurnType.HOOK_FAILED if failed else TurnType.HOOK_FIRED
+
+        try:
+            if session_id:
+                await log_turn_with_new_async_session(
+                    session_id=session_id,
+                    actor=TurnActor.SYSTEM,
+                    turn_type=turn_type,
+                    summary=summary,
+                    payload=payload,
+                )
+                return
+
+            async with AsyncSessionLocal() as db:
+                await log_turn_for_user_async(
+                    db,
+                    user_id=user_id,
+                    workspace_id=workspace_id,
+                    actor=TurnActor.SYSTEM,
+                    turn_type=turn_type,
+                    summary=summary,
+                    payload=payload,
+                )
+        except Exception:
+            logger.warning(
+                "Failed to log hook event",
+                extra={
+                    "event": "hook_logging_failed",
+                    "hook": hook_name,
+                    "agent_name": agent_name,
+                },
+                exc_info=True,
+            )
+
     async def execute_agent(
         self,
         name: str,
@@ -268,6 +374,12 @@ class AgentOrchestrator:
 
         # Run pre-hooks
         for hook in self._pre_hooks:
+            await self._emit_hook_turn(
+                agent_name=name,
+                hook=hook,
+                stage="pre",
+                input_data=input_data,
+            )
             try:
                 await hook(name, input_data)
             except Exception:
@@ -278,6 +390,14 @@ class AgentOrchestrator:
                         "agent_name": name,
                         "correlation_id": get_correlation_id(),
                     },
+                )
+                await self._emit_hook_turn(
+                    agent_name=name,
+                    hook=hook,
+                    stage="pre",
+                    input_data=input_data,
+                    failed=True,
+                    error="pre_hook_failed",
                 )
 
         start_time = time.time()
@@ -361,6 +481,12 @@ class AgentOrchestrator:
 
         # Run post-hooks
         for hook in self._post_hooks:
+            await self._emit_hook_turn(
+                agent_name=name,
+                hook=hook,
+                stage="post",
+                input_data=input_data,
+            )
             try:
                 await hook(name, {"input": input_data, "result": exec_result})
             except Exception:
@@ -371,6 +497,14 @@ class AgentOrchestrator:
                         "agent_name": name,
                         "correlation_id": get_correlation_id(),
                     },
+                )
+                await self._emit_hook_turn(
+                    agent_name=name,
+                    hook=hook,
+                    stage="post",
+                    input_data=input_data,
+                    failed=True,
+                    error="post_hook_failed",
                 )
 
         return exec_result

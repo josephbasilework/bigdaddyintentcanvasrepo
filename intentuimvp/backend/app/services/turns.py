@@ -18,6 +18,7 @@ from app.repositories.canvas import CanvasRepository as SyncCanvasRepository
 from app.repositories.canvas_repo import CanvasRepository as AsyncCanvasRepository
 from app.repositories.session_repo import AsyncSessionRepository, SessionRepository
 from app.repositories.turn_repo import AsyncTurnRepository, TurnRepository
+from app.services.events import create_event_from_turn_async, create_event_from_turn_sync
 from app.services.user_data_store import get_user_data_store
 
 logger = logging.getLogger(__name__)
@@ -190,6 +191,7 @@ def log_turn_with_session_id_sync(
             sequence_number=sequence_number,
         )
         _persist_turn_snapshot_sync(db, session_id, turn)
+        _emit_event_for_turn_sync(db, turn)
         return turn
     except Exception:
         logger.warning(
@@ -268,6 +270,7 @@ async def log_turn_with_session_id_async(
             sequence_number=sequence_number,
         )
         await _persist_turn_snapshot_async(db, session_id, turn)
+        await _emit_event_for_turn_async(db, turn)
         return turn
     except Exception:
         logger.warning(
@@ -400,4 +403,26 @@ async def _persist_turn_snapshot_async(
     except Exception:
         logger.warning(
             "Failed to persist turn snapshot for session %s", session_id, exc_info=True
+        )
+
+
+def _emit_event_for_turn_sync(db: Session, turn: Turn) -> None:
+    try:
+        create_event_from_turn_sync(db, turn=turn)
+    except Exception:
+        logger.warning(
+            "Failed to emit event for turn %s",
+            turn.id,
+            exc_info=True,
+        )
+
+
+async def _emit_event_for_turn_async(db: AsyncSession, turn: Turn) -> None:
+    try:
+        await create_event_from_turn_async(db, turn=turn)
+    except Exception:
+        logger.warning(
+            "Failed to emit event for turn %s",
+            turn.id,
+            exc_info=True,
         )

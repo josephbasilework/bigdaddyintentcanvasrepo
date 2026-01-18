@@ -43,12 +43,16 @@ const DEFAULT_EVENT_TYPES = [
   "response.acknowledgment",
   "response.tool_invocation",
   "external.updated",
+  "hook.fired",
+  "hook.failed",
+  "canvas.action",
 ];
 
 const JOB_TYPES = new Set(["job_started", "job_progress", "job_completed", "job_failed"]);
 
 const EVENT_TYPE_MAP: Record<string, string> = {
   user_input: "intent.parsed",
+  user_canvas_action: "canvas.action",
   agent_response: "response.sent",
   system_message: "response.sent",
   assumption_presented: "assumption.presented",
@@ -207,6 +211,13 @@ const buildSummary = (turn: TurnResponse): string => {
 };
 
 const getEventType = (turn: TurnResponse): string => {
+  const explicitEventType =
+    typeof turn.eventType === "string" && turn.eventType.trim().length > 0
+      ? turn.eventType
+      : null;
+  if (explicitEventType) {
+    return explicitEventType;
+  }
   const responseType = getResponseType(turn);
   if (responseType) {
     return RESPONSE_EVENT_TYPE_MAP[responseType] ?? `response.${responseType}`;
