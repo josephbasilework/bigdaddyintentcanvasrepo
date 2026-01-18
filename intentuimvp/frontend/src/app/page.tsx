@@ -549,16 +549,19 @@ export default function Home() {
         // Check if node already exists (to avoid duplicates from local creation)
         const existingNode = nodes.find((n) => n.id === nodeId);
         if (!existingNode) {
-          addNode({
-            id: nodeId,
-            type: (nodeType as CanvasNode["type"]) || "text",
-            x: position.x ?? 0,
-            y: position.y ?? 0,
-            z: position.z ?? 0,
-            title,
-            content,
-            metadata,
-          });
+          addNode(
+            {
+              id: nodeId,
+              type: (nodeType as CanvasNode["type"]) || "text",
+              x: position.x ?? 0,
+              y: position.y ?? 0,
+              z: position.z ?? 0,
+              title,
+              content,
+              metadata,
+            },
+            { source: "remote" }
+          );
           console.log("DEBUG: Added backend-created node:", nodeId);
           if (!selectedNodeId && selectedNodeIds.length === 0) {
             selectNode(nodeId);
@@ -593,7 +596,13 @@ export default function Home() {
         }
         const position = resolvePosition({ ...nodePayload, ...payloadUpdates });
         if (position.x !== null && position.y !== null) {
-          updateNodePosition(nodeId, position.x, position.y, position.z ?? undefined);
+          updateNodePosition(
+            nodeId,
+            position.x,
+            position.y,
+            position.z ?? undefined,
+            { source: "remote" }
+          );
         }
         const updates: Partial<CanvasNode> = {};
         const nextType =
@@ -619,7 +628,7 @@ export default function Home() {
           (payload.metadata as Record<string, unknown> | undefined);
         if (nextMetadata !== undefined) updates.metadata = nextMetadata;
         if (Object.keys(updates).length > 0) {
-          updateNode(nodeId, updates);
+          updateNode(nodeId, updates, { source: "remote" });
         }
       }
       if (message.type === "node.deleted" && message.payload) {
@@ -630,7 +639,7 @@ export default function Home() {
           console.warn("DEBUG: node.deleted missing id:", nodePayload);
           return;
         }
-        removeNode(nodeId);
+        removeNode(nodeId, { source: "remote" });
       }
       if (message.type === "edge.created" && message.payload) {
         const payload = asRecord(message.payload);
@@ -671,13 +680,16 @@ export default function Home() {
           EDGE_RELATION_TYPES.has(relationType as CanvasEdgeRelationType)
           ? (relationType as CanvasEdgeRelationType)
           : undefined;
-        addEdge({
-          id: edgeId,
-          sourceNodeId: String(sourceId),
-          targetNodeId: String(targetId),
-          relationType: normalizedRelation,
-          label: (edgePayload.label as string | undefined) ?? (payload.label as string | undefined),
-        });
+        addEdge(
+          {
+            id: edgeId,
+            sourceNodeId: String(sourceId),
+            targetNodeId: String(targetId),
+            relationType: normalizedRelation,
+            label: (edgePayload.label as string | undefined) ?? (payload.label as string | undefined),
+          },
+          { source: "remote" }
+        );
       }
       if (message.type === "edge.updated" && message.payload) {
         const payload = asRecord(message.payload);
@@ -707,7 +719,7 @@ export default function Home() {
           updates.label = label;
         }
         if (Object.keys(updates).length > 0) {
-          updateEdge(edgeId, updates);
+          updateEdge(edgeId, updates, { source: "remote" });
         }
       }
       if (message.type === "edge.deleted" && message.payload) {
@@ -718,7 +730,7 @@ export default function Home() {
           console.warn("DEBUG: edge.deleted missing id:", edgePayload);
           return;
         }
-        removeEdge(edgeId);
+        removeEdge(edgeId, { source: "remote" });
       }
     },
     [

@@ -1,5 +1,24 @@
 import { create } from 'zustand';
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const SESSION_ID_STORAGE_KEY = "intentui_workspace_session_id";
+
+type CanvasActionType =
+  | "node_created"
+  | "node_updated"
+  | "node_deleted"
+  | "edge_created"
+  | "edge_updated"
+  | "edge_deleted";
+
+type CanvasActionSource = "user" | "remote" | "system";
+
+type CanvasActionContext = {
+  source?: CanvasActionSource;
+  log?: boolean;
+  recordHistory?: boolean;
+};
+
 /**
  * Graph node annotation data.
  * Used for graph-type nodes to provide structured metadata.
@@ -251,6 +270,88 @@ export type NodeSelectionOptions = {
   toggle?: boolean;
 };
 
+const getOrCreateSessionId = (): string | null => {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const stored = localStorage.getItem(SESSION_ID_STORAGE_KEY);
+    if (stored) {
+      return stored;
+    }
+    const newSessionId =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    localStorage.setItem(SESSION_ID_STORAGE_KEY, newSessionId);
+    return newSessionId;
+  } catch {
+    return null;
+  }
+};
+
+const resolveActionContext = (context?: CanvasActionContext) => {
+  const source = context?.source ?? "user";
+  const recordHistory = context?.recordHistory ?? source === "user";
+  const shouldLog = context?.log === false ? false : source === "user";
+  return { recordHistory, shouldLog };
+};
+
+const buildNodePayload = (node: CanvasNode): Record<string, unknown> => ({
+  id: node.id,
+  type: node.type,
+  title: node.title,
+  label: node.title,
+  content: node.content,
+  x: node.x,
+  y: node.y,
+  z: node.z,
+  position: { x: node.x, y: node.y, z: node.z },
+  metadata: node.metadata,
+});
+
+const buildEdgePayload = (edge: CanvasEdge): Record<string, unknown> => ({
+  id: edge.id,
+  sourceNodeId: edge.sourceNodeId,
+  targetNodeId: edge.targetNodeId,
+  fromNodeId: edge.sourceNodeId,
+  toNodeId: edge.targetNodeId,
+  relationType: edge.relationType,
+  label: edge.label,
+});
+
+const logCanvasAction = (
+  action: CanvasActionType,
+  payload: Record<string, unknown>,
+  options: { summary?: string; workspaceId?: number | null } = {}
+) => {
+  if (typeof process !== "undefined" && process.env.NODE_ENV === "test") {
+    return;
+  }
+  if (typeof fetch !== "function") {
+    return;
+  }
+  const sessionId = getOrCreateSessionId();
+  const body: Record<string, unknown> = { action, payload };
+  if (sessionId) {
+    body.session_id = sessionId;
+  }
+  if (options.workspaceId !== null && options.workspaceId !== undefined) {
+    body.workspace_id = options.workspaceId;
+  }
+  if (options.summary) {
+    body.summary = options.summary;
+  }
+
+  void fetch(`${API_BASE_URL}/api/canvas/actions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  }).catch((error) => {
+    console.warn("Failed to log canvas action:", error);
+  });
+};
+
 // History snapshot type
 interface CanvasSnapshot {
   nodes: CanvasNode[];
@@ -275,19 +376,39 @@ interface CanvasState {
   future: CanvasSnapshot[];
 
   // Actions
-  addNode: (node: Omit<CanvasNode, 'id'> & { id?: string }) => string;
+  addNode: (
+    node: Omit<CanvasNode, 'id'> & { id?: string },
+    context?: CanvasActionContext
+  ) => string;
   setCanvasMeta: (meta: { id?: number | null; name?: string | null }) => void;
-  removeNode: (nodeId: string) => void;
-  removeNodes: (nodeIds: string[]) => void;
-  updateNodePosition: (nodeId: string, x: number, y: number, z?: number) => void;
+  removeNode: (nodeId: string, context?: CanvasActionContext) => void;
+  removeNodes: (nodeIds: string[], context?: CanvasActionContext) => void;
+  updateNodePosition: (
+    nodeId: string,
+    x: number,
+    y: number,
+    z?: number,
+    context?: CanvasActionContext
+  ) => void;
   selectNode: (nodeId: string | null, options?: NodeSelectionOptions) => void;
   setSelectedNodes: (nodeIds: string[]) => void;
-  updateNode: (nodeId: string, updates: Partial<CanvasNode>) => void;
+  updateNode: (
+    nodeId: string,
+    updates: Partial<CanvasNode>,
+    context?: CanvasActionContext
+  ) => void;
   clearSelection: () => void;
   setNodes: (nodes: CanvasNode[]) => void;
-  addEdge: (edge: Omit<CanvasEdge, 'id'> & { id?: string }) => string;
-  removeEdge: (edgeId: string) => void;
-  updateEdge: (edgeId: string, updates: Partial<CanvasEdge>) => void;
+  addEdge: (
+    edge: Omit<CanvasEdge, 'id'> & { id?: string },
+    context?: CanvasActionContext
+  ) => string;
+  removeEdge: (edgeId: string, context?: CanvasActionContext) => void;
+  updateEdge: (
+    edgeId: string,
+    updates: Partial<CanvasEdge>,
+    context?: CanvasActionContext
+  ) => void;
   setEdges: (edges: CanvasEdge[]) => void;
 
   // History actions
@@ -300,8 +421,15 @@ interface CanvasState {
 
 // Create the store
 export const useCanvasStore = create<CanvasState>((set, get) => {
-  // Helper to create history-aware setter
-  const withHistory = (updater: (state: CanvasState) => Partial<CanvasState>) => {
+  // Helper to apply updates with optional history tracking
+  const applyUpdate = (
+    updater: (state: CanvasState) => Partial<CanvasState>,
+    recordHistory: boolean
+  ) => {
+    if (!recordHistory) {
+      set((state) => updater(state));
+      return;
+    }
     set((state) => {
       const snapshot: CanvasSnapshot = {
         nodes: state.nodes,
@@ -333,14 +461,15 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     future: [],
 
     // Add a new node to the canvas
-    addNode: (node) => {
+    addNode: (node, context) => {
+      const { recordHistory, shouldLog } = resolveActionContext(context);
       const id = node.id ?? `node-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
       const newNode: CanvasNode = {
         ...node,
         id,
       };
       let didExpand = false;
-      withHistory((state) => {
+      applyUpdate((state) => {
         const expansion = resolveAutoExpansion(state.nodes, newNode);
         didExpand = expansion.didExpand;
         let nextDocuments = state.documents;
@@ -359,7 +488,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
           documents: nextDocuments,
           ...(didExpand ? { isAutoExpanding: true } : {}),
         };
-      });
+      }, recordHistory);
       if (didExpand) {
         if (autoExpandTimer) {
           clearTimeout(autoExpandTimer);
@@ -367,6 +496,14 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
         autoExpandTimer = setTimeout(() => {
           set({ isAutoExpanding: false });
         }, AUTO_EXPAND_ANIMATION_MS);
+      }
+      if (shouldLog) {
+        const summary = newNode.title ? `Node created: ${newNode.title}` : "Node created";
+        logCanvasAction(
+          "node_created",
+          { node: buildNodePayload(newNode) },
+          { summary, workspaceId: get().canvasId }
+        );
       }
       return id;
     },
@@ -379,8 +516,13 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     },
 
     // Remove a node from the canvas
-    removeNode: (nodeId) => {
-      withHistory((state) => {
+    removeNode: (nodeId, context) => {
+      const { recordHistory, shouldLog } = resolveActionContext(context);
+      const existingNode = get().nodes.find((node) => node.id === nodeId);
+      const relatedEdges = get().edges.filter(
+        (edge) => edge.sourceNodeId === nodeId || edge.targetNodeId === nodeId
+      );
+      applyUpdate((state) => {
         const nextSelectedIds = state.selectedNodeIds.filter((id) => id !== nodeId);
         let nextSelectedNodeId = state.selectedNodeId;
         if (nextSelectedNodeId === nodeId) {
@@ -395,15 +537,33 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
           selectedNodeIds: nextSelectedIds,
           selectedNodeId: nextSelectedNodeId,
         };
-      });
+      }, recordHistory);
+      if (shouldLog) {
+        const summary = existingNode?.title
+          ? `Node deleted: ${existingNode.title}`
+          : "Node deleted";
+        logCanvasAction(
+          "node_deleted",
+          {
+            node: existingNode ? buildNodePayload(existingNode) : { id: nodeId },
+            edges: relatedEdges.map(buildEdgePayload),
+          },
+          { summary, workspaceId: get().canvasId }
+        );
+      }
     },
 
     // Remove multiple nodes from the canvas
-    removeNodes: (nodeIds) => {
+    removeNodes: (nodeIds, context) => {
+      const { recordHistory, shouldLog } = resolveActionContext(context);
       const uniqueIds = Array.from(new Set(nodeIds)).filter(Boolean);
       if (uniqueIds.length === 0) return;
       const idsToRemove = new Set(uniqueIds);
-      withHistory((state) => {
+      const existingNodes = get().nodes.filter((node) => idsToRemove.has(node.id));
+      const relatedEdges = get().edges.filter(
+        (edge) => idsToRemove.has(edge.sourceNodeId) || idsToRemove.has(edge.targetNodeId)
+      );
+      applyUpdate((state) => {
         const nextSelectedIds = state.selectedNodeIds.filter((id) => !idsToRemove.has(id));
         let nextSelectedNodeId = state.selectedNodeId;
         if (nextSelectedNodeId && idsToRemove.has(nextSelectedNodeId)) {
@@ -421,18 +581,49 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
           selectedNodeId: nextSelectedNodeId,
           selectedNodeIds: nextSelectedIds,
         };
-      });
+      }, recordHistory);
+      if (shouldLog) {
+        existingNodes.forEach((node) => {
+          const summary = node.title ? `Node deleted: ${node.title}` : "Node deleted";
+          const nodeEdges = relatedEdges.filter(
+            (edge) => edge.sourceNodeId === node.id || edge.targetNodeId === node.id
+          );
+          logCanvasAction(
+            "node_deleted",
+            {
+              node: buildNodePayload(node),
+              edges: nodeEdges.map(buildEdgePayload),
+            },
+            { summary, workspaceId: get().canvasId }
+          );
+        });
+      }
     },
 
     // Update node position
-    updateNodePosition: (nodeId, x, y, z) => {
-      withHistory((state) => ({
+    updateNodePosition: (nodeId, x, y, z, context) => {
+      const { recordHistory, shouldLog } = resolveActionContext(context);
+      const existingNode = get().nodes.find((node) => node.id === nodeId);
+      const nextZ = z ?? existingNode?.z ?? 0;
+      applyUpdate((state) => ({
         nodes: state.nodes.map((node) =>
           node.id === nodeId
             ? { ...node, x, y, ...(z !== undefined && { z }) }
             : node
         ),
-      }));
+      }), recordHistory);
+      if (shouldLog && existingNode) {
+        const nextNode = { ...existingNode, x, y, z: nextZ };
+        logCanvasAction(
+          "node_updated",
+          {
+            node: buildNodePayload(nextNode),
+            updates: { position: { x, y, z: nextZ }, x, y, z: nextZ },
+            previous: { x: existingNode.x, y: existingNode.y, z: existingNode.z },
+          },
+          { summary: "Node moved", workspaceId: get().canvasId }
+        );
+      }
     },
 
     // Select a node
@@ -493,8 +684,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     },
 
     // Update node properties
-    updateNode: (nodeId, updates) => {
-      withHistory((state) => {
+    updateNode: (nodeId, updates, context) => {
+      const { recordHistory, shouldLog } = resolveActionContext(context);
+      const existingNode = get().nodes.find((node) => node.id === nodeId);
+      applyUpdate((state) => {
         const existingNode = state.nodes.find((node) => node.id === nodeId);
         const nextNodes = state.nodes.map((node) =>
           node.id === nodeId ? { ...node, ...updates } : node
@@ -524,7 +717,25 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
           nextDocuments = state.documents.filter((doc) => doc.nodeId !== nodeId);
         }
         return { nodes: nextNodes, documents: nextDocuments };
-      });
+      }, recordHistory);
+      if (shouldLog && existingNode) {
+        const nextNode = { ...existingNode, ...updates };
+        const summary = nextNode.title ? `Node updated: ${nextNode.title}` : "Node updated";
+        logCanvasAction(
+          "node_updated",
+          {
+            node: buildNodePayload(nextNode),
+            updates,
+            previous: {
+              title: existingNode.title,
+              content: existingNode.content,
+              metadata: existingNode.metadata,
+              type: existingNode.type,
+            },
+          },
+          { summary, workspaceId: get().canvasId }
+        );
+      }
     },
 
     // Clear selection
@@ -541,32 +752,66 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     },
 
     // Add an edge between two nodes
-    addEdge: (edge) => {
+    addEdge: (edge, context) => {
+      const { recordHistory, shouldLog } = resolveActionContext(context);
       const id = edge.id ?? `edge-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
       const newEdge: CanvasEdge = {
         ...edge,
         id,
       };
-      withHistory((state) => ({
+      applyUpdate((state) => ({
         edges: [...state.edges, newEdge],
-      }));
+      }), recordHistory);
+      if (shouldLog) {
+        logCanvasAction(
+          "edge_created",
+          { edge: buildEdgePayload(newEdge) },
+          { summary: "Edge created", workspaceId: get().canvasId }
+        );
+      }
       return id;
     },
 
     // Remove an edge
-    removeEdge: (edgeId) => {
-      withHistory((state) => ({
+    removeEdge: (edgeId, context) => {
+      const { recordHistory, shouldLog } = resolveActionContext(context);
+      const existingEdge = get().edges.find((edge) => edge.id === edgeId);
+      applyUpdate((state) => ({
         edges: state.edges.filter((edge) => edge.id !== edgeId),
-      }));
+      }), recordHistory);
+      if (shouldLog) {
+        logCanvasAction(
+          "edge_deleted",
+          { edge: existingEdge ? buildEdgePayload(existingEdge) : { id: edgeId } },
+          { summary: "Edge deleted", workspaceId: get().canvasId }
+        );
+      }
     },
 
     // Update edge properties
-    updateEdge: (edgeId, updates) => {
-      withHistory((state) => ({
+    updateEdge: (edgeId, updates, context) => {
+      const { recordHistory, shouldLog } = resolveActionContext(context);
+      const existingEdge = get().edges.find((edge) => edge.id === edgeId);
+      applyUpdate((state) => ({
         edges: state.edges.map((edge) =>
           edge.id === edgeId ? { ...edge, ...updates } : edge
         ),
-      }));
+      }), recordHistory);
+      if (shouldLog && existingEdge) {
+        const nextEdge = { ...existingEdge, ...updates };
+        logCanvasAction(
+          "edge_updated",
+          {
+            edge: buildEdgePayload(nextEdge),
+            updates,
+            previous: {
+              relationType: existingEdge.relationType,
+              label: existingEdge.label,
+            },
+          },
+          { summary: "Edge updated", workspaceId: get().canvasId }
+        );
+      }
     },
 
     // Set all edges (for bulk loading) - doesn't record history

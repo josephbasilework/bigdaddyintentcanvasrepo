@@ -157,12 +157,15 @@ export function Node({
 
   const handleDrag = (e: unknown, data: DraggableData) => {
     // Update node position in store when dragging
-    updateNodePosition(node.id, data.x, data.y);
+    updateNodePosition(node.id, data.x, data.y, undefined, {
+      log: false,
+      recordHistory: false,
+    });
   };
 
   const handleDragStop = (e: unknown, data: DraggableData) => {
     // Final position update when drag stops
-    updateNodePosition(node.id, data.x, data.y);
+    updateNodePosition(node.id, data.x, data.y, undefined, { log: true });
     setIsDragging(false);
   };
 
