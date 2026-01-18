@@ -30,6 +30,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useChatTurns } from "@/hooks/useChatTurns";
 import { useTurns } from "@/hooks/useTurns";
 import { useContextPreview } from "@/hooks/useContextPreview";
+import { useOfflineQueueReplay } from "@/hooks/useOfflineQueueReplay";
 import { useWebSocketEnhanced, type WebSocketMessage } from "@/hooks/useWebSocketEnhanced";
 import { createAGUIClient } from "@/agui/client";
 import type { NodeContext, SelectionScope } from "@/types/contextPreview";
@@ -38,6 +39,13 @@ import {
   type AttachmentListResponse,
   normalizeAttachment,
 } from "@/lib/attachments";
+import {
+  createOfflineQueueId,
+  shouldQueueOfflineRequest,
+  type OfflineRequestData,
+  useOfflineQueueStore,
+} from "@/state/offlineQueueStore";
+import { setLastSyncedTurnSequence } from "@/utils/turnSequence";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -753,14 +761,36 @@ export default function Home() {
   const {
     sessionId: wsSessionId,
     connectionState: wsConnectionState,
+  } = useWebSocketEnhanced({
+    url: WS_URL,
+    onMessage: handleWebSocketMessage,
+  });
+
+  const {
     queuedEvents,
     updateQueuedEvent,
     deleteQueuedEvent,
     isFlushingQueue,
     lastFlushedEventCount,
-  } = useWebSocketEnhanced({
-    url: WS_URL,
-    onMessage: handleWebSocketMessage,
+  } = useOfflineQueueStore((state) => ({
+    queuedEvents: state.queue,
+    updateQueuedEvent: state.updateQueuedEvent,
+    deleteQueuedEvent: state.deleteQueuedEvent,
+    isFlushingQueue: state.isFlushingQueue,
+    lastFlushedEventCount: state.lastFlushedEventCount,
+  }));
+
+  useEffect(() => {
+    useOfflineQueueStore.getState().setConnectionState(wsConnectionState);
+  }, [wsConnectionState]);
+
+  useEffect(() => {
+    useOfflineQueueStore.getState().setSessionId(wsSessionId ?? null);
+  }, [wsSessionId]);
+
+  useOfflineQueueReplay({
+    sessionId: wsSessionId ?? null,
+    connectionState: wsConnectionState,
   });
 
   const aguiGatewayUrl = useMemo(() => {
@@ -1024,35 +1054,103 @@ export default function Home() {
     []
   );
 
+  const extractSequenceNumber = (payload: unknown): number | null => {
+    if (!payload || typeof payload !== "object") {
+      return null;
+    }
+    const candidate = payload as { sequenceNumber?: unknown; sequence_number?: unknown };
+    if (typeof candidate.sequenceNumber === "number") {
+      return candidate.sequenceNumber;
+    }
+    if (typeof candidate.sequence_number === "number") {
+      return candidate.sequence_number;
+    }
+    return null;
+  };
+
   const queueCommand = async (
     value: string,
     attachmentsForSubmission: string[],
     attachmentsSnapshot: AttachmentItem[],
     selection: SelectionScope
   ) => {
-    const response = await fetch(`${API_BASE_URL}/api/commands`, {
+    const clientRequestId = createOfflineQueueId();
+    const sessionId = wsSessionId ?? undefined;
+    const body = {
+      command: value,
+      attachments: attachmentsForSubmission,
+      selection,
+      session_id: sessionId,
+      client_request_id: clientRequestId,
+    };
+    const request: OfflineRequestData = {
+      url: `${API_BASE_URL}/api/commands`,
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        command: value,
-        attachments: attachmentsForSubmission,
-        selection,
-        session_id: wsSessionId,
-      }),
-    });
+      headers: { "Content-Type": "application/json" },
+      body,
+      kind: "command",
+      sessionId: sessionId ?? "",
+    };
+
+    const offlineState = useOfflineQueueStore.getState();
+    const isNavigatorOnline =
+      typeof navigator === "undefined" ? true : navigator.onLine;
+    const shouldQueue = !isNavigatorOnline || shouldQueueOfflineRequest(offlineState);
+
+    const commitQueuedCommand = (id: string) => {
+      setCommands((prev) => [
+        ...prev,
+        { id, text: value, attachments: attachmentsSnapshot },
+      ]);
+      setAttachments([]);
+    };
+
+    if (sessionId && shouldQueue) {
+      offlineState.enqueue(request, { id: clientRequestId });
+      commitQueuedCommand(clientRequestId);
+      return;
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: JSON.stringify(body),
+      });
+    } catch (error) {
+      if (sessionId) {
+        useOfflineQueueStore.getState().enqueue(request, { id: clientRequestId });
+        commitQueuedCommand(clientRequestId);
+        return;
+      }
+      throw error;
+    }
 
     if (!response.ok) {
+      if (response.status >= 500 && sessionId) {
+        useOfflineQueueStore.getState().enqueue(request, { id: clientRequestId });
+        commitQueuedCommand(clientRequestId);
+        return;
+      }
       throw new Error(`API error: ${response.status} ${response.statusText}`);
     }
 
-    const data: { correlation_id: string; status: string } = await response.json();
+    const data: {
+      correlation_id: string;
+      status: string;
+      sequenceNumber?: number;
+      sequence_number?: number;
+    } = await response.json();
     setCommands((prev) => [
       ...prev,
       { id: data.correlation_id, text: value, attachments: attachmentsSnapshot },
     ]);
     setAttachments([]);
+    const sequenceNumber = extractSequenceNumber(data);
+    if (sessionId && sequenceNumber !== null) {
+      setLastSyncedTurnSequence(sessionId, sequenceNumber);
+    }
     // Node creation is now handled by the backend via WebSocket broadcast
     // The handleWebSocketMessage callback will add the node when it receives "node.created"
   };

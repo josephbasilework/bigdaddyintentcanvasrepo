@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { TurnListResponse, TurnResponse } from "./turnTypes";
 import { getAGUIClient } from "../agui/client";
+import { setLastSyncedTurnSequence } from "../utils/turnSequence";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -124,6 +125,7 @@ export const useTurns = ({
           afterSequence ?? -1
         );
         lastSequenceBySession.current.set(sessionId, maxSequence);
+        setLastSyncedTurnSequence(sessionId, maxSequence);
       }
       return allTurns;
     },
@@ -222,6 +224,7 @@ export const useTurns = ({
         return;
       }
       lastSequenceBySession.current.set(payload.sessionId, payload.sequenceNumber);
+      setLastSyncedTurnSequence(payload.sessionId, payload.sequenceNumber);
       setTurns((current) => mergeTurns(current, [payload]));
     });
 

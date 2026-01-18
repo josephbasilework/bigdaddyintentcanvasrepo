@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { MutableRefObject, ReactNode } from 'react';
 import { useCanvasStore } from '../state/canvasStore';
+import { useOfflineQueueStore } from '../state/offlineQueueStore';
 import Home from '../app/page';
 
 const wsMessageHandler = vi.hoisted(() => ({
@@ -73,7 +74,7 @@ vi.mock('react-draggable', () => ({
 vi.mock('@/hooks/useWebSocketEnhanced', () => ({
   useWebSocketEnhanced: ({ onMessage }: { onMessage?: (message: { type: string; payload?: unknown }) => void } = {}) => {
     wsMessageHandler.current = onMessage;
-    return { sessionId: 'session-123' };
+    return { sessionId: 'session-123', connectionState: 'open' };
   },
 }));
 
@@ -105,6 +106,14 @@ describe('workspace canvas', () => {
       isAutoExpanding: false,
       past: [],
       future: [],
+    });
+    useOfflineQueueStore.setState({
+      activeSessionId: null,
+      connectionState: 'closed',
+      queue: [],
+      isFlushingQueue: false,
+      lastFlushedEventCount: 0,
+      lastFlushTimestamp: null,
     });
 
     fetchMock = vi.fn().mockResolvedValue(createResponse({ nodes: [], edges: [] }));

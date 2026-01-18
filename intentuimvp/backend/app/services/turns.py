@@ -401,10 +401,17 @@ def log_turn_with_session_id_sync(
     related_edge_id: int | None = None,
     origin_sequence_number: int | None = None,
     sequence_number: int | None = None,
+    client_request_id: str | None = None,
 ) -> Turn | None:
     """Create a turn for a known session_id, logging failures."""
     try:
         repo = TurnRepository(db)
+        if client_request_id:
+            existing = repo.get_turn_by_client_request_id(
+                session_id, client_request_id
+            )
+            if existing:
+                return existing
         turn = repo.create_turn(
             session_id=session_id,
             actor=actor,
@@ -415,7 +422,10 @@ def log_turn_with_session_id_sync(
             related_edge_id=related_edge_id,
             origin_sequence_number=origin_sequence_number,
             sequence_number=sequence_number,
+            client_request_id=client_request_id,
         )
+        if client_request_id and getattr(turn, "_was_existing", False):
+            return turn
         _persist_turn_snapshot_sync(db, session_id, turn)
         event = _emit_event_for_turn_sync(db, turn)
         turn_response = _build_turn_response(turn)
@@ -454,6 +464,7 @@ def log_turn_for_user_sync(
     related_edge_id: int | None = None,
     origin_sequence_number: int | None = None,
     sequence_number: int | None = None,
+    client_request_id: str | None = None,
 ) -> Turn | None:
     """Resolve session and log a turn, logging failures."""
     resolved_session_id = resolve_session_id_sync(
@@ -476,6 +487,7 @@ def log_turn_for_user_sync(
         related_edge_id=related_edge_id,
         origin_sequence_number=origin_sequence_number,
         sequence_number=sequence_number,
+        client_request_id=client_request_id,
     )
 
 
@@ -491,10 +503,17 @@ async def log_turn_with_session_id_async(
     related_edge_id: int | None = None,
     origin_sequence_number: int | None = None,
     sequence_number: int | None = None,
+    client_request_id: str | None = None,
 ) -> Turn | None:
     """Create a turn for a known session_id, logging failures."""
     try:
         repo = AsyncTurnRepository(db)
+        if client_request_id:
+            existing = await repo.get_turn_by_client_request_id(
+                session_id, client_request_id
+            )
+            if existing:
+                return existing
         turn = await repo.create_turn(
             session_id=session_id,
             actor=actor,
@@ -505,7 +524,10 @@ async def log_turn_with_session_id_async(
             related_edge_id=related_edge_id,
             origin_sequence_number=origin_sequence_number,
             sequence_number=sequence_number,
+            client_request_id=client_request_id,
         )
+        if client_request_id and getattr(turn, "_was_existing", False):
+            return turn
         await _persist_turn_snapshot_async(db, session_id, turn)
         event = await _emit_event_for_turn_async(db, turn)
         turn_response = _build_turn_response(turn)
@@ -544,6 +566,7 @@ async def log_turn_for_user_async(
     related_edge_id: int | None = None,
     origin_sequence_number: int | None = None,
     sequence_number: int | None = None,
+    client_request_id: str | None = None,
 ) -> Turn | None:
     """Resolve session and log a turn, logging failures."""
     resolved_session_id = await resolve_session_id_async(
@@ -566,6 +589,7 @@ async def log_turn_for_user_async(
         related_edge_id=related_edge_id,
         origin_sequence_number=origin_sequence_number,
         sequence_number=sequence_number,
+        client_request_id=client_request_id,
     )
 
 
@@ -580,6 +604,7 @@ async def log_turn_with_new_async_session(
     related_edge_id: int | None = None,
     origin_sequence_number: int | None = None,
     sequence_number: int | None = None,
+    client_request_id: str | None = None,
 ) -> Turn | None:
     """Log a turn using a new AsyncSessionLocal session."""
     async with AsyncSessionLocal() as db:
@@ -594,6 +619,7 @@ async def log_turn_with_new_async_session(
             related_edge_id=related_edge_id,
             origin_sequence_number=origin_sequence_number,
             sequence_number=sequence_number,
+            client_request_id=client_request_id,
         )
 
 

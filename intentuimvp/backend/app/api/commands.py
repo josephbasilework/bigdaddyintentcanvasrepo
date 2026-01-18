@@ -37,6 +37,9 @@ class CommandSubmissionRequest(BaseModel):
     session_id: str | None = Field(
         default=None, description="Optional session ID for turn logging"
     )
+    client_request_id: str | None = Field(
+        default=None, description="Optional client request ID for idempotent replay"
+    )
 
 
 class CommandSubmissionResponse(BaseModel):
@@ -44,6 +47,8 @@ class CommandSubmissionResponse(BaseModel):
 
     correlation_id: str
     status: str
+    turnId: int | None = None
+    sequenceNumber: int | None = None
 
 
 @dataclass(frozen=True)
@@ -178,6 +183,7 @@ async def submit_command(
             else None,
             "correlation_id": correlation_id,
         },
+        client_request_id=payload.client_request_id,
     )
     if turn and payload.attachments:
         try:
@@ -207,4 +213,9 @@ async def submit_command(
                 exc_info=True,
             )
 
-    return CommandSubmissionResponse(correlation_id=correlation_id, status="queued")
+    return CommandSubmissionResponse(
+        correlation_id=correlation_id,
+        status="queued",
+        turnId=turn.id if turn else None,
+        sequenceNumber=turn.sequence_number if turn else None,
+    )

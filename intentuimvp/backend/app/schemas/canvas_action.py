@@ -26,6 +26,10 @@ class CanvasActionRequest(BaseModel):
     session_id: str | None = Field(
         default=None, description="Optional session ID for turn logging"
     )
+    client_request_id: str | None = Field(
+        default=None,
+        description="Optional client request ID for idempotent replay",
+    )
     workspace_id: int | None = Field(
         default=None, description="Optional canvas/workspace identifier"
     )
@@ -43,6 +47,9 @@ class CanvasActionResponse(BaseModel):
     status: str = Field(default="logged", description="Status of the logging request")
     turnId: int = Field(..., description="Persisted turn identifier")
     sessionId: str = Field(..., description="Session ID associated with the turn")
+    sequenceNumber: int | None = Field(
+        default=None, description="Sequential turn number for the session"
+    )
     eventType: str | None = Field(
         default=None, description="Resolved event type for the turn"
     )

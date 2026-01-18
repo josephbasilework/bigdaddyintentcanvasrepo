@@ -104,6 +104,21 @@ class TurnRepository:
         )
         return (result or 0) + 1
 
+    def get_turn_by_client_request_id(
+        self, session_id: str, client_request_id: str
+    ) -> Turn | None:
+        """Get a turn by client request ID (idempotency key)."""
+        if not client_request_id:
+            return None
+        return (
+            self.db.query(Turn)
+            .filter(
+                Turn.session_id == session_id,
+                Turn.client_request_id == client_request_id,
+            )
+            .first()
+        )
+
     def create_turn(
         self,
         session_id: str,
@@ -115,6 +130,7 @@ class TurnRepository:
         related_edge_id: int | None = None,
         origin_sequence_number: int | None = None,
         sequence_number: int | None = None,
+        client_request_id: str | None = None,
     ) -> Turn:
         """Create a new turn in the session.
 
@@ -132,6 +148,19 @@ class TurnRepository:
         Returns:
             Created Turn
         """
+        if client_request_id:
+            existing = (
+                self.db.query(Turn)
+                .filter(
+                    Turn.session_id == session_id,
+                    Turn.client_request_id == client_request_id,
+                )
+                .first()
+            )
+            if existing:
+                setattr(existing, "_was_existing", True)
+                return existing
+
         explicit_sequence_number = sequence_number is not None
         if origin_sequence_number is not None:
             origin_turn = self.get_turn_by_sequence(session_id, origin_sequence_number)
@@ -162,6 +191,7 @@ class TurnRepository:
                 related_node_id=related_node_id,
                 related_edge_id=related_edge_id,
                 origin_sequence_number=origin_sequence_number,
+                client_request_id=client_request_id,
             )
             if payload:
                 turn.set_payload(payload)
@@ -173,6 +203,18 @@ class TurnRepository:
                 break
             except IntegrityError:
                 self.db.rollback()
+                if client_request_id:
+                    existing = (
+                        self.db.query(Turn)
+                        .filter(
+                            Turn.session_id == session_id,
+                            Turn.client_request_id == client_request_id,
+                        )
+                        .first()
+                    )
+                    if existing:
+                        setattr(existing, "_was_existing", True)
+                        return existing
                 if explicit_sequence_number:
                     raise
                 attempt += 1
@@ -386,6 +428,20 @@ class AsyncTurnRepository:
         max_seq = result.scalar()
         return (max_seq or 0) + 1
 
+    async def get_turn_by_client_request_id(
+        self, session_id: str, client_request_id: str
+    ) -> Turn | None:
+        """Get a turn by client request ID (idempotency key)."""
+        if not client_request_id:
+            return None
+        result = await self.db.execute(
+            select(Turn).filter(
+                Turn.session_id == session_id,
+                Turn.client_request_id == client_request_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def create_turn(
         self,
         session_id: str,
@@ -397,6 +453,7 @@ class AsyncTurnRepository:
         related_edge_id: int | None = None,
         origin_sequence_number: int | None = None,
         sequence_number: int | None = None,
+        client_request_id: str | None = None,
     ) -> Turn:
         """Create a new turn in the session.
 
@@ -414,6 +471,18 @@ class AsyncTurnRepository:
         Returns:
             Created Turn
         """
+        if client_request_id:
+            existing_result = await self.db.execute(
+                select(Turn).filter(
+                    Turn.session_id == session_id,
+                    Turn.client_request_id == client_request_id,
+                )
+            )
+            existing = existing_result.scalar_one_or_none()
+            if existing:
+                setattr(existing, "_was_existing", True)
+                return existing
+
         explicit_sequence_number = sequence_number is not None
         if origin_sequence_number is not None:
             origin_turn = await self.db.execute(
@@ -449,6 +518,7 @@ class AsyncTurnRepository:
                 related_node_id=related_node_id,
                 related_edge_id=related_edge_id,
                 origin_sequence_number=origin_sequence_number,
+                client_request_id=client_request_id,
             )
             if payload:
                 turn.set_payload(payload)
@@ -460,6 +530,17 @@ class AsyncTurnRepository:
                 break
             except IntegrityError:
                 await self.db.rollback()
+                if client_request_id:
+                    existing_result = await self.db.execute(
+                        select(Turn).filter(
+                            Turn.session_id == session_id,
+                            Turn.client_request_id == client_request_id,
+                        )
+                    )
+                    existing = existing_result.scalar_one_or_none()
+                    if existing:
+                        setattr(existing, "_was_existing", True)
+                        return existing
                 if explicit_sequence_number:
                     raise
                 attempt += 1

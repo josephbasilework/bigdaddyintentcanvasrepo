@@ -1,4 +1,11 @@
 import { create } from 'zustand';
+import {
+  createOfflineQueueId,
+  shouldQueueOfflineRequest,
+  type OfflineRequestData,
+  useOfflineQueueStore,
+} from './offlineQueueStore';
+import { setLastSyncedTurnSequence } from '../utils/turnSequence';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const SESSION_ID_STORAGE_KEY = "intentui_workspace_session_id";
@@ -323,6 +330,20 @@ const buildEdgePayload = (edge: CanvasEdge): Record<string, unknown> => ({
   label: edge.label,
 });
 
+const extractSequenceNumber = (payload: unknown): number | null => {
+  if (!payload || typeof payload !== "object") {
+    return null;
+  }
+  const candidate = payload as { sequenceNumber?: unknown; sequence_number?: unknown };
+  if (typeof candidate.sequenceNumber === "number") {
+    return candidate.sequenceNumber;
+  }
+  if (typeof candidate.sequence_number === "number") {
+    return candidate.sequence_number;
+  }
+  return null;
+};
+
 const logCanvasAction = (
   action: CanvasActionType,
   payload: Record<string, unknown>,
@@ -335,7 +356,12 @@ const logCanvasAction = (
     return;
   }
   const sessionId = getOrCreateSessionId();
-  const body: Record<string, unknown> = { action, payload };
+  const clientRequestId = createOfflineQueueId();
+  const body: Record<string, unknown> = {
+    action,
+    payload,
+    client_request_id: clientRequestId,
+  };
   if (sessionId) {
     body.session_id = sessionId;
   }
@@ -346,13 +372,57 @@ const logCanvasAction = (
     body.summary = options.summary;
   }
 
-  void fetch(`${API_BASE_URL}/api/canvas/actions`, {
+  const request: OfflineRequestData = {
+    url: `${API_BASE_URL}/api/canvas/actions`,
     method: "POST",
     headers: { "Content-Type": "application/json" },
+    body,
+    kind: "canvas_action",
+    sessionId: sessionId ?? "",
+  };
+
+  const offlineState = useOfflineQueueStore.getState();
+  const isNavigatorOnline =
+    typeof navigator === "undefined" ? true : navigator.onLine;
+  const shouldQueue = !isNavigatorOnline || shouldQueueOfflineRequest(offlineState);
+
+  if (sessionId && shouldQueue) {
+    offlineState.enqueue(request, { id: clientRequestId });
+    return;
+  }
+
+  void fetch(request.url, {
+    method: request.method,
+    headers: request.headers,
     body: JSON.stringify(body),
-  }).catch((error) => {
-    console.warn("Failed to log canvas action:", error);
-  });
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        const error = new Error(
+          `Canvas action failed: ${response.status} ${response.statusText}`
+        ) as Error & { status?: number };
+        error.status = response.status;
+        throw error;
+      }
+      try {
+        const data = await response.json();
+        const sequenceNumber = extractSequenceNumber(data);
+        if (sessionId && sequenceNumber !== null) {
+          setLastSyncedTurnSequence(sessionId, sequenceNumber);
+        }
+      } catch {
+        // ignore response parsing errors
+      }
+    })
+    .catch((error) => {
+      const status = typeof (error as { status?: number })?.status === "number"
+        ? (error as { status?: number }).status
+        : undefined;
+      if (sessionId && (status === undefined || status >= 500)) {
+        useOfflineQueueStore.getState().enqueue(request, { id: clientRequestId });
+      }
+      console.warn("Failed to log canvas action:", error);
+    });
 };
 
 // History snapshot type

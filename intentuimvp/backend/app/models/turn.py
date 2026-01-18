@@ -204,6 +204,11 @@ class Turn(Base):
             "sequence_number",
             name="uq_turn_session_sequence",
         ),
+        UniqueConstraint(
+            "session_id",
+            "client_request_id",
+            name="uq_turn_session_client_request",
+        ),
     )
 
     # Primary key
@@ -215,6 +220,12 @@ class Turn(Base):
     )
     sequence_number: Mapped[int] = mapped_column(
         Integer, nullable=False, comment="Monotonic sequence number within session"
+    )
+    client_request_id: Mapped[str | None] = mapped_column(
+        String,
+        nullable=True,
+        index=True,
+        comment="Client-provided idempotency key for offline replay",
     )
 
     # Timing

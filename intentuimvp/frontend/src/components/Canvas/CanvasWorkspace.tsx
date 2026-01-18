@@ -61,7 +61,7 @@ const getOptionalNumber = (value: unknown): number | null => {
   return null;
 };
 
-const resolveCanvasMeta = (value: unknown): { id: number | null; name: string | null } => {
+export const resolveCanvasMeta = (value: unknown): { id: number | null; name: string | null } => {
   if (!isRecord(value)) {
     return { id: null, name: null };
   }

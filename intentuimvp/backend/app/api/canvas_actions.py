@@ -197,6 +197,7 @@ def log_canvas_action(
         related_node_id=related_node_id,
         related_edge_id=related_edge_id,
         origin_sequence_number=origin_sequence_number,
+        client_request_id=payload.client_request_id,
     )
     if not turn:
         logger.error(
@@ -212,5 +213,6 @@ def log_canvas_action(
         status="logged",
         turnId=turn.id,
         sessionId=turn.session_id,
+        sequenceNumber=turn.sequence_number,
         eventType=event_type,
     )

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState, type CSSProperties } from "react";
-import type { QueuedEvent } from "@/hooks/useWebSocketEnhanced";
+import type { OfflineQueuedEvent as QueuedEvent } from "@/state/offlineQueueStore";
 
 type ConnectionState = "connecting" | "open" | "closed" | "error";
 

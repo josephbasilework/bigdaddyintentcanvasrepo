@@ -106,6 +106,7 @@ def test_canvas_action_creates_turns_and_events(
     data = response.json()
     assert data["status"] == "logged"
     assert data["sessionId"] == session_id
+    assert isinstance(data.get("sequenceNumber"), int)
     created_turn_id = data["turnId"]
 
     update_payload = {
@@ -139,5 +140,40 @@ def test_canvas_action_creates_turns_and_events(
         event_types = {event.event_type for event in events}
         assert "node.created" in event_types
         assert "node.updated" in event_types
+    finally:
+        db.close()
+
+
+def test_canvas_action_idempotent_client_request_id(
+    client: testclient.TestClient,
+    test_engine,
+) -> None:
+    """Canvas actions should de-dupe when client_request_id is reused."""
+    canvas_id, node_id = _seed_canvas_with_node(test_engine)
+    session_id = "session-xyz"
+
+    payload = {
+        "action": "node_created",
+        "workspace_id": canvas_id,
+        "session_id": session_id,
+        "client_request_id": "req-123",
+        "payload": {"node": {"id": node_id, "title": "Seed Node", "x": 0, "y": 0}},
+    }
+
+    response = client.post("/api/canvas/actions", json=payload)
+    assert response.status_code == 201
+    first_turn_id = response.json()["turnId"]
+
+    response = client.post("/api/canvas/actions", json=payload)
+    assert response.status_code == 201
+    second_turn_id = response.json()["turnId"]
+
+    assert first_turn_id == second_turn_id
+
+    session_local = sessionmaker(bind=test_engine)
+    db = session_local()
+    try:
+        turns = db.query(Turn).filter(Turn.session_id == session_id).all()
+        assert len(turns) == 1
     finally:
         db.close()
