@@ -78,9 +78,12 @@ export function Node({
       )
   );
   const showCalendarSyncButton = isSelected && hasCalendarSuggestions;
+  const isTextNode = node.type === "text";
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
   const [deleteDialog, setDeleteDialog] = useState<{
     nodeIds: string[];
     edgeCount: number;
@@ -101,6 +104,7 @@ export function Node({
   const [isPerspectiveRerunOpen, setIsPerspectiveRerunOpen] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
   const focusFromPointerRef = useRef(false);
+  const skipTitleCommitRef = useRef(false);
   const scale = useTransformComponent(({ state }) => state.scale);
   const isAutoExpanding = useCanvasStore((state) => state.isAutoExpanding);
   const descriptionId = useId();
@@ -120,6 +124,7 @@ export function Node({
     metadataKeys.length > 0 ? `Metadata keys: ${metadataKeys.join(", ")}.` : null,
   ].filter(Boolean);
   const descriptionText = descriptionParts.join(" ");
+
 
   const handleDragStart = () => {
     setIsDragging(true);
@@ -179,20 +184,117 @@ export function Node({
     setContextMenu({ x: e.clientX, y: e.clientY });
   };
 
+  const openExpanded = useCallback(() => {
+    setIsExpanded(true);
+    setEditContent(node.content || "");
+  }, [node.content]);
+
+  const closeExpanded = useCallback(() => {
+    skipTitleCommitRef.current = true;
+    setIsExpanded(false);
+    setIsEditingTitle(false);
+    setEditTitle(node.title);
+    setEditContent(node.content || "");
+  }, [node.content, node.title]);
+
   const handleEdit = () => {
     setEditTitle(node.title);
     setEditContent(node.content || "");
+    if (isTextNode) {
+      openExpanded();
+      setIsEditingTitle(true);
+      return;
+    }
     setIsEditing(true);
   };
 
   const handleSaveEdit = () => {
-    updateNode(node.id, { title: editTitle, content: editContent });
+    const trimmed = editTitle.trim();
+    const nextTitle = trimmed.length > 0 ? trimmed : "Untitled";
+    updateNode(node.id, { title: nextTitle, content: editContent });
     setIsEditing(false);
   };
 
   const handleCancelEdit = () => {
     setIsEditing(false);
   };
+
+  const handleTitleEditStart = useCallback(
+    (event?: React.MouseEvent) => {
+      if (event) {
+        event.stopPropagation();
+      }
+      if (!isTextNode) return;
+      setEditTitle(node.title);
+      openExpanded();
+      setIsEditingTitle(true);
+    },
+    [isTextNode, node.title, openExpanded]
+  );
+
+  const commitTitle = useCallback(() => {
+    if (skipTitleCommitRef.current) {
+      skipTitleCommitRef.current = false;
+      return;
+    }
+    const trimmed = editTitle.trim();
+    const nextTitle = trimmed.length > 0 ? trimmed : "Untitled";
+    if (nextTitle !== node.title) {
+      updateNode(node.id, { title: nextTitle });
+    }
+    setIsEditingTitle(false);
+  }, [editTitle, node.id, node.title, updateNode]);
+
+  const cancelTitle = useCallback(() => {
+    skipTitleCommitRef.current = true;
+    setEditTitle(node.title);
+    setIsEditingTitle(false);
+  }, [node.title]);
+
+  const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitTitle();
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      cancelTitle();
+    }
+  };
+
+  const handleContentSave = useCallback(() => {
+    if ((node.content || "") !== editContent) {
+      updateNode(node.id, { content: editContent });
+    }
+  }, [editContent, node.content, node.id, updateNode]);
+
+  const handleContentClose = useCallback(() => {
+    closeExpanded();
+  }, [closeExpanded]);
+
+  const handleContentKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      handleContentClose();
+      return;
+    }
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      handleContentSave();
+    }
+  };
+
+  const handleExpandToggle = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      if (isExpanded) {
+        handleContentClose();
+        return;
+      }
+      openExpanded();
+    },
+    [handleContentClose, isExpanded, openExpanded]
+  );
 
   const handleDelete = () => {
     const selectedIds = selectedNodeIds.length > 1 && selectedNodeIds.includes(node.id)
@@ -601,6 +703,7 @@ export function Node({
         onDrag={handleDrag}
         onStop={handleDragStop}
         scale={scale}
+        cancel=".canvas-node__input,.canvas-node__textarea,.canvas-node__button"
       >
         <div
           ref={nodeRef}
@@ -639,17 +742,69 @@ export function Node({
             borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
           }}>
             <span style={{ fontSize: "16px" }}>{getIconForType()}</span>
-            <span style={{
-              fontSize: "14px",
-              fontWeight: 600,
-              color: "#fff",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              flex: 1,
-            }}>
-              {node.title}
-            </span>
+            {isTextNode && isEditingTitle ? (
+              <input
+                id={editTitleId}
+                type="text"
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onKeyDown={handleTitleKeyDown}
+                onBlur={commitTitle}
+                onMouseDown={(event) => event.stopPropagation()}
+                onTouchStart={(event) => event.stopPropagation()}
+                onFocus={() => selectNode(node.id)}
+                aria-label="Edit node title"
+                className="canvas-node__input"
+                style={{
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  color: "#fff",
+                  backgroundColor: "rgba(15, 23, 42, 0.6)",
+                  border: "1px solid rgba(148, 163, 184, 0.5)",
+                  borderRadius: "6px",
+                  padding: "4px 8px",
+                  flex: 1,
+                }}
+                autoFocus
+              />
+            ) : (
+              <span
+                style={{
+                  fontSize: "14px",
+                  fontWeight: 600,
+                  color: "#fff",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  flex: 1,
+                }}
+                onDoubleClick={isTextNode ? handleTitleEditStart : undefined}
+              >
+                {node.title}
+              </span>
+            )}
+            {isTextNode && (
+              <button
+                type="button"
+                onClick={handleExpandToggle}
+                onMouseDown={(event) => event.stopPropagation()}
+                onTouchStart={(event) => event.stopPropagation()}
+                aria-label={`${isExpanded ? "Collapse" : "Expand"} ${node.title} content`}
+                className="canvas-node__button"
+                style={{
+                  border: "1px solid rgba(148, 163, 184, 0.5)",
+                  backgroundColor: "rgba(15, 23, 42, 0.6)",
+                  color: "#e2e8f0",
+                  borderRadius: "999px",
+                  padding: "4px 10px",
+                  fontSize: "11px",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {isExpanded ? "Collapse" : "Expand"}
+              </button>
+            )}
             {showCalendarSyncButton && (
               <button
                 type="button"
@@ -716,6 +871,82 @@ export function Node({
                   : undefined
               }
             />
+          ) : node.type === "text" ? (
+            isExpanded ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                <label
+                  htmlFor={editContentId}
+                  style={{ color: "#a0aec0", fontSize: "12px" }}
+                >
+                  Content
+                </label>
+                <textarea
+                  id={editContentId}
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  onKeyDown={handleContentKeyDown}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onTouchStart={(event) => event.stopPropagation()}
+                  onFocus={() => selectNode(node.id)}
+                  rows={6}
+                  className="canvas-node__textarea"
+                  style={{
+                    width: "100%",
+                    padding: "8px 12px",
+                    backgroundColor: "rgba(15, 23, 42, 0.6)",
+                    border: "1px solid rgba(148, 163, 184, 0.5)",
+                    borderRadius: "6px",
+                    color: "#e2e8f0",
+                    fontSize: "13px",
+                    boxSizing: "border-box",
+                    resize: "vertical",
+                  }}
+                  placeholder="Add details..."
+                />
+                <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    onClick={handleContentClose}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onTouchStart={(event) => event.stopPropagation()}
+                    className="canvas-node__button"
+                    style={{
+                      padding: "6px 12px",
+                      backgroundColor: "rgba(148, 163, 184, 0.2)",
+                      border: "1px solid rgba(148, 163, 184, 0.4)",
+                      borderRadius: "6px",
+                      color: "#e2e8f0",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                    }}
+                  >
+                    Close
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleContentSave}
+                    onMouseDown={(event) => event.stopPropagation()}
+                    onTouchStart={(event) => event.stopPropagation()}
+                    className="canvas-node__button"
+                    style={{
+                      padding: "6px 12px",
+                      backgroundColor: "rgba(66, 153, 225, 0.7)",
+                      border: "1px solid rgba(66, 153, 225, 0.9)",
+                      borderRadius: "6px",
+                      color: "#fff",
+                      cursor: "pointer",
+                      fontSize: "12px",
+                    }}
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+            ) : node.content ? (
+              <div style={{ fontSize: "12px", color: "#94a3b8" }}>
+                Expand to view content.
+              </div>
+            ) : null
           ) : node.content && (
             <div style={{
               fontSize: "13px",

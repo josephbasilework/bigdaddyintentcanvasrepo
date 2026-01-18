@@ -161,7 +161,7 @@ class TestWorkspaceEndpoint:
         """Test PUT /api/workspace creates new canvas."""
         payload = {
             "nodes": [
-                {"label": "Node 1", "x": 100, "y": 200, "z": 0},
+                {"label": "Node 1", "content": "Node 1 body", "x": 100, "y": 200, "z": 0},
                 {"label": "Node 2", "x": 300, "y": 400, "z": 0},
             ],
             "name": "test_workspace",
@@ -173,6 +173,7 @@ class TestWorkspaceEndpoint:
         assert data["user_id"] == "default_user"
         assert len(data["nodes"]) == 2
         assert data["nodes"][0]["label"] == "Node 1"
+        assert data["nodes"][0]["content"] == "Node 1 body"
         assert data["nodes"][0]["x"] == 100
         assert data["nodes"][0]["y"] == 200
         assert "id" in data
@@ -193,7 +194,7 @@ class TestWorkspaceEndpoint:
         # Update canvas with different nodes
         payload2 = {
             "nodes": [
-                {"label": "Updated Node 1", "x": 100, "y": 100, "z": 0},
+                {"label": "Updated Node 1", "content": "Updated body", "x": 100, "y": 100, "z": 0},
                 {"label": "Updated Node 2", "x": 200, "y": 200, "z": 0},
             ],
             "name": "update_test",
@@ -205,6 +206,7 @@ class TestWorkspaceEndpoint:
         assert data["id"] == canvas_id
         assert len(data["nodes"]) == 2
         assert data["nodes"][0]["label"] == "Updated Node 1"
+        assert data["nodes"][0]["content"] == "Updated body"
 
     def test_save_workspace_persists_edges_with_labels(
         self,

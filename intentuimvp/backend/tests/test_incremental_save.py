@@ -130,6 +130,40 @@ class TestNodeDiffComputation:
         updates = [c for c in changes if c.action == "update"]
         assert len(updates) == 1
 
+    def test_detects_node_content_change(self, db_session: Session) -> None:
+        """Test that content changes are detected."""
+        canvas = Canvas(user_id="test_user", name="Test")
+        db_session.add(canvas)
+        db_session.commit()
+
+        node = Node(
+            canvas_id=canvas.id,
+            type=NodeType.TEXT,
+            label="Node 1",
+            content="Old content",
+            position='{"x": 100, "y": 200, "z": 0}',
+        )
+        db_session.add(node)
+        db_session.commit()
+
+        incoming_nodes = [
+            {
+                "id": node.id,
+                "label": "Node 1",
+                "type": NodeType.TEXT,
+                "content": "New content",
+                "x": 100,
+                "y": 200,
+                "z": 0,
+            },
+        ]
+
+        existing_nodes = [node]
+        changes = compute_node_diff(existing_nodes, incoming_nodes)
+
+        updates = [c for c in changes if c.action == "update"]
+        assert len(updates) == 1
+
     def test_detects_new_nodes(self, db_session: Session) -> None:
         """Test that new nodes are detected."""
         canvas = Canvas(user_id="test_user", name="Test")

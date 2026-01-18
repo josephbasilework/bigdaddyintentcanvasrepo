@@ -315,9 +315,9 @@ export const normalizeNode = (value: unknown): CanvasNode | null => {
   const titleValue = getString(value.title) ?? getString(value.label);
   const title = titleValue?.trim() || "Untitled";
 
-  const content = getString(value.content);
   const metadataCandidate = value.metadata ?? value.node_metadata ?? value.nodeMetadata;
   const metadata = isRecord(metadataCandidate) ? metadataCandidate : undefined;
+  const content = getString(value.content) ?? getString(metadata?.content);
 
   const planData = [
     value.planData,

@@ -79,6 +79,7 @@ class TestNodeModel:
             canvas_id=canvas.id,
             type=NodeType.TEXT,
             label="Test Node",
+            content=None,
             position='{"x": 100, "y": 200, "z": 0}',
         )
         db_session.add(node)
@@ -89,6 +90,7 @@ class TestNodeModel:
         assert node.canvas_id == canvas.id
         assert node.type == NodeType.TEXT
         assert node.label == "Test Node"
+        assert node.content is None
         assert node.created_at is not None
 
     def test_node_position_methods(self, db_session: Session):
@@ -156,6 +158,7 @@ class TestNodeModel:
             canvas_id=canvas.id,
             type=NodeType.GRAPH,
             label="Graph Node",
+            content="Graph details",
             position='{"x": 10, "y": 20, "z": 0}',
             node_metadata='{"data": "test"}',
         )
@@ -168,6 +171,7 @@ class TestNodeModel:
         assert result["canvasId"] == canvas.id
         assert result["type"] == NodeType.GRAPH
         assert result["label"] == "Graph Node"
+        assert result["content"] == "Graph details"
         assert result["position"] == {"x": 10, "y": 20, "z": 0}
         assert result["metadata"] == {"data": "test"}
         assert "created_at" in result

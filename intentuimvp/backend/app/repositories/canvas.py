@@ -56,6 +56,15 @@ def _metadata_from_node(node_data: dict) -> dict | None:
     return metadata if isinstance(metadata, dict) else None
 
 
+def _content_from_node(node_data: dict, metadata: dict | None) -> str | None:
+    content = node_data.get("content")
+    if isinstance(content, str):
+        return content
+    if metadata and isinstance(metadata.get("content"), str):
+        return metadata.get("content")
+    return None
+
+
 def _resolve_node_id(raw_value: object, node_id_map: dict[str, int]) -> int | None:
     if raw_value is None:
         return None
@@ -208,12 +217,20 @@ class CanvasRepository:
         for node_data in nodes_data:
             position = _position_from_node(node_data)
             node_metadata = _metadata_from_node(node_data)
+            content = _content_from_node(node_data, node_metadata)
             node_type = _coerce_node_type(node_data.get("type"))
+            label = (
+                node_data.get("label")
+                or node_data.get("title")
+                or content
+                or ""
+            )
 
             node = Node(
                 canvas_id=canvas.id,
                 type=node_type,
-                label=node_data.get("label", ""),
+                label=label,
+                content=content,
                 position=json.dumps(position),
                 node_metadata=json.dumps(node_metadata) if node_metadata else None,
             )
@@ -322,12 +339,20 @@ class CanvasRepository:
                 node_data = change.node_data or {}
                 position = _position_from_node(node_data)
                 node_metadata = _metadata_from_node(node_data)
+                content = _content_from_node(node_data, node_metadata)
                 node_type = _coerce_node_type(node_data.get("type"))
+                label = (
+                    node_data.get("label")
+                    or node_data.get("title")
+                    or content
+                    or "Untitled"
+                )
 
                 node = Node(
                     canvas_id=canvas.id,
                     type=node_type,
-                    label=node_data.get("label", "") or "Untitled",
+                    label=label,
+                    content=content,
                     position=json.dumps(position),
                     node_metadata=json.dumps(node_metadata) if node_metadata else None,
                 )
@@ -350,10 +375,17 @@ class CanvasRepository:
                     continue
 
                 node_data = change.node_data or {}
+                node_metadata = _metadata_from_node(node_data)
 
                 # Update label
                 if "label" in node_data:
                     db_node.label = node_data["label"] or "Untitled"
+                elif "title" in node_data and node_data["title"]:
+                    db_node.label = node_data["title"]
+
+                content = _content_from_node(node_data, node_metadata)
+                if "content" in node_data or content is not None:
+                    db_node.content = content
 
                 # Update type
                 if "type" in node_data:
@@ -364,7 +396,6 @@ class CanvasRepository:
                 db_node.position = json.dumps(position)
 
                 # Update metadata
-                node_metadata = _metadata_from_node(node_data)
                 if node_metadata:
                     db_node.node_metadata = json.dumps(node_metadata)
                 elif "metadata" in node_data and node_data["metadata"] is None:
@@ -452,6 +483,7 @@ class CanvasRepository:
                     "id": node.id,
                     "label": node.label,
                     "type": node.type,
+                    "content": node.content,
                     "x": position.get("x", 0),
                     "y": position.get("y", 0),
                     "z": position.get("z", 0),

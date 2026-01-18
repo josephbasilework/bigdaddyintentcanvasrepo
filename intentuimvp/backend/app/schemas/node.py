@@ -93,6 +93,7 @@ class NodeCreateRequest(BaseModel):
     canvas_id: int = Field(..., description="Canvas identifier")
     label: str = Field(..., description="Node label/text")
     type: NodeType = Field(default=NodeType.TEXT, description="Node type")
+    content: str | None = Field(default=None, description="Optional node content")
     position: NodePosition = Field(
         default_factory=NodePosition,
         description="Node position coordinates",
@@ -104,6 +105,7 @@ class NodeUpdateRequest(BaseModel):
     """Request body for updating a node."""
 
     label: str | None = Field(default=None, description="Updated node label")
+    content: str | None = Field(default=None, description="Updated node content")
     type: NodeType | None = Field(default=None, description="Updated node type")
     position: NodePositionUpdate | None = Field(
         default=None,
@@ -121,6 +123,7 @@ class NodeResponse(BaseModel):
     canvas_id: int
     type: NodeType
     label: str
+    content: str | None
     position: NodePosition
     metadata: dict
     created_at: str

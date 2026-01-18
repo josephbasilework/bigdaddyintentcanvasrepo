@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { MutableRefObject, ReactNode } from 'react';
 import { useCanvasStore } from '../state/canvasStore';
 import Home from '../app/page';
@@ -573,6 +573,76 @@ describe('workspace canvas', () => {
     fireEvent.keyDown(node, { key: 'Enter' });
 
     expect(screen.getByDisplayValue('First node')).toBeInTheDocument();
+  });
+
+  it('expands text nodes to edit content inline', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'text',
+            x: 0,
+            y: 0,
+            z: 1,
+            title: 'First node',
+            content: 'Hello world',
+          },
+        ],
+        edges: [],
+      }),
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const node = screen.getByRole('button', { name: /first node/i });
+    expect(screen.queryByText('Hello world')).not.toBeInTheDocument();
+
+    const expandButton = within(node).getByRole('button', { name: /expand first node content/i });
+    fireEvent.click(expandButton);
+
+    const contentBox = within(node).getByRole('textbox', { name: 'Content' });
+    expect(contentBox).toHaveValue('Hello world');
+
+    fireEvent.change(contentBox, { target: { value: 'Updated notes' } });
+    const saveButton = within(node).getByRole('button', { name: 'Save' });
+    fireEvent.click(saveButton);
+
+    expect(useCanvasStore.getState().nodes[0].content).toBe('Updated notes');
+  });
+
+  it('edits text node titles inline', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'text',
+            x: 0,
+            y: 0,
+            z: 1,
+            title: 'First node',
+          },
+        ],
+        edges: [],
+      }),
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    fireEvent.doubleClick(screen.getByText('First node'));
+
+    const titleInput = screen.getByRole('textbox', { name: /edit node title/i });
+    fireEvent.change(titleInput, { target: { value: 'Renamed node' } });
+    fireEvent.keyDown(titleInput, { key: 'Enter' });
+
+    expect(useCanvasStore.getState().nodes[0].title).toBe('Renamed node');
   });
 
   it('supports additive and toggle multi-selection via clicks', async () => {

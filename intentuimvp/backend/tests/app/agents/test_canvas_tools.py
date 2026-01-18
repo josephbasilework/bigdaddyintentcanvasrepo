@@ -40,6 +40,7 @@ async def test_canvas_create_node_tool_creates_node() -> None:
 
     assert node is not None
     assert node.label == label
+    assert node.content == label
     assert node.type == NodeType.TEXT
     assert node.get_position() == {"x": 12.5, "y": 3.25, "z": 0.0}
     assert node.get_metadata() == {"source": "tool-test"}
@@ -153,6 +154,7 @@ async def test_canvas_update_node_tool_accepts_content_alias() -> None:
 
     assert updated_node is not None
     assert updated_node.label == f"tool-content-updated-{token}"
+    assert updated_node.content == f"tool-content-updated-{token}"
 
 
 @pytest.mark.asyncio

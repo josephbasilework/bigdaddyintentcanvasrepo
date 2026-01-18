@@ -55,7 +55,7 @@ class NodeData(BaseModel):
         label = values.get("label")
         if label:
             return values
-        title = values.get("title")
+        title = values.get("title") or values.get("content")
         return {**values, "label": title or "Untitled"}
 
 

@@ -81,6 +81,10 @@ def _node_has_changes(db_node: Node, node_data: dict[str, Any]) -> bool:
             # Invalid type, treat as change
             return True
 
+    # Check content
+    if db_node.content != node_data.get("content"):
+        return True
+
     # Check position
     position = node_data.get("position")
     if isinstance(position, dict):

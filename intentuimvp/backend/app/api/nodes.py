@@ -50,6 +50,7 @@ def _serialize_node(node: Node) -> dict[str, Any]:
         "canvas_id": node.canvas_id,
         "type": node.type,
         "label": node.label,
+        "content": node.content,
         "position": node.get_position(),
         "metadata": node.get_metadata(),
         "created_at": node.created_at.isoformat(),
@@ -82,6 +83,7 @@ async def create_node(
             label=payload.label,
             type=payload.type,
             position=payload.position.model_dump(),
+            content=payload.content,
             node_metadata=payload.metadata,
         )
         node_payload = _serialize_node(node)
@@ -227,6 +229,8 @@ async def update_node(
                 detail="Label cannot be null",
             )
         updates["label"] = payload.label
+    if "content" in fields_set:
+        updates["content"] = payload.content
     if "type" in fields_set:
         if payload.type is None:
             raise HTTPException(

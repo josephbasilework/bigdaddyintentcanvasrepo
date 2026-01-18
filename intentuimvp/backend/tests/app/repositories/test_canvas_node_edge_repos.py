@@ -218,12 +218,14 @@ class TestNodeRepository:
             label="Test Node",
             type=NodeType.TEXT,
             position={"x": 100, "y": 200, "z": 0},
+            content="Detail",
             node_metadata={"color": "blue"},
         )
 
         assert node.id is not None
         assert node.canvas_id == canvas.id
         assert node.label == "Test Node"
+        assert node.content == "Detail"
         assert node.type == NodeType.TEXT
         assert node.get_position() == {"x": 100, "y": 200, "z": 0}
         assert node.get_metadata() == {"color": "blue"}

@@ -823,7 +823,9 @@ def _merge_nodes(nodes_by_id: dict[str, ContextNode], nodes: Iterable[Node]) -> 
         node_id = str(node.id)
         existing = nodes_by_id.get(node_id)
         metadata = node.get_metadata() if hasattr(node, "get_metadata") else {}
-        content = metadata.get("content") if isinstance(metadata, Mapping) else None
+        content = getattr(node, "content", None)
+        if not content and isinstance(metadata, Mapping):
+            content = metadata.get("content")
         if not content:
             content = node.label
         if existing is None:

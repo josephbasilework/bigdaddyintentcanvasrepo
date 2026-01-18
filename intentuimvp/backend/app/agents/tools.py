@@ -142,7 +142,7 @@ class CanvasCreateNodeParams(BaseModel):
     """Parameters for creating a canvas node."""
 
     type: NodeType = Field(..., description="Node type")
-    content: str = Field(..., min_length=1, description="Node content/label")
+    content: str = Field(..., min_length=1, description="Node content")
     position: CanvasNodePosition = Field(..., description="Node position")
     metadata: dict[str, Any] | None = Field(
         default=None, description="Optional node metadata"
@@ -258,7 +258,7 @@ class CanvasUpdateNodePatch(BaseModel):
 
     label: str | None = Field(default=None, description="Updated node label")
     content: str | None = Field(
-        default=None, description="Updated node content (alias for label)"
+        default=None, description="Updated node content"
     )
     type: NodeType | None = Field(default=None, description="Updated node type")
     position: CanvasUpdateNodePosition | None = Field(
@@ -621,6 +621,7 @@ class ToolManager:
                         label=params.content,
                         type=params.type,
                         position=params.position.model_dump(),
+                        content=params.content,
                         node_metadata=params.metadata,
                     )
                 except DuplicatePositionError as exc:
@@ -655,6 +656,7 @@ class ToolManager:
                                 label=params.content,
                                 type=params.type,
                                 position=params.position.model_dump(),
+                                content=params.content,
                                 node_metadata=params.metadata,
                             )
                             final_position = params.position
@@ -675,6 +677,7 @@ class ToolManager:
                                 label=params.content,
                                 type=params.type,
                                 position=candidate.model_dump(),
+                                content=params.content,
                                 node_metadata=params.metadata,
                             )
                             final_position = candidate
@@ -806,6 +809,7 @@ class ToolManager:
                         label=spec.title,
                         type=spec.type,
                         position=position.model_dump(),
+                        content=spec.content,
                         node_metadata=node_metadata,
                     )
                     created_nodes[spec.id] = node
@@ -919,18 +923,19 @@ class ToolManager:
 
                 updates: dict[str, Any] = {}
 
-                label_value: str | None = None
                 if "label" in fields_set:
                     if parsed_patch.label is None:
                         raise ValueError("Label cannot be null")
-                    label_value = parsed_patch.label
-                elif "content" in fields_set:
-                    if parsed_patch.content is None:
-                        raise ValueError("Content cannot be null")
-                    label_value = parsed_patch.content
+                    updates["label"] = parsed_patch.label
 
-                if label_value is not None:
-                    updates["label"] = label_value
+                if "content" in fields_set:
+                    updates["content"] = parsed_patch.content
+                    if (
+                        "label" not in fields_set
+                        and parsed_patch.content is not None
+                        and (node.content is None or node.label == node.content)
+                    ):
+                        updates["label"] = parsed_patch.content
 
                 if "type" in fields_set:
                     if parsed_patch.type is None:
@@ -1117,6 +1122,7 @@ class ToolManager:
                 stmt = stmt.where(
                     or_(
                         Node.label.ilike(pattern),
+                        Node.content.ilike(pattern),
                         Node.node_metadata.ilike(pattern),
                     )
                 ).order_by(Node.id)

@@ -43,6 +43,7 @@ class Node(Base):
     )
     type: Mapped[NodeType] = mapped_column(String, nullable=False, default=NodeType.TEXT)
     label: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
     position: Mapped[str] = mapped_column(Text, nullable=False)  # JSON string: {"x": 0, "y": 0, "z": 0}
     node_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON string for additional metadata
     created_at: Mapped[datetime] = mapped_column(
@@ -86,6 +87,7 @@ class Node(Base):
             "canvasId": self.canvas_id,
             "type": self.type,
             "label": self.label,
+            "content": self.content,
             "position": self.get_position(),
             "metadata": self.get_metadata(),
             "created_at": self.created_at.isoformat(),

@@ -158,6 +158,7 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
         label: str,
         type: NodeType = NodeType.TEXT,
         position: dict | None = None,
+        content: str | None = None,
         node_metadata: dict | None = None,
     ) -> Node:
         """Create a new node.
@@ -167,6 +168,7 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
             label: Node label
             type: Node type (default: TEXT)
             position: Position dictionary {"x": 0, "y": 0, "z": 0}
+            content: Optional node content
             node_metadata: Additional metadata dictionary
 
         Returns:
@@ -187,6 +189,7 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
             canvas_id=canvas_id,
             type=type,
             label=label,
+            content=content,
             position=position_json,
             node_metadata=metadata_json,
         )

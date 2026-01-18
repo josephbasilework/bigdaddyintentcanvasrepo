@@ -491,10 +491,6 @@ export default function Home() {
           (nodePayload.label as string | undefined) ??
           (nodePayload.content as string | undefined) ??
           "Untitled";
-        const content =
-          (nodePayload.content as string | undefined) ??
-          (nodePayload.title as string | undefined) ??
-          (nodePayload.label as string | undefined);
         const nodeType =
           (nodePayload.type as string | undefined) ??
           (payload.type as string | undefined) ??
@@ -503,6 +499,9 @@ export default function Home() {
           (nodePayload.metadata as Record<string, unknown> | undefined) ??
           (nodePayload.node_metadata as Record<string, unknown> | undefined) ??
           (nodePayload.nodeMetadata as Record<string, unknown> | undefined);
+        const content =
+          (nodePayload.content as string | undefined) ??
+          (metadata?.content as string | undefined);
         console.log("DEBUG: Received node.created from backend:", nodePayload);
         // Check if node already exists (to avoid duplicates from local creation)
         const existingNode = nodes.find((n) => n.id === nodeId);

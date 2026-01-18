@@ -110,6 +110,7 @@ class TestNodeEndpoints:
             "canvas_id": canvas_id,
             "label": "Test Node",
             "type": "text",
+            "content": "Optional content",
             "position": {"x": 10, "y": 20, "z": 1},
             "metadata": {"color": "blue"},
         }
@@ -119,6 +120,7 @@ class TestNodeEndpoints:
         assert data["canvas_id"] == canvas_id
         assert data["label"] == "Test Node"
         assert data["type"] == "text"
+        assert data["content"] == "Optional content"
         assert data["position"] == {"x": 10, "y": 20, "z": 1}
         assert data["metadata"] == {"color": "blue"}
         assert "created_at" in data
@@ -129,6 +131,7 @@ class TestNodeEndpoints:
         get_data = get_response.json()
         assert get_data["id"] == node_id
         assert get_data["canvas_id"] == canvas_id
+        assert get_data["content"] == "Optional content"
 
     def test_update_node_partial_position(
         self,
@@ -141,6 +144,7 @@ class TestNodeEndpoints:
             "canvas_id": canvas_id,
             "label": "Original",
             "type": "text",
+            "content": "Initial content",
             "position": {"x": 5, "y": 6, "z": 7},
         }
         create_response = client.post("/api/nodes", json=create_payload)
@@ -149,6 +153,7 @@ class TestNodeEndpoints:
 
         update_payload = {
             "label": "Updated",
+            "content": "Updated content",
             "position": {"x": 99},
             "metadata": {"status": "active"},
         }
@@ -156,6 +161,7 @@ class TestNodeEndpoints:
         assert update_response.status_code == 200
         updated = update_response.json()
         assert updated["label"] == "Updated"
+        assert updated["content"] == "Updated content"
         assert updated["position"]["x"] == 99
         assert updated["position"]["y"] == 6
         assert updated["position"]["z"] == 7
