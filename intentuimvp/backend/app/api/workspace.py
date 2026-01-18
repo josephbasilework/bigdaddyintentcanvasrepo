@@ -9,6 +9,7 @@ from app.database import get_db
 from app.graph_validation import DependencyCycleError
 from app.repositories.canvas import CanvasRepository
 from app.schemas.workspace import CanvasResponse, EmptyWorkspaceResponse, WorkspaceSaveRequest
+from app.services.user_data_store import get_user_data_store
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -111,6 +112,20 @@ async def save_workspace(
 
         canvas_payload = repo.serialize_canvas(canvas, include_edges=True)
         canvas_payload.setdefault("documents", [])
+        try:
+            data_store = get_user_data_store()
+            data_store.persist_workspace_snapshot(
+                user_id=user_id,
+                workspace_id=canvas.id,
+                workspace_name=payload.name,
+                nodes=canvas_data["nodes"],
+                edges=canvas_data["edges"],
+                documents=[doc.model_dump() for doc in payload.documents],
+            )
+        except Exception:
+            logger.warning(
+                "Failed to persist workspace snapshot for user %s", user_id, exc_info=True
+            )
         logger.info(f"Saved canvas {canvas.id} for user {user_id}")
         return canvas_payload
 

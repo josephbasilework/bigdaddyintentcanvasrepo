@@ -61,6 +61,21 @@ class TestSettingsDefaultValues:
         settings = Settings(pydantic_gateway_api_key="test-key")
         assert settings.environment == "dev"
 
+    def test_user_data_paths_default(self):
+        """Test user data storage defaults."""
+        settings = Settings(pydantic_gateway_api_key="test-key")
+        assert settings.user_data_path == "user_data"
+        assert settings.intent_memory_path == "user_data/intent_memory"
+
+    def test_intent_memory_defaults(self):
+        """Test intent memory defaults."""
+        settings = Settings(pydantic_gateway_api_key="test-key")
+        assert settings.intent_memory_enabled is True
+        assert settings.intent_memory_auto_classify_threshold == 0.7
+        assert settings.intent_memory_auto_confirm_threshold == 0.8
+        assert settings.intent_memory_auto_confirm_min_samples == 3
+        assert settings.intent_memory_auto_confirm_similarity_threshold == 0.85
+        assert settings.intent_memory_note_suggestion_threshold == 0.6
 
 class TestSettingsEnvironmentOverrides:
     """Tests for environment variable override behavior."""

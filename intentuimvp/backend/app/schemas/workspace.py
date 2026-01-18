@@ -5,6 +5,34 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.models.node import NodeType
 
 
+class DocumentData(BaseModel):
+    """Document data for workspace save."""
+
+    id: str | None = Field(default=None, description="Document identifier")
+    node_id: str | None = Field(default=None, description="Node identifier linked to document")
+    title: str | None = Field(default=None, description="Document title")
+    content: str | None = Field(default=None, description="Document content")
+    created_at: str | None = Field(default=None, description="Creation timestamp")
+    updated_at: str | None = Field(default=None, description="Last update timestamp")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_fields(cls, values: dict) -> dict:
+        if not isinstance(values, dict):
+            return values
+        node_id = values.get("node_id") or values.get("nodeId")
+        created_at = values.get("created_at") or values.get("createdAt")
+        updated_at = values.get("updated_at") or values.get("updatedAt")
+        title = values.get("title") or values.get("label")
+        return {
+            **values,
+            "node_id": node_id,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "title": title,
+        }
+
+
 class NodeData(BaseModel):
     """Node data for workspace save."""
 
@@ -36,6 +64,9 @@ class WorkspaceSaveRequest(BaseModel):
 
     nodes: list[NodeData] = Field(default_factory=list, description="List of nodes in workspace")
     edges: list[dict] = Field(default_factory=list, description="List of edges in workspace")
+    documents: list[DocumentData] = Field(
+        default_factory=list, description="List of documents in workspace"
+    )
     name: str = Field(default="default", description="Canvas/workspace name")
 
 

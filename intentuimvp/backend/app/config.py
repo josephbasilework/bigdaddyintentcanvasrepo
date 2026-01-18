@@ -85,6 +85,59 @@ class Settings(BaseSettings):
         description="Database connection URL (PostgreSQL or SQLite)",
     )
 
+    # User data storage (Markdown/Obsidian-style)
+    user_data_path: str = Field(
+        default="user_data",
+        description="Base path for file-based user data storage",
+    )
+    intent_memory_path: str = Field(
+        default="user_data/intent_memory",
+        description="Base path for intent memory markdown storage",
+    )
+
+    intent_memory_enabled: bool = Field(
+        default=True, description="Enable intent memory behaviors"
+    )
+    intent_memory_auto_classify_enabled: bool = Field(
+        default=True, description="Enable auto-classification via intent memory"
+    )
+    intent_memory_auto_confirm_enabled: bool = Field(
+        default=True, description="Enable auto-confirmation via intent memory"
+    )
+    intent_memory_suggestions_enabled: bool = Field(
+        default=True, description="Enable note suggestions via intent memory"
+    )
+    intent_memory_auto_classify_threshold: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Threshold for intent memory auto-classification",
+    )
+    intent_memory_auto_confirm_threshold: float = Field(
+        default=0.8,
+        ge=0.0,
+        le=1.0,
+        description="Threshold for intent memory auto-confirmation",
+    )
+    intent_memory_auto_confirm_min_samples: int = Field(
+        default=3,
+        ge=1,
+        le=50,
+        description="Minimum samples before auto-confirmation can trigger",
+    )
+    intent_memory_auto_confirm_similarity_threshold: float = Field(
+        default=0.85,
+        ge=0.0,
+        le=1.0,
+        description="Similarity threshold for intent memory auto-confirmation",
+    )
+    intent_memory_note_suggestion_threshold: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description="Threshold for intent memory note suggestions",
+    )
+
     # Backup
     backup_encryption_key: str = Field(
         default="",

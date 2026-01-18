@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.artifact import ArtifactType, JobArtifact
 from app.models.attachment import LocalAttachmentStorage
+from app.services.user_data_store import get_user_data_store
 
 logger = logging.getLogger(__name__)
 
@@ -201,7 +202,16 @@ class ArtifactStorageService:
             f"(inline={artifact.is_inline()}, size={size_bytes})"
         )
 
-        return StoredArtifact.from_model(artifact)
+        stored = StoredArtifact.from_model(artifact)
+        try:
+            data_store = get_user_data_store()
+            data_store.persist_artifact(artifact=stored.model_dump())
+        except Exception:
+            logger.warning(
+                "Failed to persist artifact to user data store", exc_info=True
+            )
+
+        return stored
 
     async def get_artifact(
         self, db: AsyncSession, artifact_id: int

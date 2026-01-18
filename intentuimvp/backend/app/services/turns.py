@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -17,6 +18,7 @@ from app.repositories.canvas import CanvasRepository as SyncCanvasRepository
 from app.repositories.canvas_repo import CanvasRepository as AsyncCanvasRepository
 from app.repositories.session_repo import AsyncSessionRepository, SessionRepository
 from app.repositories.turn_repo import AsyncTurnRepository, TurnRepository
+from app.services.user_data_store import get_user_data_store
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +176,7 @@ def log_turn_with_session_id_sync(
     """Create a turn for a known session_id, logging failures."""
     try:
         repo = TurnRepository(db)
-        return repo.create_turn(
+        turn = repo.create_turn(
             session_id=session_id,
             actor=actor,
             turn_type=turn_type,
@@ -183,6 +185,8 @@ def log_turn_with_session_id_sync(
             related_node_id=related_node_id,
             related_edge_id=related_edge_id,
         )
+        _persist_turn_snapshot_sync(db, session_id, turn)
+        return turn
     except Exception:
         logger.warning(
             "Failed to persist turn for session %s (%s)",
@@ -242,7 +246,7 @@ async def log_turn_with_session_id_async(
     """Create a turn for a known session_id, logging failures."""
     try:
         repo = AsyncTurnRepository(db)
-        return await repo.create_turn(
+        turn = await repo.create_turn(
             session_id=session_id,
             actor=actor,
             turn_type=turn_type,
@@ -251,6 +255,8 @@ async def log_turn_with_session_id_async(
             related_node_id=related_node_id,
             related_edge_id=related_edge_id,
         )
+        await _persist_turn_snapshot_async(db, session_id, turn)
+        return turn
     except Exception:
         logger.warning(
             "Failed to persist turn for session %s (%s)",
@@ -317,4 +323,59 @@ async def log_turn_with_new_async_session(
             payload=payload,
             related_node_id=related_node_id,
             related_edge_id=related_edge_id,
+        )
+
+
+def _persist_turn_snapshot_sync(db: Session, session_id: str, turn: Turn) -> None:
+    session_repo = SessionRepository(db)
+    session = session_repo.get_by_session_id(session_id)
+    if session is None:
+        return
+    try:
+        data_store = get_user_data_store()
+        data_store.persist_turn(
+            user_id=session.user_id or "default",
+            session_id=session.session_id,
+            sequence_number=turn.sequence_number,
+            actor=getattr(turn.actor, "value", str(turn.actor)),
+            turn_type=getattr(turn.type, "value", str(turn.type)),
+            summary=turn.summary,
+            payload=turn.get_payload(),
+            timestamp=turn.timestamp.isoformat(),
+            workspace_id=session.workspace_id,
+            related_node_id=turn.related_node_id,
+            related_edge_id=turn.related_edge_id,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to persist turn snapshot for session %s", session_id, exc_info=True
+        )
+
+
+async def _persist_turn_snapshot_async(
+    db: AsyncSession, session_id: str, turn: Turn
+) -> None:
+    session_repo = AsyncSessionRepository(db)
+    session = await session_repo.get_by_session_id(session_id)
+    if session is None:
+        return
+    data_store = get_user_data_store()
+    try:
+        await asyncio.to_thread(
+            data_store.persist_turn,
+            user_id=session.user_id or "default",
+            session_id=session.session_id,
+            sequence_number=turn.sequence_number,
+            actor=getattr(turn.actor, "value", str(turn.actor)),
+            turn_type=getattr(turn.type, "value", str(turn.type)),
+            summary=turn.summary,
+            payload=turn.get_payload(),
+            timestamp=turn.timestamp.isoformat(),
+            workspace_id=session.workspace_id,
+            related_node_id=turn.related_node_id,
+            related_edge_id=turn.related_edge_id,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to persist turn snapshot for session %s", session_id, exc_info=True
         )
