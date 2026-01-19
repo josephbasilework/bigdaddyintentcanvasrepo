@@ -14,6 +14,7 @@ describe("toMarkers", () => {
       { id: "b", time: "3.5" },
       { id: "z", time: 0 },
       { id: "c" },
+      { id: "d", time: "nope" },
       { time: 4 },
       "bad",
       null,
