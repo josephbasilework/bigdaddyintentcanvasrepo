@@ -4,7 +4,7 @@ import json
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_db
@@ -203,7 +203,12 @@ async def update_mcp_server(
     return server.to_dict()
 
 
-@router.delete("/api/mcp/servers/{server_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/api/mcp/servers/{server_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
 async def unregister_mcp_server(
     server_id: str,
     db: AsyncSession = Depends(get_async_db),

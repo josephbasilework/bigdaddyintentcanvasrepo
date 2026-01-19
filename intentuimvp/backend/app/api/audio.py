@@ -243,7 +243,12 @@ async def update_audio_block(
         ) from e
 
 
-@router.delete("/api/audio/blocks/{block_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/api/audio/blocks/{block_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
 async def delete_audio_block(
     block_id: int,
     db: AsyncSession = Depends(get_async_db),

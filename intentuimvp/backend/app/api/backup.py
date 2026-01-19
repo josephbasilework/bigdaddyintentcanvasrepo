@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -154,7 +154,12 @@ async def restore_from_backup(
         ) from e
 
 
-@router.delete("/api/backup/{backup_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/api/backup/{backup_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
 async def delete_backup(
     backup_id: int,
     db: Session = Depends(get_db),

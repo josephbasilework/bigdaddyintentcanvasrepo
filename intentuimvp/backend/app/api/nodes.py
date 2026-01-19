@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -348,7 +348,12 @@ async def update_node(
         ) from e
 
 
-@router.delete("/api/nodes/{node_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/api/nodes/{node_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
 async def delete_node(
     node_id: int,
     db: AsyncSession = Depends(get_async_db),

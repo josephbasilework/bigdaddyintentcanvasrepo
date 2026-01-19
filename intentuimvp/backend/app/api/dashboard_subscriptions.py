@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_db
@@ -174,7 +174,12 @@ async def update_dashboard_subscription(
     return updated.to_dict()
 
 
-@router.delete("/api/dashboard/subscriptions/{subscription_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/api/dashboard/subscriptions/{subscription_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
 async def delete_dashboard_subscription(
     subscription_id: int,
     db: AsyncSession = Depends(get_async_db),

@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.intent_memory import (
@@ -320,7 +320,12 @@ async def update_entry(
     return _entry_to_response(entry)
 
 
-@router.delete("/api/intent-memory/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/api/intent-memory/entries/{entry_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
 async def delete_entry(
     entry_id: str,
     workspace_id: str | None = Query(default=None),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_db
@@ -182,7 +182,12 @@ async def update_hook(
     return HookResponse(**hook.to_dict())
 
 
-@router.delete("/api/hooks/{hook_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/api/hooks/{hook_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    response_model=None,
+)
 async def delete_hook(
     hook_id: int,
     db: AsyncSession = Depends(get_async_db),
