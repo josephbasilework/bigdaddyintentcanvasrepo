@@ -26,6 +26,7 @@ import {
   updateContainerMetadata,
   type ContainerMetadataUpdates,
 } from "../utils/canvasHierarchy";
+import type { CanvasEdgeRelationType } from "./canvasTypes";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const SESSION_ID_STORAGE_KEY = "intentui_workspace_session_id";
@@ -451,23 +452,11 @@ export interface DAGData {
   }>;
 }
 
-export type BuiltInEdgeRelationType =
-  | "dependency"
-  | "relates_to"
-  | "parent_child";
-
-export type LegacyEdgeRelationType =
-  | "depends_on"
-  | "references"
-  | "supports"
-  | "conflicts"
-  | "derived_from"
-  | "critiques";
-
-export type CanvasEdgeRelationType =
-  | BuiltInEdgeRelationType
-  | LegacyEdgeRelationType
-  | (string & {});
+export type {
+  BuiltInEdgeRelationType,
+  LegacyEdgeRelationType,
+  CanvasEdgeRelationType,
+} from "./canvasTypes";
 
 export interface CanvasEdge {
   id: string;

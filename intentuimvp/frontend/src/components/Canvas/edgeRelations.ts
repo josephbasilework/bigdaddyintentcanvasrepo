@@ -1,4 +1,4 @@
-import type { CanvasEdgeRelationType } from "../../state/canvasStore";
+import type { CanvasEdgeRelationType } from "../../state/canvasTypes";
 
 export const CUSTOM_EDGE_RELATION_VALUE = "__custom__";
 
