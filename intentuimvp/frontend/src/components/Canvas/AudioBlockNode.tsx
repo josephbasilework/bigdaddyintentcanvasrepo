@@ -32,18 +32,18 @@ const getNumber = (value: unknown): number | undefined => {
 const getString = (value: unknown): string | undefined =>
   typeof value === "string" ? value : undefined;
 
-const toMarkers = (value: unknown): AudioMarker[] => {
+export const toMarkers = (value: unknown): AudioMarker[] => {
   if (!Array.isArray(value)) return [];
   return value
     .map((marker) => {
       if (!isRecord(marker)) return null;
-      const id = getString(marker.id) ?? undefined;
+      const id = getString(marker.id);
       const time = getNumber(marker.time);
       if (!id || time === undefined) return null;
       const label = getString(marker.label);
       return { id, time, label };
     })
-    .filter((marker): marker is AudioMarker => Boolean(marker));
+    .filter((marker): marker is AudioMarker => marker !== null);
 };
 
 const formatDurationSeconds = (seconds: number): string => {
