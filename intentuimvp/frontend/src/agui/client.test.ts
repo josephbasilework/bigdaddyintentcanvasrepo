@@ -236,9 +236,6 @@ describe('AGUIClient outbound queue', () => {
     const ws = MockWebSocket.instances[0];
 
     const commandMessage = {
-      version: AGUI_PROTOCOL_VERSION,
-      messageId: 'msg-1',
-      timestamp: new Date().toISOString(),
       source: 'ui',
       target: 'agent',
       type: 'command',
@@ -254,7 +251,24 @@ describe('AGUIClient outbound queue', () => {
     ws.triggerOpen();
     await flushMicrotasks();
 
-    expect(hasMessageType(ws.sentMessages, 'command')).toBe(true);
+    const commandEnvelope = ws.sentMessages
+      .map((message) => {
+        try {
+          return JSON.parse(message);
+        } catch {
+          return null;
+        }
+      })
+      .find((message) => message?.type === 'command');
+
+    expect(commandEnvelope).toMatchObject({
+      version: AGUI_PROTOCOL_VERSION,
+      source: 'ui',
+      target: 'agent',
+      type: 'command',
+    });
+    expect(commandEnvelope?.messageId).toEqual(expect.any(String));
+    expect(commandEnvelope?.timestamp).toEqual(expect.any(String));
   });
 });
 

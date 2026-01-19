@@ -26,7 +26,6 @@ import {
   AgentToUIMessageHandler,
   AgentToUIMessageType,
   AGUI_PROTOCOL_VERSION,
-  UIToAgentMessage,
   UIToAgentMessageType,
   StateUpdateMessage,
   StateSnapshotMessage,
@@ -87,6 +86,11 @@ type RunStartEnvelope = {
   type: "run.start";
   payload: RunAgentInput;
 };
+
+type EnvelopeKeys = "version" | "messageId" | "timestamp";
+
+type OutboundMessageInput = Omit<UIToAgentMessageType, EnvelopeKeys> &
+  Partial<Pick<UIToAgentMessageType, EnvelopeKeys>>;
 
 /** A message queued for outbound delivery */
 type QueuedOutboundMessage = UIToAgentMessageType;
@@ -262,20 +266,29 @@ export class AGUIClient {
   /**
    * Send a message to the agent/gateway
    */
-  send(message: UIToAgentMessageType): void {
+  send(message: OutboundMessageInput): void {
+    const envelope = this.buildOutboundEnvelope(message);
+
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      this.outboundQueue.push(message);
+      this.outboundQueue.push(envelope);
       return;
     }
 
-    const envelope: UIToAgentMessage = {
-      ...message,
-      version: AGUI_PROTOCOL_VERSION,
-      messageId: generateMessageId(),
-      timestamp: getTimestamp(),
-    };
-
     this.ws.send(JSON.stringify(envelope));
+  }
+
+  /**
+   * Ensure outbound messages include a full envelope.
+   */
+  private buildOutboundEnvelope(
+    message: OutboundMessageInput
+  ): UIToAgentMessageType {
+    return {
+      ...message,
+      version: message.version ?? AGUI_PROTOCOL_VERSION,
+      messageId: message.messageId ?? generateMessageId(),
+      timestamp: message.timestamp ?? getTimestamp(),
+    } as UIToAgentMessageType;
   }
 
   /**
