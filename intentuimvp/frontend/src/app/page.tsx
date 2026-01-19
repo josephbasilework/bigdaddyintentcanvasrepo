@@ -42,6 +42,7 @@ import { useOfflineQueueReplay } from "@/hooks/useOfflineQueueReplay";
 import { useWebSocketEnhanced, type WebSocketMessage } from "@/hooks/useWebSocketEnhanced";
 import { createAGUIClient } from "@/agui/client";
 import type { NodeContext, SelectionScope } from "@/types/contextPreview";
+import type { IntentMemoryEntry } from "@/types/intentMemory";
 import {
   type AttachmentItem,
   type AttachmentListResponse,
@@ -61,6 +62,15 @@ import {
   getDescendantIds,
   isContainerNode,
 } from "@/utils/canvasHierarchy";
+import {
+  PANEL_LABELS,
+  getUiCommandKey,
+  parseUiCommand,
+  normalizeUiCommandText,
+  resolveUiCommandKey,
+  type PanelView,
+  type UiCommand,
+} from "@/lib/uiCommands";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -441,17 +451,10 @@ export default function Home() {
   const [statusMessage, setStatusMessage] = useState("Ready for commands.");
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [draftCommand, setDraftCommand] = useState("");
-  const [activeView, setActiveView] = useState<
-    | "chat"
-    | "wheel"
-    | "events"
-    | "mcp"
-    | "context"
-    | "hooks"
-    | "memory"
-    | "notifications"
-    | null
-  >(null);
+  const [activeView, setActiveView] = useState<PanelView | null>(null);
+  const [customUiCommands, setCustomUiCommands] = useState<
+    Record<string, UiCommand>
+  >({});
   const canvasId = useCanvasStore((state) => state.canvasId);
   const nodes = useCanvasStore((state) => state.nodes);
   const edges = useCanvasStore((state) => state.edges);
@@ -952,6 +955,70 @@ export default function Home() {
     connectionState: wsConnectionState,
   });
 
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadIntentMemoryCommands = async () => {
+      const params = new URLSearchParams();
+      params.set("enabled", "true");
+      if (canvasId) {
+        params.set("workspace_id", String(canvasId));
+      }
+      if (wsSessionId) {
+        params.set("session_id", wsSessionId);
+      }
+      const query = params.toString();
+      const url = `${API_BASE_URL}/api/intent-memory/entries${query ? `?${query}` : ""}`;
+
+      try {
+        const response = await fetch(url);
+        if (!response.ok) {
+          throw new Error(`Intent memory fetch failed (${response.status})`);
+        }
+        const payload = (await response.json()) as { entries?: IntentMemoryEntry[] };
+        const entries = Array.isArray(payload.entries) ? payload.entries : [];
+        const next: Record<string, UiCommand> = {};
+
+        entries.forEach((entry) => {
+          if (!entry.enabled) {
+            return;
+          }
+          if (entry.trigger_type && entry.trigger_type !== "exact") {
+            return;
+          }
+          const normalizedTrigger = normalizeUiCommandText(entry.trigger);
+          if (!normalizedTrigger) {
+            return;
+          }
+          if (!entry.response || typeof entry.response !== "object") {
+            return;
+          }
+          const responseRecord = entry.response as Record<string, unknown>;
+          let command: UiCommand | null = null;
+          if (typeof responseRecord.ui_command === "string") {
+            command = resolveUiCommandKey(responseRecord.ui_command);
+          } else if (typeof responseRecord.ui_panel === "string") {
+            command = resolveUiCommandKey(`show_${responseRecord.ui_panel}`);
+          }
+          if (command) {
+            next[normalizedTrigger] = command;
+          }
+        });
+
+        if (!isCancelled) {
+          setCustomUiCommands(next);
+        }
+      } catch (error) {
+        console.warn("Failed to load UI command bindings from intent memory", error);
+      }
+    };
+
+    void loadIntentMemoryCommands();
+    return () => {
+      isCancelled = true;
+    };
+  }, [canvasId, wsSessionId]);
+
   const aguiGatewayUrl = useMemo(() => {
     if (!WS_URL) {
       return "";
@@ -1436,12 +1503,101 @@ export default function Home() {
     [addNode, canvasId, resolveVoiceNodePosition, selectNode]
   );
 
+  const executeUiCommand = useCallback(
+    (command: UiCommand) => {
+      if (command.type === "close_panels") {
+        setActiveView(null);
+        setStatusMessage("Panels closed.");
+        return;
+      }
+      if (command.type === "clear_selection") {
+        clearSelection();
+        setStatusMessage("Selection cleared.");
+        return;
+      }
+      if (command.type === "show_panel") {
+        setActiveView(command.panel);
+        const label = PANEL_LABELS[command.panel] ?? "Panel";
+        setStatusMessage(`${label} panel opened.`);
+      }
+    },
+    [clearSelection, setActiveView, setStatusMessage]
+  );
+
+  const logUiCommand = useCallback(
+    async (value: string, command: UiCommand, selection: SelectionScope) => {
+      const clientRequestId = createOfflineQueueId();
+      const sessionId = wsSessionId ?? undefined;
+      const body = {
+        command: value,
+        attachments: [],
+        selection,
+        session_id: sessionId,
+        client_request_id: clientRequestId,
+        skip_routing: true,
+        command_key: getUiCommandKey(command),
+      };
+      const request: OfflineRequestData = {
+        url: `${API_BASE_URL}/api/commands`,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body,
+        kind: "command",
+        sessionId: sessionId ?? "",
+      };
+
+      const offlineState = useOfflineQueueStore.getState();
+      const isNavigatorOnline =
+        typeof navigator === "undefined" ? true : navigator.onLine;
+      const shouldQueue = !isNavigatorOnline || shouldQueueOfflineRequest(offlineState);
+
+      if (sessionId && shouldQueue) {
+        offlineState.enqueue(request, { id: clientRequestId });
+        return;
+      }
+
+      let response: Response;
+      try {
+        response = await fetch(request.url, {
+          method: request.method,
+          headers: request.headers,
+          body: JSON.stringify(body),
+        });
+      } catch {
+        if (sessionId) {
+          offlineState.enqueue(request, { id: clientRequestId });
+        }
+        return;
+      }
+
+      if (!response.ok) {
+        if (response.status >= 500 && sessionId) {
+          offlineState.enqueue(request, { id: clientRequestId });
+        }
+        return;
+      }
+
+      let responsePayload: unknown = null;
+      try {
+        responsePayload = await response.json();
+      } catch {
+        responsePayload = null;
+      }
+      const sequenceNumber = extractSequenceNumber(responsePayload);
+      if (sessionId && sequenceNumber !== null) {
+        setLastSyncedTurnSequence(sessionId, sequenceNumber);
+      }
+    },
+    [wsSessionId]
+  );
+
   const handleCommandSubmit = async (value: string) => {
     setRoutingError(null);
-    const normalizedValue = value.trim().toLowerCase();
-    if (normalizedValue === "close all panels") {
-      setActiveView(null);
-      setStatusMessage("Panels closed.");
+    const uiCommand = parseUiCommand(value, customUiCommands);
+    if (uiCommand) {
+      const selection = selectionScope;
+      executeUiCommand(uiCommand);
+      void logUiCommand(value, uiCommand, selection);
       return;
     }
     const hasUploadsPending = attachments.some((item) =>
@@ -1678,17 +1834,7 @@ export default function Home() {
     setActiveRoundId(null);
   };
 
-  const handleViewToggle = (
-    view:
-      | "chat"
-      | "wheel"
-      | "events"
-      | "mcp"
-      | "context"
-      | "hooks"
-      | "memory"
-      | "notifications"
-  ) => {
+  const handleViewToggle = (view: PanelView) => {
     setActiveView((prev) => (prev === view ? null : view));
   };
 

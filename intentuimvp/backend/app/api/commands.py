@@ -40,6 +40,12 @@ class CommandSubmissionRequest(BaseModel):
     client_request_id: str | None = Field(
         default=None, description="Optional client request ID for idempotent replay"
     )
+    skip_routing: bool = Field(
+        default=False, description="Skip routing and only log the command"
+    )
+    command_key: str | None = Field(
+        default=None, description="Optional canonical command key for UI commands"
+    )
 
 
 class CommandSubmissionResponse(BaseModel):
@@ -165,24 +171,32 @@ async def submit_command(
         session_id=payload.session_id,
     )
 
-    enqueue_command(submission)
+    if not payload.skip_routing:
+        enqueue_command(submission)
 
     summary_preview = command[:120]
+    summary_prefix = "UI command" if payload.skip_routing else "User input submitted"
+    summary = (
+        f"{summary_prefix}: {summary_preview}" if summary_preview else summary_prefix
+    )
+    log_payload: dict[str, Any] = {
+        "command": command,
+        "attachments": payload.attachments or [],
+        "selection": payload.selection.model_dump() if payload.selection else None,
+        "correlation_id": correlation_id,
+    }
+    if payload.command_key:
+        log_payload["command_key"] = payload.command_key
+    if payload.skip_routing:
+        log_payload["routing_skipped"] = True
     turn = log_turn_for_user_sync(
         db,
         user_id="default_user",
         session_id=payload.session_id,
         actor=TurnActor.USER,
         turn_type=TurnType.USER_INPUT,
-        summary=f"User input submitted: {summary_preview}" if summary_preview else "User input submitted",
-        payload={
-            "command": command,
-            "attachments": payload.attachments or [],
-            "selection": payload.selection.model_dump()
-            if payload.selection
-            else None,
-            "correlation_id": correlation_id,
-        },
+        summary=summary,
+        payload=log_payload,
         client_request_id=payload.client_request_id,
     )
     if turn and payload.attachments:
@@ -215,7 +229,7 @@ async def submit_command(
 
     return CommandSubmissionResponse(
         correlation_id=correlation_id,
-        status="queued",
+        status="logged" if payload.skip_routing else "queued",
         turnId=turn.id if turn else None,
         sequenceNumber=turn.sequence_number if turn else None,
     )

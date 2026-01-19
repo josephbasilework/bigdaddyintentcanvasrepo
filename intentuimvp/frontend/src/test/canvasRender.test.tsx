@@ -86,6 +86,19 @@ describe('workspace canvas', () => {
     json: async () => payload,
   });
 
+  const mockWorkspaceFetch = (payload: unknown) => {
+    fetchMock.mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/api/intent-memory/entries')) {
+        return Promise.resolve(createResponse({ entries: [] }));
+      }
+      if (url.includes('/api/workspace')) {
+        return Promise.resolve(createResponse(payload));
+      }
+      return Promise.resolve(createResponse({}));
+    });
+  };
+
   beforeEach(() => {
     mockTransformRef.state = { scale: 1, positionX: 0, positionY: 0 };
     mockTransformRef.setTransform.mockClear();
@@ -167,6 +180,52 @@ describe('workspace canvas', () => {
 
     await waitFor(() => {
       expect(screen.queryByText('Chat View')).not.toBeInTheDocument();
+    });
+  });
+
+  it('opens the chat panel from a show chat command without routing', async () => {
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const commandInput = screen.getByRole('textbox', { name: /command input/i });
+    fireEvent.change(commandInput, { target: { value: 'show chat' } });
+    fireEvent.keyDown(commandInput, { key: 'Enter' });
+
+    await waitFor(() => expect(screen.getByText('Chat View')).toBeInTheDocument());
+
+    const calledAssumptions = fetchMock.mock.calls.some(([input]) =>
+      String(input).includes('/api/context/assumptions')
+    );
+    expect(calledAssumptions).toBe(false);
+  });
+
+  it('clears selection when the clear selection command is submitted', async () => {
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    useCanvasStore.setState({
+      nodes: [
+        {
+          id: 'node-1',
+          type: 'text',
+          x: 120,
+          y: 160,
+          z: 1,
+          title: 'Selected node',
+        },
+      ],
+      selectedNodeId: 'node-1',
+      selectedNodeIds: [],
+    });
+
+    const commandInput = screen.getByRole('textbox', { name: /command input/i });
+    fireEvent.change(commandInput, { target: { value: 'clear selection' } });
+    fireEvent.keyDown(commandInput, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(useCanvasStore.getState().selectedNodeId).toBeNull();
     });
   });
 
@@ -464,17 +523,19 @@ describe('workspace canvas', () => {
 
   it('uses the current zoom scale for draggable nodes', async () => {
     mockTransformRef.state = { scale: 1.6, positionX: 0, positionY: 0 };
-    fetchMock.mockResolvedValueOnce(createResponse({
-      nodes: [{
-        id: 'node-1',
-        type: 'text',
-        x: 120,
-        y: 80,
-        z: 1,
-        title: 'Draggable node',
-      }],
+    mockWorkspaceFetch({
+      nodes: [
+        {
+          id: 'node-1',
+          type: 'text',
+          x: 120,
+          y: 80,
+          z: 1,
+          title: 'Draggable node',
+        },
+      ],
       edges: [],
-    }));
+    });
 
     render(<Home />);
 
@@ -485,12 +546,9 @@ describe('workspace canvas', () => {
   });
 
   it('falls back to an empty state when workspace data is corrupted', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        nodes: 'not-an-array',
-        edges: { bad: true },
-      }),
+    mockWorkspaceFetch({
+      nodes: 'not-an-array',
+      edges: { bad: true },
     });
 
     render(<Home />);
@@ -501,22 +559,19 @@ describe('workspace canvas', () => {
   });
 
   it('does not show empty state when nodes exist', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        nodes: [
-          {
-            id: 'node-1',
-            type: 'text',
-            x: 0,
-            y: 0,
-            z: 1,
-            title: 'First node',
-            content: 'Hello',
-          },
-        ],
-        edges: [],
-      }),
+    mockWorkspaceFetch({
+      nodes: [
+        {
+          id: 'node-1',
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 1,
+          title: 'First node',
+          content: 'Hello',
+        },
+      ],
+      edges: [],
     });
 
     render(<Home />);
@@ -553,22 +608,19 @@ describe('workspace canvas', () => {
   });
 
   it('selects and edits a node with the keyboard', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        nodes: [
-          {
-            id: 'node-1',
-            type: 'text',
-            x: 0,
-            y: 0,
-            z: 1,
-            title: 'First node',
-            content: 'Hello',
-          },
-        ],
-        edges: [],
-      }),
+    mockWorkspaceFetch({
+      nodes: [
+        {
+          id: 'node-1',
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 1,
+          title: 'First node',
+          content: 'Hello',
+        },
+      ],
+      edges: [],
     });
 
     render(<Home />);
@@ -586,22 +638,19 @@ describe('workspace canvas', () => {
   });
 
   it('expands text nodes to edit content inline', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        nodes: [
-          {
-            id: 'node-1',
-            type: 'text',
-            x: 0,
-            y: 0,
-            z: 1,
-            title: 'First node',
-            content: 'Hello world',
-          },
-        ],
-        edges: [],
-      }),
+    mockWorkspaceFetch({
+      nodes: [
+        {
+          id: 'node-1',
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 1,
+          title: 'First node',
+          content: 'Hello world',
+        },
+      ],
+      edges: [],
     });
 
     render(<Home />);
@@ -625,21 +674,18 @@ describe('workspace canvas', () => {
   });
 
   it('edits text node titles inline', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        nodes: [
-          {
-            id: 'node-1',
-            type: 'text',
-            x: 0,
-            y: 0,
-            z: 1,
-            title: 'First node',
-          },
-        ],
-        edges: [],
-      }),
+    mockWorkspaceFetch({
+      nodes: [
+        {
+          id: 'node-1',
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 1,
+          title: 'First node',
+        },
+      ],
+      edges: [],
     });
 
     render(<Home />);
@@ -656,29 +702,26 @@ describe('workspace canvas', () => {
   });
 
   it('supports additive and toggle multi-selection via clicks', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        nodes: [
-          {
-            id: 'node-1',
-            type: 'text',
-            x: 0,
-            y: 0,
-            z: 1,
-            title: 'First node',
-          },
-          {
-            id: 'node-2',
-            type: 'text',
-            x: 240,
-            y: 0,
-            z: 2,
-            title: 'Second node',
-          },
-        ],
-        edges: [],
-      }),
+    mockWorkspaceFetch({
+      nodes: [
+        {
+          id: 'node-1',
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 1,
+          title: 'First node',
+        },
+        {
+          id: 'node-2',
+          type: 'text',
+          x: 240,
+          y: 0,
+          z: 2,
+          title: 'Second node',
+        },
+      ],
+      edges: [],
     });
 
     render(<Home />);
@@ -702,29 +745,26 @@ describe('workspace canvas', () => {
   });
 
   it('selects nodes within a shift-drag region', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        nodes: [
-          {
-            id: 'node-1',
-            type: 'text',
-            x: 0,
-            y: 0,
-            z: 1,
-            title: 'First node',
-          },
-          {
-            id: 'node-2',
-            type: 'text',
-            x: 240,
-            y: 0,
-            z: 2,
-            title: 'Second node',
-          },
-        ],
-        edges: [],
-      }),
+    mockWorkspaceFetch({
+      nodes: [
+        {
+          id: 'node-1',
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 1,
+          title: 'First node',
+        },
+        {
+          id: 'node-2',
+          type: 'text',
+          x: 240,
+          y: 0,
+          z: 2,
+          title: 'Second node',
+        },
+      ],
+      edges: [],
     });
 
     render(<Home />);
@@ -752,37 +792,34 @@ describe('workspace canvas', () => {
   });
 
   it('toggles selection state with ctrl-drag region selection', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        nodes: [
-          {
-            id: 'node-1',
-            type: 'text',
-            x: 0,
-            y: 0,
-            z: 1,
-            title: 'First node',
-          },
-          {
-            id: 'node-2',
-            type: 'text',
-            x: 240,
-            y: 0,
-            z: 2,
-            title: 'Second node',
-          },
-          {
-            id: 'node-3',
-            type: 'text',
-            x: 480,
-            y: 0,
-            z: 3,
-            title: 'Third node',
-          },
-        ],
-        edges: [],
-      }),
+    mockWorkspaceFetch({
+      nodes: [
+        {
+          id: 'node-1',
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 1,
+          title: 'First node',
+        },
+        {
+          id: 'node-2',
+          type: 'text',
+          x: 240,
+          y: 0,
+          z: 2,
+          title: 'Second node',
+        },
+        {
+          id: 'node-3',
+          type: 'text',
+          x: 480,
+          y: 0,
+          z: 3,
+          title: 'Third node',
+        },
+      ],
+      edges: [],
     });
 
     render(<Home />);
@@ -824,29 +861,26 @@ describe('workspace canvas', () => {
   });
 
   it('preserves multi-selection when focus follows pointer interactions', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        nodes: [
-          {
-            id: 'node-1',
-            type: 'text',
-            x: 0,
-            y: 0,
-            z: 1,
-            title: 'First node',
-          },
-          {
-            id: 'node-2',
-            type: 'text',
-            x: 240,
-            y: 0,
-            z: 2,
-            title: 'Second node',
-          },
-        ],
-        edges: [],
-      }),
+    mockWorkspaceFetch({
+      nodes: [
+        {
+          id: 'node-1',
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 1,
+          title: 'First node',
+        },
+        {
+          id: 'node-2',
+          type: 'text',
+          x: 240,
+          y: 0,
+          z: 2,
+          title: 'Second node',
+        },
+      ],
+      edges: [],
     });
 
     render(<Home />);
@@ -868,29 +902,26 @@ describe('workspace canvas', () => {
   });
 
   it('connects nodes from the context menu', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        nodes: [
-          {
-            id: 'node-1',
-            type: 'text',
-            x: 0,
-            y: 0,
-            z: 1,
-            title: 'First node',
-          },
-          {
-            id: 'node-2',
-            type: 'text',
-            x: 240,
-            y: 0,
-            z: 2,
-            title: 'Second node',
-          },
-        ],
-        edges: [],
-      }),
+    mockWorkspaceFetch({
+      nodes: [
+        {
+          id: 'node-1',
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 1,
+          title: 'First node',
+        },
+        {
+          id: 'node-2',
+          type: 'text',
+          x: 240,
+          y: 0,
+          z: 2,
+          title: 'Second node',
+        },
+      ],
+      edges: [],
     });
 
     render(<Home />);
@@ -928,29 +959,26 @@ describe('workspace canvas', () => {
   });
 
   it('connects nodes with a custom edge type', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        nodes: [
-          {
-            id: 'node-1',
-            type: 'text',
-            x: 0,
-            y: 0,
-            z: 1,
-            title: 'First node',
-          },
-          {
-            id: 'node-2',
-            type: 'text',
-            x: 240,
-            y: 0,
-            z: 2,
-            title: 'Second node',
-          },
-        ],
-        edges: [],
-      }),
+    mockWorkspaceFetch({
+      nodes: [
+        {
+          id: 'node-1',
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 1,
+          title: 'First node',
+        },
+        {
+          id: 'node-2',
+          type: 'text',
+          x: 240,
+          y: 0,
+          z: 2,
+          title: 'Second node',
+        },
+      ],
+      edges: [],
     });
 
     render(<Home />);
@@ -984,35 +1012,32 @@ describe('workspace canvas', () => {
   });
 
   it('requires confirmation when deleting a node with linked artifacts', async () => {
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => ({
-        nodes: [
-          {
-            id: 'node-1',
-            type: 'text',
-            x: 0,
-            y: 0,
-            z: 1,
-            title: 'First node',
-          },
-          {
-            id: 'node-2',
-            type: 'text',
-            x: 240,
-            y: 0,
-            z: 2,
-            title: 'Second node',
-          },
-        ],
-        edges: [
-          {
-            id: 'edge-1',
-            sourceNodeId: 'node-1',
-            targetNodeId: 'node-2',
-          },
-        ],
-      }),
+    mockWorkspaceFetch({
+      nodes: [
+        {
+          id: 'node-1',
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 1,
+          title: 'First node',
+        },
+        {
+          id: 'node-2',
+          type: 'text',
+          x: 240,
+          y: 0,
+          z: 2,
+          title: 'Second node',
+        },
+      ],
+      edges: [
+        {
+          id: 'edge-1',
+          sourceNodeId: 'node-1',
+          targetNodeId: 'node-2',
+        },
+      ],
     });
 
     render(<Home />);

@@ -85,6 +85,29 @@ def test_submit_command_returns_correlation_id_and_enqueues_routing(
     )
 
 
+def test_submit_command_skip_routing_logs_only(
+    monkeypatch,
+    client: testclient.TestClient,
+) -> None:
+    """Submitting with skip_routing logs a turn without enqueuing routing."""
+    calls = {"count": 0}
+
+    def fake_enqueue(submission: CommandSubmission) -> None:
+        calls["count"] += 1
+
+    monkeypatch.setattr("app.api.commands.enqueue_command", fake_enqueue)
+
+    response = client.post(
+        "/api/commands",
+        json={"command": "show chat", "skip_routing": True, "command_key": "show_chat"},
+    )
+
+    assert response.status_code == 202
+    data = response.json()
+    assert data["status"] == "logged"
+    assert calls["count"] == 0
+
+
 def test_submit_command_missing_command_returns_400(
     client: testclient.TestClient,
 ) -> None:
