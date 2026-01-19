@@ -48,6 +48,11 @@ const serializeDagTask = (task: DAGTask): Record<string, unknown> => {
   if (task.priority) payload.priority = task.priority;
   if (task.estimatedEffort) payload.estimated_effort = task.estimatedEffort;
   if (task.dependencies) payload.dependencies = task.dependencies;
+  if (task.statusUpdatedAt) payload.status_updated_at = task.statusUpdatedAt;
+  if (task.statusUpdatedBy) payload.status_updated_by = task.statusUpdatedBy;
+  if (task.docCheckboxId) payload.doc_checkbox_id = task.docCheckboxId;
+  if (task.docTaskId) payload.doc_task_id = task.docTaskId;
+  if (task.docDocumentId) payload.doc_document_id = task.docDocumentId;
   if (task.calendarSuggestion) payload.calendar_suggestion = task.calendarSuggestion;
   if (task.calendarEventId) payload.calendar_event_id = task.calendarEventId;
   if (task.calendarEventUrl) payload.calendar_event_url = task.calendarEventUrl;

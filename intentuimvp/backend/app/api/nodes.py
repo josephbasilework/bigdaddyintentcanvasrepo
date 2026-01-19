@@ -23,6 +23,7 @@ from app.schemas.node import (
     NodeUpdateRequest,
 )
 from app.services.dashboard_updates import publish_dashboard_update
+from app.services.mcp_sync import TaskDagSyncService
 from app.services.turns import (
     log_turn_for_user_async,
     log_turn_with_session_id_async,
@@ -224,6 +225,8 @@ async def update_node(
 
     updates: dict[str, Any] = {}
     fields_set = payload.model_fields_set
+    sync_service: TaskDagSyncService | None = None
+    sync_outcome = None
 
     if "label" in fields_set:
         if payload.label is None:
@@ -245,7 +248,18 @@ async def update_node(
         if payload.metadata is None:
             updates["node_metadata"] = None
         else:
-            updates["node_metadata"] = json.dumps(payload.metadata)
+            next_metadata = payload.metadata
+            if node.type == "dag":
+                sync_service = TaskDagSyncService(db)
+                sync_outcome = await sync_service.sync_task_dag_update(
+                    node=node,
+                    prev_metadata=node.get_metadata(),
+                    next_metadata=next_metadata,
+                    initiated_by=user_id,
+                )
+                if sync_outcome.updated_metadata is not None:
+                    next_metadata = sync_outcome.updated_metadata
+            updates["node_metadata"] = json.dumps(next_metadata)
     if "position" in fields_set:
         if payload.position is None:
             updated_position = {"x": 0, "y": 0, "z": 0}
@@ -313,6 +327,12 @@ async def update_node(
             )
         else:
             logger.warning("No session_id available for turn %s", TurnType.NODE_UPDATED)
+        if sync_service and sync_outcome and sync_outcome.updated_metadata is not None:
+            await sync_service.log_sync_turn(
+                node=updated,
+                user_id=user_id,
+                outcome=sync_outcome,
+            )
         logger.info(f"Updated node {node_id} for user {user_id}")
         return updated_payload
     except HTTPException:

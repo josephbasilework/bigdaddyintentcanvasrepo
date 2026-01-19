@@ -426,9 +426,14 @@ export interface DAGTask {
   title: string;
   description?: string;
   status: 'pending' | 'in_progress' | 'completed' | 'blocked';
+  statusUpdatedAt?: string;
+  statusUpdatedBy?: string;
   priority?: 'high' | 'medium' | 'low';
   estimatedEffort?: string;
   dependencies?: string[];
+  docCheckboxId?: string;
+  docTaskId?: string;
+  docDocumentId?: string;
   calendarSuggestion?: Record<string, unknown>;
   calendarEventId?: string;
   calendarEventUrl?: string;

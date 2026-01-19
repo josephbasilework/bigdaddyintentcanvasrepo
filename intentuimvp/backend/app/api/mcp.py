@@ -1,22 +1,23 @@
 """MCP API endpoints for server configuration and tool execution."""
 
+import json
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_db
 from app.mcp.calendar import GoogleCalendarMCP
-from app.mcp.capability_registry import (
-    CapabilityRegistry,
-    CapabilityType,
-)
+from app.mcp.capability_registry import CapabilityRegistry, CapabilityType
 from app.mcp.catalog import list_mcp_catalog
 from app.mcp.client import MCPClient
 from app.mcp.installer import MCPInstaller
 from app.mcp.manager import ToolExecutionResult
 from app.mcp.manifest import SecurityCategory, SecurityLevel
 from app.mcp.registry import MCPServerRegistry
+from app.models.dashboard_subscription import DashboardSubscriptionTarget
+from app.repositories.node_repo import NodeRepository
 from app.schemas.mcp import (
     CalendarSyncRequest,
     CalendarSyncResponse,
@@ -40,9 +41,13 @@ from app.schemas.mcp import (
     MCPToolExecuteRequest,
     MCPToolExecuteResponse,
     MCPToolsListResponse,
+    TaskDagExternalUpdateRequest,
+    TaskDagExternalUpdateResponse,
     UnavailableCapabilitiesResponse,
     UsageStatsResponse,
 )
+from app.services.dashboard_updates import publish_dashboard_update
+from app.services.mcp_sync import ExternalTaskUpdate, TaskDagSyncService
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -374,6 +379,96 @@ async def sync_calendar_task_dag(
         initiated_by=user_id,
     )
     return result
+
+
+@router.post(
+    "/api/mcp/task-dag/external",
+    response_model=TaskDagExternalUpdateResponse,
+)
+async def reconcile_task_dag_external_update(
+    payload: TaskDagExternalUpdateRequest,
+    db: AsyncSession = Depends(get_async_db),
+    user_id: str = Depends(get_current_user),
+) -> dict:
+    """Reconcile Task DAG updates coming from external MCP sources."""
+    repo = NodeRepository(db)
+    node = await repo.get_by_id(payload.node_id)
+    if not node:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task DAG node not found",
+        )
+
+    def _parse_updated_at(value: str | None) -> datetime | None:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed
+
+    updates = [
+        ExternalTaskUpdate(
+            task_id=update.task_id,
+            status=update.status,
+            updated_at=_parse_updated_at(update.updated_at),
+            source=update.source or payload.source,
+            title=update.title,
+        )
+        for update in payload.updates
+    ]
+
+    sync_service = TaskDagSyncService(db)
+    outcome = await sync_service.apply_external_updates(
+        node=node,
+        metadata=node.get_metadata(),
+        updates=updates,
+        policy=payload.conflict_resolution,
+        source=payload.source,
+    )
+
+    updated = None
+    if outcome.updated_metadata is not None:
+        updated = await repo.update(
+            node.id,
+            node_metadata=json.dumps(outcome.updated_metadata),
+        )
+        if updated:
+            updated_payload = {
+                "id": updated.id,
+                "canvas_id": updated.canvas_id,
+                "type": updated.type,
+                "label": updated.label,
+                "content": updated.content,
+                "position": updated.get_position(),
+                "metadata": updated.get_metadata(),
+                "created_at": updated.created_at.isoformat(),
+                "created_by_turn_id": updated.created_by_turn_id,
+            }
+            await publish_dashboard_update(
+                canvas_id=updated.canvas_id,
+                target=DashboardSubscriptionTarget.NODE,
+                source_id=str(updated.id),
+                change_type="updated",
+                data=updated_payload,
+            )
+            await sync_service.log_sync_turn(
+                node=updated,
+                user_id=user_id,
+                outcome=outcome,
+                summary_prefix="External Task DAG update",
+            )
+
+    return {
+        "success": True,
+        "updated": updated is not None,
+        "conflicts": outcome.conflicts,
+        "next_task": outcome.next_task,
+        "error": None,
+    }
 
 
 @router.get("/api/mcp/health")

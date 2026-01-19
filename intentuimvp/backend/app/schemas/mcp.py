@@ -302,6 +302,61 @@ class CalendarSyncResponse(BaseModel):
     pending_actions: list[dict[str, Any]] | None = None
 
 
+class TaskDagExternalUpdate(BaseModel):
+    """Task status update payload for external sync."""
+
+    task_id: str = Field(..., description="Task identifier")
+    status: Literal["pending", "in_progress", "completed", "blocked"] = Field(
+        ..., description="Updated task status"
+    )
+    updated_at: str | None = Field(default=None, description="External updated timestamp")
+    source: str | None = Field(default=None, description="External source identifier")
+    title: str | None = Field(default=None, description="Optional task title")
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_fields(cls, values: dict) -> dict:
+        if not isinstance(values, dict):
+            return values
+        if "task_id" not in values and "taskId" in values:
+            values = {**values, "task_id": values.get("taskId")}
+        if "updated_at" not in values and "updatedAt" in values:
+            values = {**values, "updated_at": values.get("updatedAt")}
+        return values
+
+
+class TaskDagExternalUpdateRequest(BaseModel):
+    """Request body for reconciling external Task DAG updates."""
+
+    node_id: int = Field(..., description="DAG node ID to update")
+    updates: list[TaskDagExternalUpdate] = Field(
+        default_factory=list, description="External task status updates"
+    )
+    conflict_resolution: Literal["prefer_local", "prefer_external", "newest"] = Field(
+        default="newest", description="Conflict resolution policy"
+    )
+    source: str | None = Field(default=None, description="External source label")
+
+
+class TaskDagExternalUpdateConflict(BaseModel):
+    """Conflict details for external Task DAG updates."""
+
+    task_id: str
+    local_status: str | None = None
+    external_status: str | None = None
+    resolution: str
+
+
+class TaskDagExternalUpdateResponse(BaseModel):
+    """Response body for external Task DAG updates."""
+
+    success: bool
+    updated: bool = False
+    conflicts: list[TaskDagExternalUpdateConflict] = Field(default_factory=list)
+    next_task: dict | None = None
+    error: str | None = None
+
+
 class MCPCredentialField(BaseModel):
     """Credential field required for MCP installation."""
 

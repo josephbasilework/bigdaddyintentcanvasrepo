@@ -189,7 +189,20 @@ const normalizeDagTask = (value: unknown): DAGTask | null => {
   );
   const priority = normalizeDagPriority(value.priority);
   const status = normalizeDagStatus(value.status);
+  const statusUpdatedAt = normalizeText(
+    value.statusUpdatedAt ?? value.status_updated_at ?? value.statusUpdated
+  );
+  const statusUpdatedBy = normalizeText(
+    value.statusUpdatedBy ?? value.status_updated_by ?? value.statusUpdatedSource
+  );
   const dependencies = normalizeTextArray(value.dependencies);
+  const docCheckboxId = normalizeText(
+    value.docCheckboxId ?? value.doc_checkbox_id ?? value.checkboxId ?? value.checkbox_id
+  );
+  const docTaskId = normalizeText(value.docTaskId ?? value.doc_task_id ?? value.docTask);
+  const docDocumentId = normalizeText(
+    value.docDocumentId ?? value.doc_document_id ?? value.documentId ?? value.document_id
+  );
   const calendarSuggestionValue = value.calendarSuggestion ?? value.calendar_suggestion;
   const calendarSuggestion = isRecord(calendarSuggestionValue)
     ? calendarSuggestionValue
@@ -203,7 +216,12 @@ const normalizeDagTask = (value: unknown): DAGTask | null => {
   if (description) task.description = description;
   if (priority) task.priority = priority;
   if (estimatedEffort) task.estimatedEffort = estimatedEffort;
+  if (statusUpdatedAt) task.statusUpdatedAt = statusUpdatedAt;
+  if (statusUpdatedBy) task.statusUpdatedBy = statusUpdatedBy;
   if (dependencies !== undefined) task.dependencies = dependencies;
+  if (docCheckboxId) task.docCheckboxId = docCheckboxId;
+  if (docTaskId) task.docTaskId = docTaskId;
+  if (docDocumentId) task.docDocumentId = docDocumentId;
   if (calendarSuggestion) task.calendarSuggestion = calendarSuggestion;
   if (calendarEventId) task.calendarEventId = calendarEventId;
   if (calendarEventUrl) task.calendarEventUrl = calendarEventUrl;
