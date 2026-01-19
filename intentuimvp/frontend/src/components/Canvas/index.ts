@@ -7,3 +7,10 @@ export type { AudioRecording, RecordingStatus } from "./AudioCapture";
 export { CalendarSyncDialog } from "./CalendarSyncDialog";
 export { CalendarApprovalDialog } from "./CalendarApprovalDialog";
 export type { PendingCalendarAction, CalendarApprovalResult } from "./CalendarApprovalDialog";
+export {
+  CUSTOM_EDGE_RELATION_VALUE,
+  EDGE_RELATION_OPTIONS,
+  buildEdgeRelationOptions,
+  getEdgeRelationLabel,
+  normalizeEdgeRelationType,
+} from "./edgeRelations";
