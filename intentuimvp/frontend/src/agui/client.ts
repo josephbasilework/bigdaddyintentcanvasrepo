@@ -939,10 +939,7 @@ export class AGUIClient {
     this.activeDashboardSubscriptions.add(dashboardNodeId);
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      const message: UIToAgentMessageType = {
-        version: AGUI_PROTOCOL_VERSION,
-        messageId: generateMessageId(),
-        timestamp: getTimestamp(),
+      const message: OutboundMessageInput = {
         source: "ui",
         target: "agent",
         type: "dashboard.subscribe",
@@ -973,10 +970,7 @@ export class AGUIClient {
     this.dashboardSubscribedListeners.delete(dashboardNodeId);
 
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      const message: UIToAgentMessageType = {
-        version: AGUI_PROTOCOL_VERSION,
-        messageId: generateMessageId(),
-        timestamp: getTimestamp(),
+      const message: OutboundMessageInput = {
         source: "ui",
         target: "agent",
         type: "dashboard.unsubscribe",

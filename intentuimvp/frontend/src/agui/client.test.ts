@@ -684,4 +684,48 @@ describe('AGUIClient dashboard streaming', () => {
       expect.objectContaining({ dashboard_node_id: 7 })
     );
   });
+
+  it('sends dashboard subscribe requests with envelope fields', async () => {
+    const client = new AGUIClient({
+      gatewayUrl: 'http://localhost:8000',
+    });
+
+    client.connect();
+    await flushMicrotasks();
+
+    client.subscribeToDashboard(12, 34);
+
+    const ws = MockWebSocket.instances[0];
+    const subscribeEnvelope = ws.sentMessages
+      .map((message) => {
+        try {
+          return JSON.parse(message);
+        } catch {
+          return null;
+        }
+      })
+      .find((message) => message?.type === 'dashboard.subscribe');
+
+    expect(subscribeEnvelope).toMatchObject({
+      version: AGUI_PROTOCOL_VERSION,
+      source: 'ui',
+      target: 'agent',
+      type: 'dashboard.subscribe',
+      payload: {
+        dashboard_node_id: 12,
+        canvas_id: 34,
+        targets: [
+          'workspace_state',
+          'node',
+          'edge',
+          'job',
+          'artifact',
+          'tool_output',
+          'external_state',
+        ],
+      },
+    });
+    expect(subscribeEnvelope?.messageId).toEqual(expect.any(String));
+    expect(subscribeEnvelope?.timestamp).toEqual(expect.any(String));
+  });
 });
