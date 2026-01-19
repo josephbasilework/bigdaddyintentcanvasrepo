@@ -104,6 +104,7 @@ describe('workspace canvas', () => {
       selectedNodeId: null,
       selectedNodeIds: [],
       isAutoExpanding: false,
+      isAutoLayoutAnimating: false,
       past: [],
       future: [],
     });
@@ -904,11 +905,11 @@ describe('workspace canvas', () => {
 
     await waitFor(() => expect(screen.getByTestId('connect-mode-banner')).toBeInTheDocument());
 
-    const relationSelect = screen.getByLabelText(/relation/i);
+    const relationSelect = screen.getByLabelText(/edge type/i);
     const labelInput = screen.getByLabelText(/edge label/i);
-    expect(labelInput).toHaveValue('Depends on');
-    fireEvent.change(relationSelect, { target: { value: 'references' } });
-    expect(labelInput).toHaveValue('References');
+    expect(labelInput).toHaveValue('Dependency');
+    fireEvent.change(relationSelect, { target: { value: 'relates_to' } });
+    expect(labelInput).toHaveValue('Relates to');
     fireEvent.change(labelInput, { target: { value: 'Cites' } });
 
     const targetNode = screen.getByRole('button', { name: /second node text node/i });
@@ -919,11 +920,67 @@ describe('workspace canvas', () => {
     const [edge] = useCanvasStore.getState().edges;
     expect(edge.sourceNodeId).toBe('node-1');
     expect(edge.targetNodeId).toBe('node-2');
-    expect(edge.relationType).toBe('references');
+    expect(edge.relationType).toBe('relates_to');
     expect(edge.label).toBe('Cites');
     await waitFor(() =>
       expect(screen.queryByTestId('connect-mode-banner')).not.toBeInTheDocument()
     );
+  });
+
+  it('connects nodes with a custom edge type', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'text',
+            x: 0,
+            y: 0,
+            z: 1,
+            title: 'First node',
+          },
+          {
+            id: 'node-2',
+            type: 'text',
+            x: 240,
+            y: 0,
+            z: 2,
+            title: 'Second node',
+          },
+        ],
+        edges: [],
+      }),
+    });
+
+    render(<Home />);
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    const sourceNode = screen.getByRole('button', { name: /first node text node/i });
+    fireEvent.contextMenu(sourceNode);
+
+    const connectItem = screen.getByRole('menuitem', { name: /connect node/i });
+    fireEvent.click(connectItem);
+
+    await waitFor(() => expect(screen.getByTestId('connect-mode-banner')).toBeInTheDocument());
+
+    const relationSelect = screen.getByLabelText(/edge type/i);
+    const labelInput = screen.getByLabelText(/edge label/i);
+    fireEvent.change(relationSelect, { target: { value: '__custom__' } });
+
+    const customTypeInput = screen.getByLabelText(/custom type/i);
+    fireEvent.change(customTypeInput, { target: { value: 'blocks' } });
+
+    expect(labelInput).toHaveValue('Blocks');
+
+    const targetNode = screen.getByRole('button', { name: /second node text node/i });
+    fireEvent.click(targetNode);
+
+    await waitFor(() => expect(useCanvasStore.getState().edges).toHaveLength(1));
+
+    const [edge] = useCanvasStore.getState().edges;
+    expect(edge.relationType).toBe('blocks');
   });
 
   it('requires confirmation when deleting a node with linked artifacts', async () => {

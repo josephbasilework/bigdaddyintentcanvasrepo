@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useCallback, useState, useId, useRef } from "react";
+import { useEffect, useCallback, useState, useId, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   useCanvasStore,
@@ -8,6 +8,9 @@ import {
   CanvasNode,
   CanvasEdgeRelationType,
   CanvasEdgeAnnotation,
+  LayoutDirection,
+  LayoutType,
+  resolveNodeLayoutRegionInfo,
   DAGData,
   DAGTask,
   JobData,
@@ -16,9 +19,17 @@ import {
 import { Node } from "./Node";
 import { EdgesLayer } from "./Edge";
 import { EdgeAnnotation } from "./EdgeAnnotation";
-import { EDGE_RELATION_OPTIONS, getEdgeRelationLabel } from "./edgeRelations";
+import {
+  CUSTOM_EDGE_RELATION_VALUE,
+  buildEdgeRelationOptions,
+  getEdgeRelationLabel,
+  normalizeEdgeRelationType,
+} from "./edgeRelations";
+import { resolveNodeTypeId } from "../../nodeTypes";
+import { CanvasLayoutControls } from "./CanvasLayoutControls";
 import {
   DEPENDENCY_CYCLE_MESSAGE,
+  isDependencyRelationType,
   wouldCreateDependencyCycle,
 } from "../../utils/dependencyCycles";
 import { useAutoSave } from "../../hooks/useAutoSave";
@@ -26,22 +37,9 @@ import { SaveStatusIndicator } from "./SaveStatusIndicator";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-const NODE_TYPES: Set<CanvasNode["type"]> = new Set([
-  "text",
-  "document",
-  "audio",
-  "graph",
-  "plan",
-  "dag",
-  "dashboard",
-  "job",
-]);
 const EDGE_STYLE_TYPES: Set<CanvasEdge["type"]> = new Set(["solid", "dashed", "dotted"]);
-const EDGE_RELATION_TYPES: Set<CanvasEdgeRelationType> = new Set(
-  EDGE_RELATION_OPTIONS.map((option) => option.value)
-);
-const DEFAULT_RELATION_TYPE: CanvasEdgeRelationType = "depends_on";
-const DEFAULT_RELATION_LABEL = getEdgeRelationLabel(DEFAULT_RELATION_TYPE) ?? "Depends on";
+const DEFAULT_RELATION_TYPE: CanvasEdgeRelationType = "dependency";
+const DEFAULT_RELATION_LABEL = getEdgeRelationLabel(DEFAULT_RELATION_TYPE) ?? "Dependency";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -305,9 +303,7 @@ export const normalizeNode = (value: unknown): CanvasNode | null => {
   const id = typeof idValue === "string" ? idValue : String(idValue);
 
   const typeValue = getString(value.type);
-  const resolvedType = typeValue && NODE_TYPES.has(typeValue as CanvasNode["type"])
-    ? (typeValue as CanvasNode["type"])
-    : "text";
+  const resolvedType = resolveNodeTypeId(typeValue);
 
   const position = isRecord(value.position) ? value.position : null;
   const x = getNumber(position?.x ?? value.x, 0);
@@ -366,9 +362,7 @@ export const normalizeNode = (value: unknown): CanvasNode | null => {
     .map(normalizeJobData)
     .find(Boolean);
 
-  const type: CanvasNode["type"] = jobData && resolvedType === "text"
-    ? "job"
-    : resolvedType;
+  const type: CanvasNode["type"] = jobData && resolvedType === "text" ? "job" : resolvedType;
 
   const node: CanvasNode = { id, type, x, y, z, title };
   if (content) node.content = content;
@@ -400,11 +394,10 @@ export const normalizeEdge = (value: unknown, index: number): CanvasEdge | null 
     : undefined;
 
   const relationValue = getString(value.relationType ?? value.relation_type);
-  const relationType = relationValue && EDGE_RELATION_TYPES.has(relationValue as CanvasEdgeRelationType)
-    ? (relationValue as CanvasEdgeRelationType)
-    : typeValue && EDGE_RELATION_TYPES.has(typeValue as CanvasEdgeRelationType)
-      ? (typeValue as CanvasEdgeRelationType)
-      : undefined;
+  let relationType = normalizeEdgeRelationType(relationValue) ?? undefined;
+  if (!relationType && typeValue && !EDGE_STYLE_TYPES.has(typeValue as CanvasEdge["type"])) {
+    relationType = normalizeEdgeRelationType(typeValue) ?? undefined;
+  }
 
   const metadataValue = value.metadata ?? value.edge_metadata ?? value.edgeMetadata;
   const metadata = isRecord(metadataValue) ? metadataValue : undefined;
@@ -447,6 +440,53 @@ export const normalizeWorkspaceState = (
   };
 };
 
+type LayoutRegionEntry = {
+  nodeIds: string[];
+  layout?: LayoutType;
+  locked?: boolean;
+  direction?: LayoutDirection;
+};
+
+const collectLayoutRegions = (nodes: CanvasNode[]): Map<string, LayoutRegionEntry> => {
+  const regions = new Map<string, LayoutRegionEntry>();
+  nodes.forEach((node) => {
+    const info = resolveNodeLayoutRegionInfo(node);
+    if (!info) return;
+    const existing = regions.get(info.regionId);
+    if (existing) {
+      existing.nodeIds.push(node.id);
+      if (!existing.layout && info.layout) {
+        existing.layout = info.layout;
+      }
+      if (existing.locked === undefined && info.locked !== undefined) {
+        existing.locked = info.locked;
+      }
+      if (!existing.direction && info.direction) {
+        existing.direction = info.direction;
+      }
+      return;
+    }
+    regions.set(info.regionId, {
+      nodeIds: [node.id],
+      ...(info.layout ? { layout: info.layout } : {}),
+      ...(info.locked !== undefined ? { locked: info.locked } : {}),
+      ...(info.direction ? { direction: info.direction } : {}),
+    });
+  });
+  return regions;
+};
+
+const hasOverlappingPositions = (nodes: CanvasNode[]): boolean => {
+  if (nodes.length < 2) return false;
+  const counts = new Map<string, number>();
+  nodes.forEach((node) => {
+    const key = `${Math.round(node.x)}:${Math.round(node.y)}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  });
+  const maxOverlap = Math.max(...counts.values());
+  return maxOverlap >= Math.max(2, Math.ceil(nodes.length * 0.6));
+};
+
 /**
  * CanvasWorkspace component that renders all nodes on the canvas.
  *
@@ -467,6 +507,7 @@ export function CanvasWorkspace() {
     updateEdge,
     setSelectedNodes,
     setCanvasMeta,
+    applyLayout,
   } = useCanvasStore();
   const { saveStatus, saveError } = useAutoSave({
     debounceMs: 500,
@@ -474,15 +515,17 @@ export function CanvasWorkspace() {
   });
   const [loadStatus, setLoadStatus] = useState<"loading" | "loaded" | "error">("loading");
   const [connectSourceNodeId, setConnectSourceNodeId] = useState<string | null>(null);
-  const [connectRelationType, setConnectRelationType] = useState<CanvasEdgeRelationType>(
+  const [connectRelationSelection, setConnectRelationSelection] = useState<string>(
     DEFAULT_RELATION_TYPE
   );
+  const [connectCustomRelationType, setConnectCustomRelationType] = useState("");
   const [connectLabel, setConnectLabel] = useState(DEFAULT_RELATION_LABEL);
   const [connectLabelTouched, setConnectLabelTouched] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connectPreview, setConnectPreview] = useState<{ x: number; y: number } | null>(null);
   const [activeEdgeId, setActiveEdgeId] = useState<string | null>(null);
   const connectRelationId = useId();
+  const connectCustomRelationId = useId();
   const connectLabelId = useId();
   const selectionStartRef = useRef<{
     x: number;
@@ -524,7 +567,8 @@ export function CanvasWorkspace() {
 
   const handleStartConnect = useCallback((nodeId: string) => {
     setConnectSourceNodeId(nodeId);
-    setConnectRelationType(DEFAULT_RELATION_TYPE);
+    setConnectRelationSelection(DEFAULT_RELATION_TYPE);
+    setConnectCustomRelationType("");
     setConnectLabel(DEFAULT_RELATION_LABEL);
     setConnectLabelTouched(false);
     setConnectError(null);
@@ -549,16 +593,28 @@ export function CanvasWorkspace() {
       return;
     }
 
+    const resolvedRelationType =
+      connectRelationSelection === CUSTOM_EDGE_RELATION_VALUE
+        ? normalizeEdgeRelationType(connectCustomRelationType)
+        : normalizeEdgeRelationType(connectRelationSelection);
+
+    if (!resolvedRelationType) {
+      setConnectError("Choose an edge type to continue.");
+      return;
+    }
+
     const resolveEdgeLabel = (edge: CanvasEdge): string =>
       edge.label ?? getEdgeRelationLabel(edge.relationType) ?? "";
 
     const trimmedLabel = connectLabel.trim();
-    const resolvedLabel = trimmedLabel || getEdgeRelationLabel(connectRelationType) || "";
+    const resolvedLabel =
+      trimmedLabel || getEdgeRelationLabel(resolvedRelationType) || "";
     const duplicateEdge = edges.some(
       (edge) =>
         edge.sourceNodeId === connectSourceNodeId &&
         edge.targetNodeId === targetNodeId &&
-        (edge.relationType ?? DEFAULT_RELATION_TYPE) === connectRelationType &&
+        normalizeEdgeRelationType(edge.relationType ?? DEFAULT_RELATION_TYPE) ===
+          resolvedRelationType &&
         resolveEdgeLabel(edge) === resolvedLabel
     );
 
@@ -571,11 +627,10 @@ export function CanvasWorkspace() {
       id: `candidate-${connectSourceNodeId}-${targetNodeId}`,
       sourceNodeId: connectSourceNodeId,
       targetNodeId,
-      relationType: connectRelationType,
+      relationType: resolvedRelationType,
       ...(resolvedLabel ? { label: resolvedLabel } : {}),
     };
-    if (
-      connectRelationType === "depends_on" &&
+    if (isDependencyRelationType(resolvedRelationType) &&
       wouldCreateDependencyCycle(edges, candidateEdge)
     ) {
       setConnectError(DEPENDENCY_CYCLE_MESSAGE);
@@ -585,14 +640,21 @@ export function CanvasWorkspace() {
     const edgePayload: Omit<CanvasEdge, "id"> = {
       sourceNodeId: connectSourceNodeId,
       targetNodeId,
-      relationType: connectRelationType,
+      relationType: resolvedRelationType,
       ...(resolvedLabel ? { label: resolvedLabel } : {}),
     };
     addEdge(edgePayload);
 
     setConnectSourceNodeId(null);
     setConnectError(null);
-  }, [addEdge, connectLabel, connectRelationType, connectSourceNodeId, edges]);
+  }, [
+    addEdge,
+    connectCustomRelationType,
+    connectLabel,
+    connectRelationSelection,
+    connectSourceNodeId,
+    edges,
+  ]);
 
   const handleStartConnectDrag = useCallback(
     (nodeId: string, event: React.PointerEvent<HTMLButtonElement>) => {
@@ -661,31 +723,69 @@ export function CanvasWorkspace() {
 
   const handleRelationTypeChange = useCallback(
     (event: React.ChangeEvent<HTMLSelectElement>) => {
-      const nextType = event.target.value as CanvasEdgeRelationType;
+      const nextSelection = event.target.value;
       const trimmedLabel = connectLabel.trim();
-      const currentDefaultLabel = getEdgeRelationLabel(connectRelationType) ?? "";
+      const currentType =
+        connectRelationSelection === CUSTOM_EDGE_RELATION_VALUE
+          ? normalizeEdgeRelationType(connectCustomRelationType)
+          : normalizeEdgeRelationType(connectRelationSelection);
+      const currentDefaultLabel = getEdgeRelationLabel(currentType) ?? "";
       const labelMatchesDefault =
         trimmedLabel === "" || trimmedLabel === currentDefaultLabel;
-      setConnectRelationType(nextType);
+      setConnectRelationSelection(nextSelection);
       setConnectError(null);
+      const nextType =
+        nextSelection === CUSTOM_EDGE_RELATION_VALUE
+          ? normalizeEdgeRelationType(connectCustomRelationType)
+          : normalizeEdgeRelationType(nextSelection);
       if (!connectLabelTouched || labelMatchesDefault) {
         setConnectLabel(getEdgeRelationLabel(nextType) ?? "");
         setConnectLabelTouched(false);
       }
     },
-    [connectLabel, connectLabelTouched, connectRelationType]
+    [
+      connectCustomRelationType,
+      connectLabel,
+      connectLabelTouched,
+      connectRelationSelection,
+    ]
   );
 
-  const handleLabelChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
-    const nextValue = event.target.value;
-    const trimmedValue = nextValue.trim();
-    const currentDefaultLabel = getEdgeRelationLabel(connectRelationType) ?? "";
-    const labelMatchesDefault =
-      trimmedValue === "" || trimmedValue === currentDefaultLabel;
-    setConnectLabel(nextValue);
-    setConnectLabelTouched(!labelMatchesDefault);
-    setConnectError(null);
-  }, [connectRelationType]);
+  const handleCustomRelationTypeChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const nextValue = event.target.value;
+      const trimmedLabel = connectLabel.trim();
+      const currentDefaultLabel =
+        getEdgeRelationLabel(normalizeEdgeRelationType(connectCustomRelationType)) ?? "";
+      const labelMatchesDefault =
+        trimmedLabel === "" || trimmedLabel === currentDefaultLabel;
+      setConnectCustomRelationType(nextValue);
+      setConnectError(null);
+      if (!connectLabelTouched || labelMatchesDefault) {
+        setConnectLabel(getEdgeRelationLabel(normalizeEdgeRelationType(nextValue)) ?? "");
+        setConnectLabelTouched(false);
+      }
+    },
+    [connectCustomRelationType, connectLabel, connectLabelTouched]
+  );
+
+  const handleLabelChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const nextValue = event.target.value;
+      const trimmedValue = nextValue.trim();
+      const resolvedType =
+        connectRelationSelection === CUSTOM_EDGE_RELATION_VALUE
+          ? normalizeEdgeRelationType(connectCustomRelationType)
+          : normalizeEdgeRelationType(connectRelationSelection);
+      const currentDefaultLabel = getEdgeRelationLabel(resolvedType) ?? "";
+      const labelMatchesDefault =
+        trimmedValue === "" || trimmedValue === currentDefaultLabel;
+      setConnectLabel(nextValue);
+      setConnectLabelTouched(!labelMatchesDefault);
+      setConnectError(null);
+    },
+    [connectCustomRelationType, connectRelationSelection]
+  );
 
   const handleAnnotateEdge = useCallback((edgeId: string) => {
     setActiveEdgeId(edgeId);
@@ -783,7 +883,7 @@ export function CanvasWorkspace() {
 
   useEffect(() => {
     if (connectSourceNodeId) return;
-    setConnectRelationType(DEFAULT_RELATION_TYPE);
+    setConnectRelationSelection(DEFAULT_RELATION_TYPE);
     setConnectLabel(DEFAULT_RELATION_LABEL);
     setConnectLabelTouched(false);
     setConnectError(null);
@@ -855,6 +955,61 @@ export function CanvasWorkspace() {
       isActive = false;
     };
   }, [setCanvasMeta, setNodes, setEdges]);
+
+  const layoutRegions = useMemo(() => collectLayoutRegions(nodes), [nodes]);
+  const autoLayoutRef = useRef<Map<string, number>>(new Map());
+  const importLayoutAppliedRef = useRef(false);
+
+  useEffect(() => {
+    if (loadStatus !== "loaded") return;
+    layoutRegions.forEach((region, regionId) => {
+      if (region.locked) {
+        autoLayoutRef.current.set(regionId, region.nodeIds.length);
+        return;
+      }
+      const prevCount = autoLayoutRef.current.get(regionId);
+      if (prevCount === region.nodeIds.length) {
+        return;
+      }
+      const regionNodes = region.nodeIds
+        .map((nodeId) => nodes.find((node) => node.id === nodeId))
+        .filter(Boolean) as CanvasNode[];
+      if (regionNodes.length < 2 || !hasOverlappingPositions(regionNodes)) {
+        autoLayoutRef.current.set(regionId, region.nodeIds.length);
+        return;
+      }
+      applyLayout(
+        {
+          layout: region.layout ?? "grid",
+          direction: region.direction ?? "down",
+          nodeIds: region.nodeIds,
+          regionId,
+        },
+        { source: "system", recordHistory: false, log: false }
+      );
+      autoLayoutRef.current.set(regionId, region.nodeIds.length);
+    });
+  }, [applyLayout, layoutRegions, loadStatus, nodes]);
+
+  useEffect(() => {
+    if (loadStatus !== "loaded" || importLayoutAppliedRef.current) return;
+    if (layoutRegions.size > 0) {
+      importLayoutAppliedRef.current = true;
+      return;
+    }
+    if (nodes.length < 2 || !hasOverlappingPositions(nodes)) {
+      importLayoutAppliedRef.current = true;
+      return;
+    }
+    applyLayout(
+      {
+        layout: "grid",
+        nodeIds: nodes.map((node) => node.id),
+      },
+      { source: "system", recordHistory: false, log: false }
+    );
+    importLayoutAppliedRef.current = true;
+  }, [applyLayout, layoutRegions.size, loadStatus, nodes]);
 
   const handleCanvasMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement | null;
@@ -939,6 +1094,16 @@ export function CanvasWorkspace() {
     ? nodes.find((node) => node.id === connectSourceNodeId)
     : null;
   const connectSourceLabel = connectSourceNode?.title ?? "node";
+  const connectRelationOptions = useMemo(() => {
+    const customValues =
+      connectRelationSelection === CUSTOM_EDGE_RELATION_VALUE
+        ? [connectCustomRelationType]
+        : [];
+    return buildEdgeRelationOptions([
+      ...edges.map((edge) => edge.relationType),
+      ...customValues,
+    ]);
+  }, [connectCustomRelationType, connectRelationSelection, edges]);
   const connectBanner = connectSourceNodeId && typeof document !== "undefined"
     ? createPortal(
       <div
@@ -970,16 +1135,16 @@ export function CanvasWorkspace() {
             Connect mode
           </div>
           <div style={{ fontSize: "14px", lineHeight: 1.4 }}>
-            Connecting from <span style={{ fontWeight: 600 }}>{connectSourceLabel}</span>. Choose a relation and label, then select another node to create an edge.
+            Connecting from <span style={{ fontWeight: 600 }}>{connectSourceLabel}</span>. Choose an edge type and label, then select another node to create an edge.
           </div>
           <div style={{ display: "flex", gap: "12px", flexWrap: "wrap" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: "160px" }}>
               <label htmlFor={connectRelationId} style={{ fontSize: "11px", color: "#94a3b8" }}>
-                Relation
+                Edge type
               </label>
               <select
                 id={connectRelationId}
-                value={connectRelationType}
+                value={connectRelationSelection}
                 onChange={handleRelationTypeChange}
                 style={{
                   backgroundColor: "#0f172a",
@@ -990,13 +1155,36 @@ export function CanvasWorkspace() {
                   padding: "6px 10px",
                 }}
               >
-                {EDGE_RELATION_OPTIONS.map((option) => (
+                {connectRelationOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
                 ))}
+                <option value={CUSTOM_EDGE_RELATION_VALUE}>Custom...</option>
               </select>
             </div>
+            {connectRelationSelection === CUSTOM_EDGE_RELATION_VALUE && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: "160px" }}>
+                <label htmlFor={connectCustomRelationId} style={{ fontSize: "11px", color: "#94a3b8" }}>
+                  Custom type
+                </label>
+                <input
+                  id={connectCustomRelationId}
+                  type="text"
+                  value={connectCustomRelationType}
+                  onChange={handleCustomRelationTypeChange}
+                  placeholder="e.g., blocks"
+                  style={{
+                    backgroundColor: "#0f172a",
+                    border: "1px solid rgba(148, 163, 184, 0.45)",
+                    borderRadius: "8px",
+                    color: "#e2e8f0",
+                    fontSize: "12px",
+                    padding: "6px 10px",
+                  }}
+                />
+              </div>
+            )}
             <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: "1 1 220px" }}>
               <label htmlFor={connectLabelId} style={{ fontSize: "11px", color: "#94a3b8" }}>
                 Edge label
@@ -1213,6 +1401,7 @@ export function CanvasWorkspace() {
         />
       )}
       <SaveStatusIndicator saveStatus={saveStatus} saveError={saveError} />
+      <CanvasLayoutControls />
     </div>
   );
 }

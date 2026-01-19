@@ -6,6 +6,15 @@ import {
   useOfflineQueueStore,
 } from './offlineQueueStore';
 import { setLastSyncedTurnSequence } from '../utils/turnSequence';
+import { serializeCanvasNode } from "../nodeTypes/registry";
+import type { CanvasNodeType } from "../nodeTypes/types";
+import {
+  computeLayoutPositions,
+  type LayoutDirection,
+  type LayoutEdge as LayoutEngineEdge,
+  type LayoutSpacing,
+  type LayoutType,
+} from "../utils/layoutEngine";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const SESSION_ID_STORAGE_KEY = "intentui_workspace_session_id";
@@ -59,7 +68,7 @@ export interface CanvasEdgeMetadata extends Record<string, unknown> {
 // Types for canvas entities
 export interface CanvasNode {
   id: string;
-  type: 'text' | 'document' | 'audio' | 'graph' | 'plan' | 'dag' | 'dashboard' | 'job';
+  type: CanvasNodeType;
   x: number;
   y: number;
   z: number;
@@ -83,8 +92,25 @@ type NodeDimensions = {
   height: number;
 };
 
+export type { LayoutType, LayoutDirection };
+
+export type LayoutMetadata = {
+  regionId: string;
+  layout: LayoutType;
+  locked?: boolean;
+  direction?: LayoutDirection;
+  updatedAt?: string;
+};
+
+export type LayoutRegionInfo = {
+  regionId: string;
+  layout?: LayoutType;
+  locked?: boolean;
+  direction?: LayoutDirection;
+};
+
 const DEFAULT_NODE_DIMENSIONS: NodeDimensions = { width: 240, height: 140 };
-const NODE_DIMENSIONS_BY_TYPE: Record<CanvasNode['type'], NodeDimensions> = {
+const NODE_DIMENSIONS_BY_TYPE: Record<string, NodeDimensions> = {
   text: { width: 240, height: 140 },
   document: { width: 260, height: 160 },
   audio: { width: 300, height: 180 },
@@ -97,9 +123,173 @@ const NODE_DIMENSIONS_BY_TYPE: Record<CanvasNode['type'], NodeDimensions> = {
 
 const AUTO_EXPAND_PADDING = 24;
 export const AUTO_EXPAND_ANIMATION_MS = 240;
+export const AUTO_LAYOUT_ANIMATION_MS = 320;
 
-const getNodeDimensions = (node: { type: CanvasNode['type'] }): NodeDimensions =>
+const getNodeDimensions = (node: { type: CanvasNodeType }): NodeDimensions =>
   NODE_DIMENSIONS_BY_TYPE[node.type] ?? DEFAULT_NODE_DIMENSIONS;
+
+const LAYOUT_PADDING: LayoutSpacing = { x: 80, y: 60 };
+const LAYOUT_TYPE_VALUES: Set<LayoutType> = new Set([
+  "tree",
+  "hierarchy",
+  "force",
+  "grid",
+]);
+const LAYOUT_DIRECTION_VALUES: Set<LayoutDirection> = new Set(["down", "right"]);
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const normalizeLayoutType = (value: unknown): LayoutType | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return LAYOUT_TYPE_VALUES.has(trimmed as LayoutType)
+    ? (trimmed as LayoutType)
+    : null;
+};
+
+const normalizeLayoutDirection = (value: unknown): LayoutDirection | null => {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return LAYOUT_DIRECTION_VALUES.has(trimmed as LayoutDirection)
+    ? (trimmed as LayoutDirection)
+    : null;
+};
+
+export const resolveNodeLayoutRegionInfo = (node: CanvasNode): LayoutRegionInfo | null => {
+  const metadata = node.metadata;
+  if (!isRecord(metadata)) return null;
+
+  let regionId: string | undefined;
+  let layout: LayoutType | undefined;
+  let locked: boolean | undefined;
+  let direction: LayoutDirection | undefined;
+
+  const layoutValue = isRecord(metadata.layout) ? metadata.layout : null;
+  if (layoutValue) {
+    const regionValue =
+      layoutValue.regionId ?? layoutValue.region_id ?? layoutValue.id;
+    if (typeof regionValue === "string") {
+      regionId = regionValue;
+    }
+    const layoutType = normalizeLayoutType(layoutValue.layout ?? layoutValue.type);
+    if (layoutType) {
+      layout = layoutType;
+    }
+    if (typeof layoutValue.locked === "boolean") {
+      locked = layoutValue.locked;
+    }
+    const layoutDirection = normalizeLayoutDirection(layoutValue.direction);
+    if (layoutDirection) {
+      direction = layoutDirection;
+    }
+  }
+
+  const visualizationValue = isRecord(metadata.visualization)
+    ? metadata.visualization
+    : null;
+  if (!regionId && visualizationValue && typeof visualizationValue.id === "string") {
+    regionId = visualizationValue.id;
+  }
+  if (!layout && visualizationValue) {
+    const layoutType = normalizeLayoutType(visualizationValue.layout);
+    if (layoutType) {
+      layout = layoutType;
+    }
+  }
+  if (locked === undefined && visualizationValue && typeof visualizationValue.locked === "boolean") {
+    locked = visualizationValue.locked;
+  }
+
+  if (!regionId) {
+    return null;
+  }
+
+  return {
+    regionId,
+    ...(layout ? { layout } : {}),
+    ...(locked !== undefined ? { locked } : {}),
+    ...(direction ? { direction } : {}),
+  };
+};
+
+const resolveSharedLayoutRegionInfo = (nodes: CanvasNode[]): LayoutRegionInfo | null => {
+  const infos = nodes
+    .map(resolveNodeLayoutRegionInfo)
+    .filter(Boolean) as LayoutRegionInfo[];
+  if (infos.length === 0) return null;
+  const regionId = infos[0].regionId;
+  if (infos.some((info) => info.regionId !== regionId)) {
+    return null;
+  }
+  const layout = infos.find((info) => info.layout)?.layout;
+  const direction = infos.find((info) => info.direction)?.direction;
+  const locked = infos.find((info) => info.locked !== undefined)?.locked;
+  return {
+    regionId,
+    ...(layout ? { layout } : {}),
+    ...(direction ? { direction } : {}),
+    ...(locked !== undefined ? { locked } : {}),
+  };
+};
+
+const createLayoutRegionId = (): string => {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return `layout-${crypto.randomUUID()}`;
+  }
+  return `layout-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
+
+const resolveLayoutSpacing = (nodes: CanvasNode[]): LayoutSpacing => {
+  const maxWidth = Math.max(
+    ...nodes.map((node) => getNodeDimensions(node).width),
+    DEFAULT_NODE_DIMENSIONS.width
+  );
+  const maxHeight = Math.max(
+    ...nodes.map((node) => getNodeDimensions(node).height),
+    DEFAULT_NODE_DIMENSIONS.height
+  );
+  return {
+    x: maxWidth + LAYOUT_PADDING.x,
+    y: maxHeight + LAYOUT_PADDING.y,
+  };
+};
+
+const resolveLayoutOrigin = (nodes: CanvasNode[]): { x: number; y: number } => {
+  const minX = Math.min(...nodes.map((node) => node.x));
+  const minY = Math.min(...nodes.map((node) => node.y));
+  return { x: minX, y: minY };
+};
+
+const mergeLayoutMetadata = (
+  metadata: Record<string, unknown> | undefined,
+  layoutInfo: LayoutMetadata
+): Record<string, unknown> => {
+  const nextMetadata: Record<string, unknown> = { ...(metadata ?? {}) };
+  const existingLayout = isRecord(nextMetadata.layout) ? nextMetadata.layout : {};
+
+  nextMetadata.layout = {
+    ...existingLayout,
+    regionId: layoutInfo.regionId,
+    layout: layoutInfo.layout,
+    ...(layoutInfo.locked !== undefined ? { locked: layoutInfo.locked } : {}),
+    ...(layoutInfo.direction ? { direction: layoutInfo.direction } : {}),
+    ...(layoutInfo.updatedAt ? { updatedAt: layoutInfo.updatedAt } : {}),
+  };
+
+  const visualizationValue = isRecord(nextMetadata.visualization)
+    ? nextMetadata.visualization
+    : null;
+  if (visualizationValue && visualizationValue.id === layoutInfo.regionId) {
+    nextMetadata.visualization = {
+      ...visualizationValue,
+      layout: layoutInfo.layout,
+      ...(layoutInfo.locked !== undefined ? { locked: layoutInfo.locked } : {}),
+    };
+  }
+
+  return nextMetadata;
+};
 
 type NodeBounds = {
   x1: number;
@@ -238,13 +428,23 @@ export interface DAGData {
   }>;
 }
 
+export type BuiltInEdgeRelationType =
+  | "dependency"
+  | "relates_to"
+  | "parent_child";
+
+export type LegacyEdgeRelationType =
+  | "depends_on"
+  | "references"
+  | "supports"
+  | "conflicts"
+  | "derived_from"
+  | "critiques";
+
 export type CanvasEdgeRelationType =
-  | 'depends_on'
-  | 'references'
-  | 'supports'
-  | 'conflicts'
-  | 'derived_from'
-  | 'critiques';
+  | BuiltInEdgeRelationType
+  | LegacyEdgeRelationType
+  | (string & {});
 
 export interface CanvasEdge {
   id: string;
@@ -324,19 +524,8 @@ const resolveActionContext = (context?: CanvasActionContext) => {
   return { recordHistory, shouldLog };
 };
 
-const buildNodePayload = (node: CanvasNode): Record<string, unknown> => ({
-  id: node.id,
-  type: node.type,
-  title: node.title,
-  label: node.title,
-  content: node.content,
-  x: node.x,
-  y: node.y,
-  z: node.z,
-  position: { x: node.x, y: node.y, z: node.z },
-  metadata: node.metadata,
-  createdByTurnId: node.createdByTurnId,
-});
+const buildNodePayload = (node: CanvasNode): Record<string, unknown> =>
+  serializeCanvasNode(node);
 
 const buildEdgePayload = (edge: CanvasEdge): Record<string, unknown> => ({
   id: edge.id,
@@ -462,6 +651,7 @@ interface CanvasState {
   selectedNodeId: string | null;
   selectedNodeIds: string[];
   isAutoExpanding: boolean;
+  isAutoLayoutAnimating: boolean;
 
   // History state
   past: CanvasSnapshot[];
@@ -488,6 +678,21 @@ interface CanvasState {
     nodeId: string,
     updates: Partial<CanvasNode>,
     context?: CanvasActionContext
+  ) => void;
+  applyLayout: (
+    request: {
+      layout: LayoutType;
+      nodeIds?: string[];
+      regionId?: string;
+      direction?: LayoutDirection;
+      spacing?: LayoutSpacing;
+      origin?: { x: number; y: number };
+      lock?: boolean;
+    },
+    context?: CanvasActionContext
+  ) => void;
+  setLayoutLock: (
+    request: { nodeIds?: string[]; regionId?: string; locked: boolean }
   ) => void;
   clearSelection: () => void;
   setNodes: (nodes: CanvasNode[]) => void;
@@ -542,6 +747,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
   };
 
   let autoExpandTimer: ReturnType<typeof setTimeout> | null = null;
+  let autoLayoutTimer: ReturnType<typeof setTimeout> | null = null;
 
   return {
     // Initial state
@@ -553,6 +759,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     selectedNodeId: null,
     selectedNodeIds: [],
     isAutoExpanding: false,
+    isAutoLayoutAnimating: false,
     past: [],
     future: [],
 
@@ -834,6 +1041,123 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
       }
     },
 
+    applyLayout: (request, context) => {
+      const { recordHistory } = resolveActionContext({ ...context, log: false });
+      const allNodes = get().nodes;
+      const targetIds = request.nodeIds ?? allNodes.map((node) => node.id);
+      const targetIdSet = new Set(targetIds);
+      const targetNodes = allNodes.filter((node) => targetIdSet.has(node.id));
+      if (targetNodes.length === 0) {
+        return;
+      }
+
+      const sharedRegion = resolveSharedLayoutRegionInfo(targetNodes);
+      const regionId = request.regionId ?? sharedRegion?.regionId ?? createLayoutRegionId();
+      const direction = request.direction ?? sharedRegion?.direction ?? "down";
+      const locked = request.lock ?? sharedRegion?.locked;
+      const spacing = request.spacing ?? resolveLayoutSpacing(targetNodes);
+      const origin = request.origin ?? resolveLayoutOrigin(targetNodes);
+      const layoutEdges: LayoutEngineEdge[] = get()
+        .edges
+        .filter((edge) => targetIdSet.has(edge.sourceNodeId) && targetIdSet.has(edge.targetNodeId))
+        .map((edge) => ({ source: edge.sourceNodeId, target: edge.targetNodeId }));
+      const positions = computeLayoutPositions(
+        targetNodes.map((node) => ({ id: node.id })),
+        layoutEdges,
+        {
+          layout: request.layout,
+          spacing,
+          origin,
+          direction,
+        }
+      );
+      const updatedAt = new Date().toISOString();
+      let didMove = false;
+      applyUpdate((state) => {
+        const nextNodes = state.nodes.map((node) => {
+          if (!targetIdSet.has(node.id)) {
+            return node;
+          }
+          const pos = positions[node.id];
+          if (!pos) {
+            return node;
+          }
+          if (node.x !== pos.x || node.y !== pos.y) {
+            didMove = true;
+          }
+          return {
+            ...node,
+            x: pos.x,
+            y: pos.y,
+            metadata: mergeLayoutMetadata(node.metadata, {
+              regionId,
+              layout: request.layout,
+              ...(locked !== undefined ? { locked } : {}),
+              ...(direction ? { direction } : {}),
+              updatedAt,
+            }),
+          };
+        });
+        return {
+          nodes: nextNodes,
+          ...(didMove ? { isAutoLayoutAnimating: true } : {}),
+        };
+      }, recordHistory);
+
+      if (didMove) {
+        if (autoLayoutTimer) {
+          clearTimeout(autoLayoutTimer);
+        }
+        autoLayoutTimer = setTimeout(() => {
+          set({ isAutoLayoutAnimating: false });
+        }, AUTO_LAYOUT_ANIMATION_MS);
+      }
+    },
+
+    setLayoutLock: ({ nodeIds, regionId, locked }) => {
+      const allNodes = get().nodes;
+      let targetNodes: CanvasNode[] = [];
+
+      if (nodeIds && nodeIds.length > 0) {
+        const targetIdSet = new Set(nodeIds);
+        targetNodes = allNodes.filter((node) => targetIdSet.has(node.id));
+      } else if (regionId) {
+        targetNodes = allNodes.filter(
+          (node) => resolveNodeLayoutRegionInfo(node)?.regionId === regionId
+        );
+      }
+
+      if (targetNodes.length === 0) {
+        return;
+      }
+
+      const sharedRegion = resolveSharedLayoutRegionInfo(targetNodes);
+      const resolvedRegionId =
+        regionId ?? sharedRegion?.regionId ?? createLayoutRegionId();
+      const layout = sharedRegion?.layout ?? "grid";
+      const direction = sharedRegion?.direction;
+      const updatedAt = new Date().toISOString();
+      const targetIdSet = new Set(targetNodes.map((node) => node.id));
+
+      applyUpdate((state) => ({
+        nodes: state.nodes.map((node) => {
+          if (!targetIdSet.has(node.id)) {
+            return node;
+          }
+          return {
+            ...node,
+            metadata: mergeLayoutMetadata(node.metadata, {
+              regionId: resolvedRegionId,
+              layout,
+              locked,
+              ...(direction ? { direction } : {}),
+              updatedAt,
+            }),
+          };
+        }),
+      }), true);
+    },
+
     // Clear selection
     clearSelection: () => {
       set({ selectedNodeId: null, selectedNodeIds: [] });
@@ -903,6 +1227,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
             previous: {
               relationType: existingEdge.relationType,
               label: existingEdge.label,
+              metadata: existingEdge.metadata,
             },
           },
           { summary: "Edge updated", workspaceId: get().canvasId }
@@ -935,6 +1260,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
         edges: previous.edges,
         documents: previous.documents,
         isAutoExpanding: false,
+        isAutoLayoutAnimating: false,
         past: newPast,
         future: [currentSnapshot, ...state.future],
       });
@@ -960,6 +1286,7 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
         edges: next.edges,
         documents: next.documents,
         isAutoExpanding: false,
+        isAutoLayoutAnimating: false,
         past: [...state.past, currentSnapshot],
         future: newFuture,
       });

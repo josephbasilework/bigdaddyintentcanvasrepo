@@ -18,6 +18,7 @@ describe('canvasStore', () => {
       selectedNodeId: null,
       selectedNodeIds: [],
       isAutoExpanding: false,
+      isAutoLayoutAnimating: false,
       past: [],
       future: [],
     });

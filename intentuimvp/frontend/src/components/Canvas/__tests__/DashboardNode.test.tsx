@@ -49,6 +49,7 @@ describe("DashboardNode", () => {
       selectedNodeId: null,
       selectedNodeIds: [],
       isAutoExpanding: false,
+      isAutoLayoutAnimating: false,
       past: [],
       future: [],
     });
@@ -66,7 +67,7 @@ describe("DashboardNode", () => {
           id: "edge-1",
           sourceNodeId: "n1",
           targetNodeId: "n2",
-          relationType: "depends_on",
+          relationType: "dependency",
         },
       ],
       documents: [

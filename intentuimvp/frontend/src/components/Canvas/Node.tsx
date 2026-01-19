@@ -7,17 +7,13 @@ import {
   useCanvasStore,
   CanvasNode,
   AUTO_EXPAND_ANIMATION_MS,
+  AUTO_LAYOUT_ANIMATION_MS,
   DAGTask,
 } from "../../state/canvasStore";
 import { NodeContextMenu } from "./NodeContextMenu";
 import { DeleteConfirmationDialog } from "./DeleteConfirmationDialog";
-import { AudioBlockNode } from "./AudioBlockNode";
 import { GraphAnnotation, GraphAnnotationDisplay } from "./GraphAnnotation";
 import { DependencyEditor, DependencyDisplay } from "./DependencyEditor";
-import { PlanNode } from "./PlanNode";
-import { DAGNode } from "./DAGNode";
-import { DashboardNode } from "./DashboardNode";
-import { JobNode } from "./JobNode";
 import { JobRoutingDialog } from "./JobRoutingDialog";
 import { DocumentBlock } from "./DocumentBlock";
 import { MarkdownPreview } from "./MarkdownPreview";
@@ -35,6 +31,7 @@ import {
   type CalendarSyncApiResponse,
   type CalendarSyncCandidate,
 } from "../../utils/calendarSync";
+import { getNodeTypeDefinition, type NodeRendererProps } from "../../nodeTypes";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -102,6 +99,7 @@ export function Node({
   const showCalendarSyncButton = isSelected && hasCalendarSuggestions;
   const isTextNode = node.type === "text";
   const isDocumentNode = node.type === "document";
+  const nodeTypeDefinition = getNodeTypeDefinition(node.type);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -132,6 +130,7 @@ export function Node({
   const skipTitleCommitRef = useRef(false);
   const scale = useTransformComponent(({ state }) => state.scale);
   const isAutoExpanding = useCanvasStore((state) => state.isAutoExpanding);
+  const isAutoLayoutAnimating = useCanvasStore((state) => state.isAutoLayoutAnimating);
   const descriptionId = useId();
   const editTitleId = useId();
   const editContentId = useId();
@@ -220,7 +219,7 @@ export function Node({
   const openExpanded = useCallback(() => {
     setIsExpanded(true);
     setEditContent(node.content || "");
-  }, [node.content]);
+  }, [node.content, setEditContent, setIsExpanded]);
 
   const closeExpanded = useCallback(() => {
     skipTitleCommitRef.current = true;
@@ -228,7 +227,7 @@ export function Node({
     setIsEditingTitle(false);
     setEditTitle(node.title);
     setEditContent(node.content || "");
-  }, [node.content, node.title]);
+  }, [node.content, node.title, setEditContent, setEditTitle, setIsEditingTitle, setIsExpanded]);
 
   const handleEdit = () => {
     setEditTitle(node.title);
@@ -266,7 +265,7 @@ export function Node({
       openExpanded();
       setIsEditingTitle(true);
     },
-    [isTextNode, node.title, openExpanded]
+    [isTextNode, node.title, openExpanded, setEditTitle, setIsEditingTitle]
   );
 
   const commitTitle = useCallback(() => {
@@ -286,7 +285,7 @@ export function Node({
     skipTitleCommitRef.current = true;
     setEditTitle(node.title);
     setIsEditingTitle(false);
-  }, [node.title]);
+  }, [node.title, setEditTitle, setIsEditingTitle]);
 
   const handleTitleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter") {
@@ -699,8 +698,12 @@ export function Node({
   // Get node style based on type
   const getNodeStyle = (): CSSProperties => {
     const transitionParts: string[] = [];
-    if (isAutoExpanding && !isDragging) {
-      transitionParts.push(`transform ${AUTO_EXPAND_ANIMATION_MS}ms ease-out`);
+    if (!isDragging) {
+      if (isAutoLayoutAnimating) {
+        transitionParts.push(`transform ${AUTO_LAYOUT_ANIMATION_MS}ms ease-in-out`);
+      } else if (isAutoExpanding) {
+        transitionParts.push(`transform ${AUTO_EXPAND_ANIMATION_MS}ms ease-out`);
+      }
     }
     if (isSelected) {
       transitionParts.push("box-shadow 0.2s");
@@ -721,91 +724,163 @@ export function Node({
       transition,
     };
 
-    // Type-specific styles
-    switch (node.type) {
-      case "text":
-        return {
-          ...baseStyle,
-          backgroundColor: "#1a1a2e",
-          border: isSelected ? "2px solid #4a9eff" : "1px solid #333",
-          boxShadow: isSelected ? "0 0 20px rgba(74, 158, 255, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
-        };
-      case "document":
-        return {
-          ...baseStyle,
-          backgroundColor: "#16213e",
-          border: isSelected ? "2px solid #00d4aa" : "1px solid #1a3a5a",
-          boxShadow: isSelected ? "0 0 20px rgba(0, 212, 170, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
-        };
-      case "audio":
-        return {
-          ...baseStyle,
-          backgroundColor: "#1f1f3a",
-          border: isSelected ? "2px solid #ff6b6b" : "1px solid #3a2a2a",
-          boxShadow: isSelected ? "0 0 20px rgba(255, 107, 107, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
-        };
-      case "graph":
-        return {
-          ...baseStyle,
-          backgroundColor: "#1a1a3a",
-          border: isSelected ? "2px solid #ffd93d" : "1px solid #3a2a3a",
-          boxShadow: isSelected ? "0 0 20px rgba(255, 217, 61, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
-        };
-      case "plan":
-        return {
-          ...baseStyle,
-          backgroundColor: "#132a2d",
-          border: isSelected ? "2px solid #38b2ac" : "1px solid #285e61",
-          boxShadow: isSelected ? "0 0 20px rgba(56, 178, 172, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
-        };
-      case "dag":
-        return {
-          ...baseStyle,
-          backgroundColor: "#241a2d",
-          border: isSelected ? "2px solid #9f7aea" : "1px solid #553c9a",
-          boxShadow: isSelected ? "0 0 20px rgba(159, 122, 234, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
-        };
-      case "dashboard":
-        return {
-          ...baseStyle,
-          backgroundColor: "#141c2f",
-          border: isSelected ? "2px solid #38bdf8" : "1px solid #1e3a5f",
-          boxShadow: isSelected ? "0 0 20px rgba(56, 189, 248, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
-        };
-      case "job":
-        return {
-          ...baseStyle,
-          backgroundColor: "#1f1a2d",
-          border: isSelected ? "2px solid #f472b6" : "1px solid #4a2a4a",
-          boxShadow: isSelected ? "0 0 20px rgba(244, 114, 182, 0.3)" : "0 4px 6px rgba(0, 0, 0, 0.3)",
-        };
-      default:
-        return baseStyle;
+    const nodeStyle = nodeTypeDefinition.style;
+    if (!nodeStyle) {
+      return baseStyle;
     }
+
+    return {
+      ...baseStyle,
+      backgroundColor: nodeStyle.backgroundColor,
+      border: isSelected
+        ? `2px solid ${nodeStyle.selectedBorderColor}`
+        : `1px solid ${nodeStyle.borderColor}`,
+      boxShadow: isSelected
+        ? `0 0 20px ${nodeStyle.selectedShadowColor}`
+        : `0 4px 6px ${nodeStyle.shadowColor}`,
+    };
   };
 
-  const getIconForType = () => {
-    switch (node.type) {
-      case "text":
-        return "📝";
-      case "document":
-        return "📄";
-      case "audio":
-        return "🎙️";
-      case "graph":
-        return "📊";
-      case "plan":
-        return "🧭";
-      case "dag":
-        return "🧩";
-      case "dashboard":
-        return "📈";
-      case "job":
-        return "⚙️";
-      default:
-        return "📦";
+  const getIconForType = () => nodeTypeDefinition.icon ?? "📦";
+
+  const renderDefaultContent = () => {
+    if (isDocumentNode) {
+      return documentPreview ? (
+        <div
+          style={{
+            maxHeight: "140px",
+            overflow: "hidden",
+            padding: "8px",
+            borderRadius: "8px",
+            border: "1px solid rgba(148, 163, 184, 0.2)",
+            backgroundColor: "rgba(15, 23, 42, 0.5)",
+          }}
+        >
+          <MarkdownPreview content={documentPreview} variant="compact" />
+        </div>
+      ) : (
+        <div style={{ fontSize: "12px", color: "#94a3b8" }}>
+          No document content yet.
+        </div>
+      );
     }
+
+    if (isTextNode) {
+      if (isExpanded) {
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <label htmlFor={editContentId} style={{ color: "#a0aec0", fontSize: "12px" }}>
+              Content
+            </label>
+            <textarea
+              id={editContentId}
+              value={editContent}
+              onChange={(e) => setEditContent(e.target.value)}
+              onKeyDown={handleContentKeyDown}
+              onMouseDown={(event) => event.stopPropagation()}
+              onTouchStart={(event) => event.stopPropagation()}
+              onFocus={() => selectNode(node.id)}
+              rows={6}
+              className="canvas-node__textarea"
+              style={{
+                width: "100%",
+                padding: "8px 12px",
+                backgroundColor: "rgba(15, 23, 42, 0.6)",
+                border: "1px solid rgba(148, 163, 184, 0.5)",
+                borderRadius: "6px",
+                color: "#e2e8f0",
+                fontSize: "13px",
+                boxSizing: "border-box",
+                resize: "vertical",
+              }}
+              placeholder="Add details..."
+            />
+            <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                onClick={handleContentClose}
+                onMouseDown={(event) => event.stopPropagation()}
+                onTouchStart={(event) => event.stopPropagation()}
+                className="canvas-node__button"
+                style={{
+                  padding: "6px 12px",
+                  backgroundColor: "rgba(148, 163, 184, 0.2)",
+                  border: "1px solid rgba(148, 163, 184, 0.4)",
+                  borderRadius: "6px",
+                  color: "#e2e8f0",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                }}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                onClick={handleContentSave}
+                onMouseDown={(event) => event.stopPropagation()}
+                onTouchStart={(event) => event.stopPropagation()}
+                className="canvas-node__button"
+                style={{
+                  padding: "6px 12px",
+                  backgroundColor: "rgba(66, 153, 225, 0.7)",
+                  border: "1px solid rgba(66, 153, 225, 0.9)",
+                  borderRadius: "6px",
+                  color: "#fff",
+                  cursor: "pointer",
+                  fontSize: "12px",
+                }}
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        );
+      }
+
+      return node.content ? (
+        <div style={{ fontSize: "12px", color: "#94a3b8" }}>
+          Expand to view content.
+        </div>
+      ) : null;
+    }
+
+    if (node.content) {
+      return (
+        <div
+          style={{
+            fontSize: "13px",
+            color: "#aaa",
+            lineHeight: "1.5",
+            maxHeight: "200px",
+            overflow: "auto",
+            wordBreak: "break-word",
+          }}
+        >
+          {node.content}
+        </div>
+      );
+    }
+
+    return null;
   };
+
+  const rendererProps: NodeRendererProps = {
+    node,
+    isSelected,
+    documentPreview,
+    onSelect: handleClick,
+    onDagTaskStatusChange: handleDagStatusChange,
+    onRerunWithMoreCompute:
+      node.jobData?.jobType === "perspective_analysis"
+        ? handleRerunWithMoreCompute
+        : undefined,
+    onRouteResults: () => setIsJobRoutingOpen(true),
+  };
+
+  const CustomRenderer = nodeTypeDefinition.render;
+  const renderedContent = CustomRenderer
+    ? <CustomRenderer {...rendererProps} />
+    : renderDefaultContent();
 
   return (
     <>
@@ -986,135 +1061,7 @@ export function Node({
           </div>
 
           {/* Node content */}
-          {node.type === "audio" ? (
-            <AudioBlockNode node={node} />
-          ) : node.type === "plan" && node.planData ? (
-            <PlanNode plan={node.planData} />
-          ) : node.type === "dag" && node.dagData ? (
-            <DAGNode dag={node.dagData} onTaskStatusChange={handleDagStatusChange} />
-          ) : node.type === "dashboard" ? (
-            <DashboardNode nodeId={node.id} />
-          ) : node.type === "job" && node.jobData ? (
-            <JobNode
-              id={node.id}
-              title={node.title}
-              jobData={node.jobData}
-              isSelected={isSelected}
-              onSelect={handleClick}
-              onRerunWithMoreCompute={
-                node.jobData.jobType === "perspective_analysis"
-                  ? handleRerunWithMoreCompute
-                  : undefined
-              }
-              onRouteResults={() => setIsJobRoutingOpen(true)}
-            />
-          ) : node.type === "document" ? (
-            documentPreview ? (
-              <div
-                style={{
-                  maxHeight: "140px",
-                  overflow: "hidden",
-                  padding: "8px",
-                  borderRadius: "8px",
-                  border: "1px solid rgba(148, 163, 184, 0.2)",
-                  backgroundColor: "rgba(15, 23, 42, 0.5)",
-                }}
-              >
-                <MarkdownPreview content={documentPreview} variant="compact" />
-              </div>
-            ) : (
-              <div style={{ fontSize: "12px", color: "#94a3b8" }}>
-                No document content yet.
-              </div>
-            )
-          ) : node.type === "text" ? (
-            isExpanded ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
-                <label
-                  htmlFor={editContentId}
-                  style={{ color: "#a0aec0", fontSize: "12px" }}
-                >
-                  Content
-                </label>
-                <textarea
-                  id={editContentId}
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  onKeyDown={handleContentKeyDown}
-                  onMouseDown={(event) => event.stopPropagation()}
-                  onTouchStart={(event) => event.stopPropagation()}
-                  onFocus={() => selectNode(node.id)}
-                  rows={6}
-                  className="canvas-node__textarea"
-                  style={{
-                    width: "100%",
-                    padding: "8px 12px",
-                    backgroundColor: "rgba(15, 23, 42, 0.6)",
-                    border: "1px solid rgba(148, 163, 184, 0.5)",
-                    borderRadius: "6px",
-                    color: "#e2e8f0",
-                    fontSize: "13px",
-                    boxSizing: "border-box",
-                    resize: "vertical",
-                  }}
-                  placeholder="Add details..."
-                />
-                <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end" }}>
-                  <button
-                    type="button"
-                    onClick={handleContentClose}
-                    onMouseDown={(event) => event.stopPropagation()}
-                    onTouchStart={(event) => event.stopPropagation()}
-                    className="canvas-node__button"
-                    style={{
-                      padding: "6px 12px",
-                      backgroundColor: "rgba(148, 163, 184, 0.2)",
-                      border: "1px solid rgba(148, 163, 184, 0.4)",
-                      borderRadius: "6px",
-                      color: "#e2e8f0",
-                      cursor: "pointer",
-                      fontSize: "12px",
-                    }}
-                  >
-                    Close
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleContentSave}
-                    onMouseDown={(event) => event.stopPropagation()}
-                    onTouchStart={(event) => event.stopPropagation()}
-                    className="canvas-node__button"
-                    style={{
-                      padding: "6px 12px",
-                      backgroundColor: "rgba(66, 153, 225, 0.7)",
-                      border: "1px solid rgba(66, 153, 225, 0.9)",
-                      borderRadius: "6px",
-                      color: "#fff",
-                      cursor: "pointer",
-                      fontSize: "12px",
-                    }}
-                  >
-                    Save
-                  </button>
-                </div>
-              </div>
-            ) : node.content ? (
-              <div style={{ fontSize: "12px", color: "#94a3b8" }}>
-                Expand to view content.
-              </div>
-            ) : null
-          ) : node.content && (
-            <div style={{
-              fontSize: "13px",
-              color: "#aaa",
-              lineHeight: "1.5",
-              maxHeight: "200px",
-              overflow: "auto",
-              wordBreak: "break-word",
-            }}>
-              {node.content}
-            </div>
-          )}
+          {renderedContent}
 
           {/* Node metadata indicator */}
           {node.metadata && Object.keys(node.metadata).length > 0 && (

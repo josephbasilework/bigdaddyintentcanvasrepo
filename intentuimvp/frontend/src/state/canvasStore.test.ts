@@ -15,6 +15,7 @@ describe('canvasStore', () => {
       selectedNodeId: null,
       selectedNodeIds: [],
       isAutoExpanding: false,
+      isAutoLayoutAnimating: false,
       past: [],
       future: [],
     });
@@ -853,6 +854,98 @@ describe('canvasStore', () => {
 
       expect(removedIds).toEqual([]);
       expect(result.current.nodes).toHaveLength(1);
+    });
+  });
+
+  describe('applyLayout', () => {
+    it('applies a grid layout and stores layout metadata', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      let id1 = '';
+      let id2 = '';
+
+      act(() => {
+        id1 = result.current.addNode({
+          type: 'text',
+          x: 100,
+          y: 200,
+          z: 0,
+          title: 'Node A',
+        });
+        id2 = result.current.addNode({
+          type: 'text',
+          x: 140,
+          y: 240,
+          z: 0,
+          title: 'Node B',
+        });
+      });
+
+      act(() => {
+        result.current.applyLayout({ layout: 'grid', nodeIds: [id1, id2], lock: true });
+      });
+
+      const node1 = result.current.nodes.find((node) => node.id === id1);
+      const node2 = result.current.nodes.find((node) => node.id === id2);
+      expect(node1).toBeDefined();
+      expect(node2).toBeDefined();
+      expect(node1?.y).toBe(node2?.y);
+      expect(node1?.x).not.toBe(node2?.x);
+
+      const layoutMeta = node1?.metadata?.layout as { regionId?: string; layout?: string; locked?: boolean } | undefined;
+      expect(layoutMeta?.layout).toBe('grid');
+      expect(layoutMeta?.locked).toBe(true);
+      expect(typeof layoutMeta?.regionId).toBe('string');
+    });
+
+    it('produces deterministic positions for the same layout input', () => {
+      const { result } = renderHook(() => useCanvasStore());
+
+      let id1 = '';
+      let id2 = '';
+
+      act(() => {
+        id1 = result.current.addNode({
+          type: 'text',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Node A',
+        });
+        id2 = result.current.addNode({
+          type: 'text',
+          x: 50,
+          y: 0,
+          z: 0,
+          title: 'Node B',
+        });
+      });
+
+      act(() => {
+        result.current.applyLayout({ layout: 'grid', nodeIds: [id1, id2] });
+      });
+
+      const firstPositions = result.current.nodes.reduce<Record<string, { x: number; y: number }>>(
+        (acc, node) => {
+          acc[node.id] = { x: node.x, y: node.y };
+          return acc;
+        },
+        {}
+      );
+
+      act(() => {
+        result.current.applyLayout({ layout: 'grid', nodeIds: [id1, id2] });
+      });
+
+      const secondPositions = result.current.nodes.reduce<Record<string, { x: number; y: number }>>(
+        (acc, node) => {
+          acc[node.id] = { x: node.x, y: node.y };
+          return acc;
+        },
+        {}
+      );
+
+      expect(secondPositions).toEqual(firstPositions);
     });
   });
 });
