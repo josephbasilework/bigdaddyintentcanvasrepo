@@ -418,13 +418,13 @@ const useExternalDashboardData = (
       fetchApi();
       const interval = config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL;
       if (interval > 0) {
-        intervalId = window.setInterval(fetchApi, interval);
+        intervalId = setInterval(fetchApi, interval);
       }
     } else if (config.type === "mcp") {
       fetchMcp();
       const interval = config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL;
       if (interval > 0) {
-        intervalId = window.setInterval(fetchMcp, interval);
+        intervalId = setInterval(fetchMcp, interval);
       }
     } else if (config.type === "websocket") {
       const normalizedEndpoint = normalizeEndpoint(config.endpoint, ["ws:", "wss:"]);
@@ -459,7 +459,7 @@ const useExternalDashboardData = (
     return () => {
       active = false;
       if (intervalId) {
-        window.clearInterval(intervalId);
+        clearInterval(intervalId);
       }
       if (abortController) {
         abortController.abort();
