@@ -148,12 +148,16 @@ export const normalizeNodeTypeId = (value: unknown): CanvasNodeType | null => {
   return trimmed.toLowerCase() as CanvasNodeType;
 };
 
-export const registerNodeType = (definition: NodeTypeDefinition): void => {
+export const registerNodeType = <TNode extends NodeLike>(
+  definition: NodeTypeDefinition<TNode>
+): void => {
   const key = normalizeNodeTypeId(String(definition.type)) ?? definition.type;
-  NODE_TYPE_REGISTRY.set(key, { ...definition, type: key });
+  NODE_TYPE_REGISTRY.set(key, { ...definition, type: key } as NodeTypeDefinition);
 };
 
-export const registerNodeTypes = (definitions: NodeTypeDefinition[]): void => {
+export const registerNodeTypes = <TNode extends NodeLike>(
+  definitions: NodeTypeDefinition<TNode>[]
+): void => {
   definitions.forEach((definition) => registerNodeType(definition));
 };
 
