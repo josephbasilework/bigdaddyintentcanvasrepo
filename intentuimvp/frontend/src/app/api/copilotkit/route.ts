@@ -8,7 +8,7 @@
  *   React UI -> This Runtime (default agent) -> Python /copilotkit (actions)
  */
 
-import { NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
 import {
   CopilotRuntime,
   copilotRuntimeNextJSAppRouterEndpoint,
@@ -20,9 +20,17 @@ const PYTHON_BACKEND_URL =
   process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ||
   "http://localhost:8000";
 
-const serviceAdapter = new OpenAIAdapter({
-  model: "gpt-4o-mini",
-});
+let cachedServiceAdapter: OpenAIAdapter | null = null;
+
+const getServiceAdapter = () => {
+  if (!cachedServiceAdapter) {
+    cachedServiceAdapter = new OpenAIAdapter({
+      model: "gpt-4o-mini",
+    });
+  }
+
+  return cachedServiceAdapter;
+};
 
 export async function POST(req: NextRequest) {
   const runtime = new CopilotRuntime({
@@ -35,7 +43,7 @@ export async function POST(req: NextRequest) {
 
   const { handleRequest } = copilotRuntimeNextJSAppRouterEndpoint({
     runtime,
-    serviceAdapter,
+    serviceAdapter: getServiceAdapter(),
     endpoint: "/api/copilotkit",
   });
 
