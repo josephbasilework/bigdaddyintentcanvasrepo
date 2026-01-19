@@ -45,11 +45,15 @@ class CanvasActionResponse(BaseModel):
     """Response payload for a logged canvas CRUD action."""
 
     status: str = Field(default="logged", description="Status of the logging request")
-    turnId: int = Field(..., description="Persisted turn identifier")
-    sessionId: str = Field(..., description="Session ID associated with the turn")
-    sequenceNumber: int | None = Field(
+    turnId: int = Field(  # noqa: N815 - camelCase for API compatibility
+        ..., description="Persisted turn identifier"
+    )
+    sessionId: str = Field(  # noqa: N815 - camelCase for API compatibility
+        ..., description="Session ID associated with the turn"
+    )
+    sequenceNumber: int | None = Field(  # noqa: N815 - camelCase for API compatibility
         default=None, description="Sequential turn number for the session"
     )
-    eventType: str | None = Field(
+    eventType: str | None = Field(  # noqa: N815 - camelCase for API compatibility
         default=None, description="Resolved event type for the turn"
     )

@@ -11,13 +11,13 @@ class EventResponse(BaseModel):
     """Response model for a single event."""
 
     id: int
-    eventType: str
+    eventType: str  # noqa: N815 - camelCase for API compatibility
     actor: str
     timestamp: str
     payload: dict[str, Any] = Field(default_factory=dict)
-    relatedTurnId: int | None = None
-    relatedNodeId: int | None = None
-    relatedEdgeId: int | None = None
+    relatedTurnId: int | None = None  # noqa: N815 - camelCase for API compatibility
+    relatedNodeId: int | None = None  # noqa: N815 - camelCase for API compatibility
+    relatedEdgeId: int | None = None  # noqa: N815 - camelCase for API compatibility
 
 
 class EventListResponse(BaseModel):
@@ -25,4 +25,3 @@ class EventListResponse(BaseModel):
 
     events: list[EventResponse]
     count: int
-

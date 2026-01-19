@@ -53,19 +53,19 @@ class HookResponse(BaseModel):
     id: int
     name: str
     description: str | None = None
-    hookType: str
-    eventType: str | None = None
-    scheduleType: str | None = None
+    hookType: str  # noqa: N815 - camelCase for API compatibility
+    eventType: str | None = None  # noqa: N815 - camelCase for API compatibility
+    scheduleType: str | None = None  # noqa: N815 - camelCase for API compatibility
     trigger: dict[str, Any] = Field(default_factory=dict)
     action: dict[str, Any] = Field(default_factory=dict)
     enabled: bool
-    userId: str | None = None
-    workspaceId: str | None = None
-    sessionId: str | None = None
-    lastFiredAt: str | None = None
-    nextRunAt: str | None = None
-    createdAt: str
-    updatedAt: str
+    userId: str | None = None  # noqa: N815 - camelCase for API compatibility
+    workspaceId: str | None = None  # noqa: N815 - camelCase for API compatibility
+    sessionId: str | None = None  # noqa: N815 - camelCase for API compatibility
+    lastFiredAt: str | None = None  # noqa: N815 - camelCase for API compatibility
+    nextRunAt: str | None = None  # noqa: N815 - camelCase for API compatibility
+    createdAt: str  # noqa: N815 - camelCase for API compatibility
+    updatedAt: str  # noqa: N815 - camelCase for API compatibility
 
 
 class HookListResponse(BaseModel):

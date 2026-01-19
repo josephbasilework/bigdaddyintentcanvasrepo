@@ -13,9 +13,6 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-# Default model - configurable via GATEWAY_MODEL env var (model name only)
-DEFAULT_GATEWAY_MODEL = os.getenv("GATEWAY_MODEL", "gemini-3-flash-preview")
-
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +46,9 @@ from app.schemas.node import (
     PerspectiveSchema,
     SynthesisNodeMetadata,
 )
+
+# Default model - configurable via GATEWAY_MODEL env var (model name only)
+DEFAULT_GATEWAY_MODEL = os.getenv("GATEWAY_MODEL", "gemini-3-flash-preview")
 
 logger = logging.getLogger(__name__)
 
@@ -1851,8 +1851,6 @@ async def synthesis_job(
             node_id: int | None = None
             canvas_id: int | None = None
             custom_destinations: list[dict[str, Any]] = []
-            artifact_type = ArtifactType.JSON_EXPORT
-            artifact_type = ArtifactType.JSON_EXPORT
 
             wants_canvas_node = any(
                 _resolve_destination_type(dest) == ResultDestinationType.CANVAS_NODE

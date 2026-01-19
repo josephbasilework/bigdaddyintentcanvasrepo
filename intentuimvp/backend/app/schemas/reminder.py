@@ -26,13 +26,13 @@ class ReminderCreateRequest(BaseModel):
 class ReminderResponse(BaseModel):
     """Response payload for created reminder."""
 
-    hookId: int
-    scheduledFor: str
-    nextRunAt: str | None = None
+    hookId: int  # noqa: N815 - camelCase for API compatibility
+    scheduledFor: str  # noqa: N815 - camelCase for API compatibility
+    nextRunAt: str | None = None  # noqa: N815 - camelCase for API compatibility
     title: str
     message: str
     level: str
-    nodeId: int | None = None
-    workspaceId: int | None = None
-    sessionId: str | None = None
+    nodeId: int | None = None  # noqa: N815 - camelCase for API compatibility
+    workspaceId: int | None = None  # noqa: N815 - camelCase for API compatibility
+    sessionId: str | None = None  # noqa: N815 - camelCase for API compatibility
     metadata: dict[str, Any] | None = None

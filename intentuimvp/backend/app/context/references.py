@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-
 _NODE_REF_RE = re.compile(r"\bnode\s*#?\s*([a-z0-9_-]+)\b", re.I)
 _NODE_HANDLE_RE = re.compile(r"(?<!\w)@([a-z0-9][\w-]{1,64})", re.I)
 _TURN_REF_RE = re.compile(r"\bturn\s*#?\s*(\d+)\b", re.I)

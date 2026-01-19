@@ -18,15 +18,15 @@ from typing import Any
 
 from sqlalchemy import select
 
+from app.agui import JobProgressMessage
 from app.config import get_settings
 from app.database import SessionLocal
 from app.jobs.base import JobStateMachine
-from app.agui import JobProgressMessage
 from app.logging_config import get_correlation_id
 from app.models.job import Job
 from app.models.turn import TurnActor, TurnType
-from app.telemetry import emit_job_completed
 from app.services.turns import log_turn_for_user_sync
+from app.telemetry import emit_job_completed
 from app.ws.websocket import manager as ws_manager
 
 logger = logging.getLogger(__name__)

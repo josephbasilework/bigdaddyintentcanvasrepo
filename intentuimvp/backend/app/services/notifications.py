@@ -6,10 +6,10 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from app.agui import AgentNotificationMessage, AgentNotificationPayload
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
+from app.agui import AgentNotificationMessage, AgentNotificationPayload
 from app.database import AsyncSessionLocal, SessionLocal
 from app.models.turn import Turn, TurnType
 from app.repositories.notification_repo import (
@@ -17,7 +17,6 @@ from app.repositories.notification_repo import (
     NotificationRepository,
 )
 from app.repositories.session_repo import AsyncSessionRepository, SessionRepository
-
 
 _ALLOWED_LEVELS = {"info", "success", "warning"}
 

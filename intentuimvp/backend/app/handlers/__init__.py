@@ -521,7 +521,7 @@ class HandlerExecutor:
                 goal=text,
                 context=context_summary,
             )
-        except Exception as exc:
+        except Exception:
             logger.error("Planner job failed; falling back to plan node only", exc_info=True)
             await self._send_progress(
                 run_id,

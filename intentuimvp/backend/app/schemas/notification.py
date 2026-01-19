@@ -11,18 +11,18 @@ class NotificationResponse(BaseModel):
     """Response model for a notification."""
 
     id: int
-    userId: str
-    workspaceId: int | None = None
-    sessionId: str | None = None
+    userId: str  # noqa: N815 - camelCase for API compatibility
+    workspaceId: int | None = None  # noqa: N815 - camelCase for API compatibility
+    sessionId: str | None = None  # noqa: N815 - camelCase for API compatibility
     source: str | None = None
     level: str
     title: str
     message: str
-    createdAt: str
-    readAt: str | None = None
-    dismissedAt: str | None = None
-    relatedNodeId: int | None = None
-    relatedEdgeId: int | None = None
+    createdAt: str  # noqa: N815 - camelCase for API compatibility
+    readAt: str | None = None  # noqa: N815 - camelCase for API compatibility
+    dismissedAt: str | None = None  # noqa: N815 - camelCase for API compatibility
+    relatedNodeId: int | None = None  # noqa: N815 - camelCase for API compatibility
+    relatedEdgeId: int | None = None  # noqa: N815 - camelCase for API compatibility
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

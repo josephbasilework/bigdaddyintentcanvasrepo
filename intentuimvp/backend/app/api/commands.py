@@ -53,8 +53,8 @@ class CommandSubmissionResponse(BaseModel):
 
     correlation_id: str
     status: str
-    turnId: int | None = None
-    sequenceNumber: int | None = None
+    turnId: int | None = None  # noqa: N815 - camelCase for API compatibility
+    sequenceNumber: int | None = None  # noqa: N815 - camelCase for API compatibility
 
 
 @dataclass(frozen=True)

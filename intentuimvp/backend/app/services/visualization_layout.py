@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from math import cos, hypot, sin, sqrt, tau
-from typing import Literal, Sequence
+from typing import Literal
 
 LayoutType = Literal["tree", "hierarchy", "force", "grid"]
 LayoutDirection = Literal["down", "right"]

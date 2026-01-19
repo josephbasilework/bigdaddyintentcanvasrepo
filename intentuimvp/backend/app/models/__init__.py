@@ -12,8 +12,8 @@ from app.models.edge import Edge, RelationType
 from app.models.event import Event
 from app.models.hook import Hook
 from app.models.job import Job
-from app.models.notification import Notification
 from app.models.node import DEFAULT_NODE_TYPE, Node, NodeType, normalize_node_type
+from app.models.notification import Notification
 from app.models.preferences import Preferences
 from app.models.session import WorkspaceSession
 from app.models.turn import ResponseType, Turn, TurnActor, TurnType

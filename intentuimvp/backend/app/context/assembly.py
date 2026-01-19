@@ -13,8 +13,8 @@ from sqlalchemy import func, or_, select
 from app.context.models import ContextPayload, SelectionScope
 from app.context.references import parse_references
 from app.database import AsyncSessionLocal
-from app.models.intent import AttachmentDB
 from app.models.edge import Edge
+from app.models.intent import AttachmentDB
 from app.models.node import Node
 from app.models.turn import Turn, TurnActor, TurnType
 from app.repositories.session_repo import AsyncSessionRepository

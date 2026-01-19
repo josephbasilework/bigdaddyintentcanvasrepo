@@ -65,7 +65,7 @@ class Event(Base):
         comment="Optional reference to related edge",
     )
 
-    related_turn: Mapped["Turn"] = relationship("Turn", foreign_keys=[related_turn_id])
+    related_turn: Mapped[Turn] = relationship("Turn", foreign_keys=[related_turn_id])
     related_node: Mapped[Node | None] = relationship("Node", foreign_keys=[related_node_id])
     related_edge: Mapped[Edge | None] = relationship("Edge", foreign_keys=[related_edge_id])
 
