@@ -202,7 +202,9 @@ class TestEdgeEndpoints:
             },
         )
         assert response_cycle.status_code == 400
-        assert response_cycle.json()["detail"] == "Dependency cycle detected"
+        assert response_cycle.json()["detail"].startswith(
+            "[TI-001] Dependency cycle detected"
+        )
 
     def test_update_edge_relation_type(
         self,
@@ -283,7 +285,9 @@ class TestEdgeEndpoints:
             json={"relation_type": "depends_on"},
         )
         assert update_response.status_code == 400
-        assert update_response.json()["detail"] == "Dependency cycle detected"
+        assert update_response.json()["detail"].startswith(
+            "[TI-001] Dependency cycle detected"
+        )
 
     def test_list_and_delete_edges(
         self,

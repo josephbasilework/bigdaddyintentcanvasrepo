@@ -325,7 +325,9 @@ class TestWorkspaceEndpoint:
 
         response = client.put("/api/workspace", json=payload)
         assert response.status_code == 400
-        assert response.json()["detail"] == "Dependency cycle detected"
+        assert response.json()["detail"].startswith(
+            "[TI-001] Dependency cycle detected"
+        )
 
     def test_round_trip_save_load(self, client: testclient.TestClient) -> None:
         """Test round-trip: save then load returns same data."""
