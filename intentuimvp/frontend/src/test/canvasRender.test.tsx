@@ -33,6 +33,10 @@ const createRect = (left: number, top: number, width: number, height: number): D
   toJSON: () => '',
 });
 
+const originalConsoleError = console.error;
+const styledJsxWarning = 'Received `true` for a non-boolean attribute `jsx`.';
+const styledJsxFormatHint = 'non-boolean attribute';
+
 vi.mock('react-zoom-pan-pinch', async () => {
   const React = await vi.importActual<typeof import('react')>('react');
   const { forwardRef, useEffect } = React;
@@ -80,6 +84,7 @@ vi.mock('@/hooks/useWebSocketEnhanced', () => ({
 
 describe('workspace canvas', () => {
   let fetchMock: ReturnType<typeof vi.fn>;
+  let consoleErrorSpies: Array<ReturnType<typeof vi.spyOn>> = [];
 
   const createResponse = (payload: unknown) => ({
     ok: true,
@@ -100,6 +105,30 @@ describe('workspace canvas', () => {
   };
 
   beforeEach(() => {
+    consoleErrorSpies = [];
+    const consoleTargets = new Set([console]);
+    if (typeof window !== 'undefined' && window.console) {
+      consoleTargets.add(window.console);
+    }
+
+    consoleTargets.forEach((target) => {
+      consoleErrorSpies.push(
+        vi.spyOn(target, 'error').mockImplementation((...args) => {
+          const firstArg = typeof args[0] === 'string' ? args[0] : '';
+          const hasStyledJsx =
+            firstArg.includes(styledJsxWarning) ||
+            (firstArg.includes(styledJsxFormatHint) &&
+              args.some((arg) => typeof arg === 'string' && arg.includes('jsx')));
+
+          if (hasStyledJsx) {
+            return;
+          }
+
+          originalConsoleError(...(args as Parameters<typeof console.error>));
+        })
+      );
+    });
+
     mockTransformRef.state = { scale: 1, positionX: 0, positionY: 0 };
     mockTransformRef.setTransform.mockClear();
     mockTransformRef.zoomIn.mockClear();
@@ -136,6 +165,8 @@ describe('workspace canvas', () => {
   });
 
   afterEach(() => {
+    consoleErrorSpies.forEach((spy) => spy.mockRestore());
+    consoleErrorSpies = [];
     vi.unstubAllGlobals();
   });
 
@@ -205,19 +236,21 @@ describe('workspace canvas', () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
-    useCanvasStore.setState({
-      nodes: [
-        {
-          id: 'node-1',
-          type: 'text',
-          x: 120,
-          y: 160,
-          z: 1,
-          title: 'Selected node',
-        },
-      ],
-      selectedNodeId: 'node-1',
-      selectedNodeIds: [],
+    act(() => {
+      useCanvasStore.setState({
+        nodes: [
+          {
+            id: 'node-1',
+            type: 'text',
+            x: 120,
+            y: 160,
+            z: 1,
+            title: 'Selected node',
+          },
+        ],
+        selectedNodeId: 'node-1',
+        selectedNodeIds: [],
+      });
     });
 
     const commandInput = screen.getByRole('textbox', { name: /command input/i });

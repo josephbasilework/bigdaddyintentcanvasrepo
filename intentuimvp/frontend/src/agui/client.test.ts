@@ -6,6 +6,29 @@ vi.mock('@/lib/performance', () => ({
   recordWsReconnect: vi.fn(),
 }));
 
+const suppressConsole = () => {
+  const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+  return () => {
+    errorSpy.mockRestore();
+    warnSpy.mockRestore();
+    infoSpy.mockRestore();
+  };
+};
+
+let restoreConsole: (() => void) | null = null;
+
+beforeEach(() => {
+  restoreConsole = suppressConsole();
+});
+
+afterEach(() => {
+  restoreConsole?.();
+  restoreConsole = null;
+});
+
 class MockWebSocket {
   static CONNECTING = 0;
   static OPEN = 1;
@@ -121,7 +144,6 @@ describe('AGUIClient reconnection', () => {
   afterEach(() => {
     MockWebSocket.reset();
     global.WebSocket = OriginalWebSocket;
-    vi.useRealTimers();
   });
 
   it('reconnects with exponential backoff and caps at 30s', async () => {
@@ -221,6 +243,7 @@ describe('AGUIClient outbound queue', () => {
   afterEach(() => {
     MockWebSocket.reset();
     global.WebSocket = OriginalWebSocket;
+    vi.useRealTimers();
   });
 
   it('queues outbound messages until the socket opens', async () => {
@@ -281,6 +304,7 @@ describe('AGUIClient state sync', () => {
   afterEach(() => {
     MockWebSocket.reset();
     global.WebSocket = OriginalWebSocket;
+    vi.useRealTimers();
   });
 
   it('applies state snapshots through the CopilotKit event pipeline', async () => {
@@ -323,7 +347,7 @@ describe('AGUIClient state sync', () => {
     client.connect();
     await flushMicrotasks();
 
-    const checksum = await computeChecksum({ patch: [{ op: 'add', path: '/test', value: 'data' }] });
+    const checksum = await computeChecksum([{ op: 'add', path: '/test', value: 'data' }]);
 
     // Send sequence 1
     const update1 = {
@@ -364,7 +388,7 @@ describe('AGUIClient state sync', () => {
     client.connect();
     await flushMicrotasks();
 
-    const checksum = await computeChecksum({ patch: [{ op: 'add', path: '/test', value: 'data' }] });
+    const checksum = await computeChecksum([{ op: 'add', path: '/test', value: 'data' }]);
 
     // Send sequence 1
     const update1 = {
@@ -387,6 +411,8 @@ describe('AGUIClient state sync', () => {
 
     expect(client.getState().stateSync.lastSequence).toBe(1);
 
+    const gapChecksum = await computeChecksum([{ op: 'add', path: '/test2', value: 'data2' }]);
+
     // Send sequence 3 (gap: missing sequence 2)
     const update3 = {
       version: AGUI_PROTOCOL_VERSION,
@@ -398,7 +424,7 @@ describe('AGUIClient state sync', () => {
       payload: {
         sequence: 3,
         patch: [{ op: 'add', path: '/test2', value: 'data2' }],
-        checksum,
+        checksum: gapChecksum,
       },
     };
 
@@ -431,9 +457,8 @@ describe('AGUIClient state sync', () => {
     client.connect();
     await flushMicrotasks();
 
-    const checksum = await computeChecksum({
-      patch: [{ op: 'add', path: '/test', value: 'data' }],
-    });
+    const checksum = await computeChecksum([{ op: 'add', path: '/test', value: 'data' }]);
+    const gapChecksum = await computeChecksum([{ op: 'add', path: '/test2', value: 'data2' }]);
 
     // Send sequence 1
     const update1 = {
@@ -465,7 +490,7 @@ describe('AGUIClient state sync', () => {
       payload: {
         sequence: 3,
         patch: [{ op: 'add', path: '/test2', value: 'data2' }],
-        checksum,
+        checksum: gapChecksum,
       },
     };
 
@@ -485,9 +510,9 @@ describe('AGUIClient state sync', () => {
     client.connect();
     await flushMicrotasks();
 
-    const checksum1 = await computeChecksum({ patch: [{ op: 'add', path: '/key1', value: 'value1' }] });
-    const checksum2 = await computeChecksum({ patch: [{ op: 'add', path: '/key2', value: 'value2' }] });
-    const checksum3 = await computeChecksum({ patch: [{ op: 'replace', path: '/key1', value: 'updated' }] });
+    const checksum1 = await computeChecksum([{ op: 'add', path: '/key1', value: 'value1' }]);
+    const checksum2 = await computeChecksum([{ op: 'add', path: '/key2', value: 'value2' }]);
+    const checksum3 = await computeChecksum([{ op: 'replace', path: '/key1', value: 'updated' }]);
 
     const updates = [
       {
