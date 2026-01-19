@@ -268,4 +268,30 @@ describe("DashboardNode", () => {
     setIntervalSpy.mockRestore();
     clearIntervalSpy.mockRestore();
   });
+
+  it("uses the configured poll interval for external polling", () => {
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+
+    useCanvasStore.setState({
+      nodes: [
+        {
+          id: "dash",
+          type: "dashboard",
+          x: 0,
+          y: 0,
+          z: 0,
+          title: "Dashboard",
+          metadata: {
+            dashboardConfig: { type: "api", pollIntervalMs: 12000, endpoint: "" },
+          },
+        },
+      ],
+    });
+
+    render(<DashboardNode nodeId="dash" />);
+
+    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 12000);
+
+    setIntervalSpy.mockRestore();
+  });
 });
