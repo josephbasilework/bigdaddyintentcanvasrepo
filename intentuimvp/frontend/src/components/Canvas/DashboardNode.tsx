@@ -310,7 +310,7 @@ const useExternalDashboardData = (
     }
 
     let active = true;
-    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let intervalId: number | null = null;
     let ws: WebSocket | null = null;
     let abortController: AbortController | null = null;
 
@@ -418,13 +418,13 @@ const useExternalDashboardData = (
       fetchApi();
       const interval = config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL;
       if (interval > 0) {
-        intervalId = setInterval(fetchApi, interval);
+        intervalId = window.setInterval(fetchApi, interval);
       }
     } else if (config.type === "mcp") {
       fetchMcp();
       const interval = config.pollIntervalMs ?? DEFAULT_POLL_INTERVAL;
       if (interval > 0) {
-        intervalId = setInterval(fetchMcp, interval);
+        intervalId = window.setInterval(fetchMcp, interval);
       }
     } else if (config.type === "websocket") {
       const normalizedEndpoint = normalizeEndpoint(config.endpoint, ["ws:", "wss:"]);
@@ -459,7 +459,7 @@ const useExternalDashboardData = (
     return () => {
       active = false;
       if (intervalId !== null) {
-        clearInterval(intervalId);
+        window.clearInterval(intervalId);
       }
       if (abortController) {
         abortController.abort();
