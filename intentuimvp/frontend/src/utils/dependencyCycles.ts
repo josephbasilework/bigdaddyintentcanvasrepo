@@ -4,10 +4,14 @@ export const DEFAULT_DEPENDENCY_RELATION: CanvasEdgeRelationType = "depends_on";
 export const DEPENDENCY_CYCLE_MESSAGE =
   "Dependency cycle detected. Adjust dependencies to keep the DAG acyclic.";
 
+export const isDependencyRelationType = (
+  relationType?: CanvasEdgeRelationType | null
+): boolean => relationType === "depends_on" || relationType === "dependency";
+
 const isDependencyEdge = (
   edge: CanvasEdge,
   defaultRelationType: CanvasEdgeRelationType = DEFAULT_DEPENDENCY_RELATION
-): boolean => (edge.relationType ?? defaultRelationType) === "depends_on";
+): boolean => isDependencyRelationType(edge.relationType ?? defaultRelationType);
 
 export const dependencyEdgesHaveCycle = (
   edges: CanvasEdge[],
