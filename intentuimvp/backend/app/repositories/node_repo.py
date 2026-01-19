@@ -10,7 +10,7 @@ from sqlalchemy import UnaryExpression, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.node import Node, NodeType
+from app.models.node import Node, NodeType, normalize_node_type
 from app.repositories.base import BaseRepository
 
 logger = getLogger(__name__)
@@ -158,7 +158,7 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
         self,
         canvas_id: int,
         label: str,
-        type: NodeType = NodeType.TEXT,
+        type: str | NodeType = NodeType.TEXT,
         position: dict | None = None,
         content: str | None = None,
         node_metadata: dict | None = None,
@@ -189,9 +189,11 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
         position_json = json.dumps(position)
         metadata_json = json.dumps(node_metadata) if node_metadata else None
 
+        normalized_type = normalize_node_type(type)
+
         return await self.create(
             canvas_id=canvas_id,
-            type=type,
+            type=normalized_type,
             label=label,
             content=content,
             position=position_json,

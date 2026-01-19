@@ -133,6 +133,26 @@ class TestNodeEndpoints:
         assert get_data["canvas_id"] == canvas_id
         assert get_data["content"] == "Optional content"
 
+    def test_create_node_with_custom_type(
+        self,
+        client: testclient.TestClient,
+        sync_session_local,
+    ) -> None:
+        """Test creating a node with a custom type."""
+        canvas_id = create_canvas(sync_session_local)
+        payload = {
+            "canvas_id": canvas_id,
+            "label": "Custom Node",
+            "type": "custom-widget",
+            "content": "Custom content",
+            "position": {"x": 5, "y": 15, "z": 0},
+        }
+
+        response = client.post("/api/nodes", json=payload)
+        assert response.status_code == 201
+        data = response.json()
+        assert data["type"] == "custom-widget"
+
     def test_update_node_partial_position(
         self,
         client: testclient.TestClient,

@@ -29,7 +29,7 @@ from app.graph_validation import DependencyCycleError
 from app.models.canvas import Canvas
 from app.models.edge import RelationType
 from app.models.intent import AssumptionResolutionDB
-from app.models.node import Node, NodeType
+from app.models.node import Node, NodeType, normalize_node_type
 from app.models.turn import TurnActor, TurnType
 from app.repositories.canvas_repo import CanvasRepository
 from app.repositories.edge_repo import EdgeRepository
@@ -141,12 +141,21 @@ class CanvasNodePosition(BaseModel):
 class CanvasCreateNodeParams(BaseModel):
     """Parameters for creating a canvas node."""
 
-    type: NodeType = Field(..., description="Node type")
+    type: str = Field(..., description="Node type")
     content: str = Field(..., min_length=1, description="Node content")
     position: CanvasNodePosition = Field(..., description="Node position")
     metadata: dict[str, Any] | None = Field(
         default=None, description="Optional node metadata"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_type(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+        if "type" in values:
+            values["type"] = normalize_node_type(values.get("type"))
+        return values
 
 
 class VisualizationLayoutParams(BaseModel):
@@ -171,7 +180,7 @@ class VisualizationNodeSpec(BaseModel):
     id: str = Field(..., min_length=1, description="Client node identifier")
     title: str = Field(..., min_length=1, description="Node title")
     content: str | None = Field(default=None, description="Optional node content")
-    type: NodeType = Field(default=NodeType.TEXT, description="Node type")
+    type: str = Field(default=NodeType.TEXT.value, description="Node type")
     metadata: dict[str, Any] | None = Field(
         default=None, description="Optional node metadata"
     )
@@ -187,6 +196,8 @@ class VisualizationNodeSpec(BaseModel):
         title = values.get("title") or values.get("label") or values.get("content")
         if title:
             values["title"] = title
+        if "type" in values:
+            values["type"] = normalize_node_type(values.get("type"))
         return values
 
 
@@ -260,13 +271,22 @@ class CanvasUpdateNodePatch(BaseModel):
     content: str | None = Field(
         default=None, description="Updated node content"
     )
-    type: NodeType | None = Field(default=None, description="Updated node type")
+    type: str | None = Field(default=None, description="Updated node type")
     position: CanvasUpdateNodePosition | None = Field(
         default=None, description="Updated node position"
     )
     metadata: dict[str, Any] | None = Field(
         default=None, description="Updated node metadata"
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_inputs(cls, values: Any) -> Any:
+        if not isinstance(values, dict):
+            return values
+        if "type" in values:
+            values["type"] = normalize_node_type(values.get("type"))
+        return values
 
 
 class CanvasUpdateNodeParams(BaseModel):
@@ -585,7 +605,7 @@ class ToolManager:
             return resolved
 
         async def canvas_create_node(
-            type: NodeType,
+            type: str,
             content: str,
             position: CanvasNodePosition | dict[str, Any],
             metadata: dict[str, Any] | None = None,
@@ -960,7 +980,7 @@ class ToolManager:
                 if "type" in fields_set:
                     if parsed_patch.type is None:
                         raise ValueError("Type cannot be null")
-                    updates["type"] = parsed_patch.type
+                    updates["type"] = normalize_node_type(parsed_patch.type)
 
                 if "metadata" in fields_set:
                     if parsed_patch.metadata is None:

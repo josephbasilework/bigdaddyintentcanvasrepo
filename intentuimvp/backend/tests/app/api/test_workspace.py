@@ -180,6 +180,28 @@ class TestWorkspaceEndpoint:
         assert "created_at" in data
         assert "updated_at" in data
 
+    def test_save_workspace_preserves_custom_node_type(
+        self,
+        client: testclient.TestClient,
+    ) -> None:
+        """Test PUT /api/workspace preserves custom node types."""
+        payload = {
+            "nodes": [
+                {"label": "Custom Node", "type": "custom-widget", "x": 10, "y": 20, "z": 0},
+            ],
+            "name": "custom_types",
+        }
+
+        response = client.put("/api/workspace", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["nodes"][0]["type"] == "custom-widget"
+
+        reload = client.get("/api/workspace")
+        assert reload.status_code == 200
+        reloaded_data = reload.json()
+        assert reloaded_data["nodes"][0]["type"] == "custom-widget"
+
     def test_save_workspace_update(self, client: testclient.TestClient) -> None:
         """Test PUT /api/workspace updates existing canvas."""
         # Create initial canvas

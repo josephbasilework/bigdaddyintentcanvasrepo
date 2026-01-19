@@ -8,21 +8,14 @@ from sqlalchemy.orm import Session
 from app.graph_validation import ensure_dependency_edges_acyclic
 from app.models.canvas import Canvas
 from app.models.edge import Edge, RelationType
-from app.models.node import Node, NodeType
+from app.models.node import Node, NodeType, normalize_node_type
 from app.repositories.diff import compute_edge_diff, compute_node_diff
 
 logger = getLogger(__name__)
 
 
-def _coerce_node_type(value: str | NodeType | None) -> NodeType:
-    if value is None:
-        return NodeType.TEXT
-    if isinstance(value, NodeType):
-        return value
-    try:
-        return NodeType(value)
-    except ValueError:
-        return NodeType.TEXT
+def _coerce_node_type(value: str | NodeType | None) -> str:
+    return normalize_node_type(value)
 
 
 def _coerce_relation_type(value: str | RelationType | None) -> RelationType:

@@ -2,8 +2,6 @@
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models.node import NodeType
-
 
 class DocumentData(BaseModel):
     """Document data for workspace save."""
@@ -39,7 +37,7 @@ class NodeData(BaseModel):
     id: int | str | None = Field(default=None, description="Optional node identifier")
     label: str | None = Field(default=None, description="Node label/text")
     title: str | None = Field(default=None, description="Node title (alias for label)")
-    type: NodeType | str | None = Field(default=None, description="Node type")
+    type: str | None = Field(default=None, description="Node type")
     x: float = Field(default=0, description="X coordinate")
     y: float = Field(default=0, description="Y coordinate")
     z: float = Field(default=0, description="Z coordinate (depth)")

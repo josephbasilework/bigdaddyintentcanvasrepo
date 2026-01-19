@@ -34,6 +34,37 @@ class NodeType(str, Enum):
     SYNTHESIS = "synthesis"  # FR-012: Stores combined multi-perspective analysis
 
 
+DEFAULT_NODE_TYPE = NodeType.TEXT.value
+
+
+def normalize_node_type(
+    value: str | NodeType | None,
+    *,
+    fallback: str | NodeType | None = None,
+) -> str:
+    """Normalize node type identifiers for storage and comparisons."""
+    if fallback is None:
+        fallback_value = DEFAULT_NODE_TYPE
+    elif isinstance(fallback, NodeType):
+        fallback_value = fallback.value
+    else:
+        fallback_value = str(fallback).strip().lower() or DEFAULT_NODE_TYPE
+
+    if isinstance(value, NodeType):
+        raw_value: str | None = value.value
+    elif value is None:
+        raw_value = None
+    else:
+        raw_value = str(value)
+
+    if raw_value is None:
+        return fallback_value
+    trimmed = raw_value.strip()
+    if not trimmed:
+        return fallback_value
+    return trimmed.lower()
+
+
 class Node(Base):
     """Node model representing an element on a canvas."""
 
@@ -43,7 +74,7 @@ class Node(Base):
     canvas_id: Mapped[int] = mapped_column(
         ForeignKey("canvas.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    type: Mapped[NodeType] = mapped_column(String, nullable=False, default=NodeType.TEXT)
+    type: Mapped[str] = mapped_column(String, nullable=False, default=DEFAULT_NODE_TYPE)
     label: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str | None] = mapped_column(Text, nullable=True)
     position: Mapped[str] = mapped_column(Text, nullable=False)  # JSON string: {"x": 0, "y": 0, "z": 0}

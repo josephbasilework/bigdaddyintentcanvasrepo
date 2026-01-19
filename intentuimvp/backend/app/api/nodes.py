@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_async_db
 from app.models.dashboard_subscription import DashboardSubscriptionTarget
-from app.models.node import Node
+from app.models.node import Node, normalize_node_type
 from app.models.turn import TurnActor, TurnType
 from app.repositories.node_repo import NodeRepository
 from app.repositories.turn_repo import AsyncTurnRepository
@@ -84,7 +84,7 @@ async def create_node(
         node = await repo.create_node(
             canvas_id=payload.canvas_id,
             label=payload.label,
-            type=payload.type,
+            type=normalize_node_type(payload.type),
             position=payload.position.model_dump(),
             content=payload.content,
             node_metadata=payload.metadata,
@@ -240,7 +240,7 @@ async def update_node(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Type cannot be null",
             )
-        updates["type"] = payload.type
+        updates["type"] = normalize_node_type(payload.type)
     if "metadata" in fields_set:
         if payload.metadata is None:
             updates["node_metadata"] = None

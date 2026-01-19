@@ -7,13 +7,13 @@ instead of full replacement.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
 from logging import getLogger
 from typing import Any
 
 from app.models.edge import Edge
-from app.models.node import Node
+from app.models.node import Node, normalize_node_type
 
 logger = getLogger(__name__)
 
@@ -71,15 +71,9 @@ def _node_has_changes(db_node: Node, node_data: dict[str, Any]) -> bool:
         return True
 
     # Check type
-    from app.models.node import NodeType
-
     incoming_type = node_data.get("type")
     if incoming_type is not None:
-        try:
-            if db_node.type != NodeType(incoming_type):
-                return True
-        except ValueError:
-            # Invalid type, treat as change
+        if normalize_node_type(db_node.type) != normalize_node_type(incoming_type):
             return True
 
     # Check content

@@ -92,7 +92,7 @@ class NodeCreateRequest(BaseModel):
 
     canvas_id: int = Field(..., description="Canvas identifier")
     label: str = Field(..., description="Node label/text")
-    type: NodeType = Field(default=NodeType.TEXT, description="Node type")
+    type: str = Field(default=NodeType.TEXT.value, description="Node type")
     content: str | None = Field(default=None, description="Optional node content")
     position: NodePosition = Field(
         default_factory=NodePosition,
@@ -106,7 +106,7 @@ class NodeUpdateRequest(BaseModel):
 
     label: str | None = Field(default=None, description="Updated node label")
     content: str | None = Field(default=None, description="Updated node content")
-    type: NodeType | None = Field(default=None, description="Updated node type")
+    type: str | None = Field(default=None, description="Updated node type")
     position: NodePositionUpdate | None = Field(
         default=None,
         description="Updated node position",
@@ -121,7 +121,7 @@ class NodeResponse(BaseModel):
 
     id: int
     canvas_id: int
-    type: NodeType
+    type: str
     label: str
     content: str | None
     position: NodePosition
