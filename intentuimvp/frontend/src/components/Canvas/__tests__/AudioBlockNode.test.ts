@@ -12,14 +12,16 @@ describe("toMarkers", () => {
       { id: "a", time: 1, label: "Intro" },
       { id: "", time: 2 },
       { id: "b", time: "3.5" },
+      { id: "z", time: 0 },
       { id: "c" },
       { time: 4 },
       "bad",
       null,
     ]);
 
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(3);
     expect(result[0]).toEqual({ id: "a", time: 1, label: "Intro" });
     expect(result[1]).toEqual({ id: "b", time: 3.5, label: undefined });
+    expect(result[2]).toEqual({ id: "z", time: 0, label: undefined });
   });
 });
