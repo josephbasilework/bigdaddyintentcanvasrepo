@@ -99,6 +99,12 @@ cd ~/bigdaddyintentcanvasrepo/intentuimvp/backend
 .venv/bin/pip install aiosqlite
 ```
 
+**"pip/pytest missing" when running backend tests:**
+```bash
+cd ~/bigdaddyintentcanvasrepo/intentuimvp/backend
+python3 scripts/bootstrap_test_tools.py
+```
+
 **CORS_ORIGINS parse error:**
 - Ensure it's JSON array format: `["http://localhost:3000","http://localhost:8000"]`
 
