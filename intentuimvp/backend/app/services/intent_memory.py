@@ -138,6 +138,11 @@ class IntentMemorySettings:
     auto_classify_enabled: bool = True
     auto_confirm_enabled: bool = True
     suggestions_enabled: bool = True
+    auto_classify_threshold: float = 0.7
+    auto_confirm_threshold: float = 0.8
+    auto_confirm_min_samples: int = 3
+    auto_confirm_similarity_threshold: float = 0.85
+    note_suggestion_threshold: float = 0.6
 
 
 @dataclass
@@ -206,6 +211,38 @@ def _parse_value(raw: str) -> Any:
         except json.JSONDecodeError:
             return raw
     return raw
+
+
+def _coerce_float(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int | float):
+        return float(value)
+    return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _coerce_threshold(value: Any, default: float) -> float:
+    parsed = _coerce_float(value)
+    if parsed is None or parsed < 0.0 or parsed > 1.0:
+        return default
+    return parsed
+
+
+def _coerce_min_samples(value: Any, default: int) -> int:
+    parsed = _coerce_int(value)
+    if parsed is None or parsed < 1:
+        return default
+    return parsed
 
 
 def _parse_frontmatter(contents: str) -> tuple[dict[str, Any], str]:
@@ -309,6 +346,11 @@ class IntentMemoryStore:
             auto_classify_enabled=settings.intent_memory_auto_classify_enabled,
             auto_confirm_enabled=settings.intent_memory_auto_confirm_enabled,
             suggestions_enabled=settings.intent_memory_suggestions_enabled,
+            auto_classify_threshold=self._policy.auto_classify_threshold,
+            auto_confirm_threshold=self._policy.auto_confirm_threshold,
+            auto_confirm_min_samples=self._policy.auto_confirm_min_samples,
+            auto_confirm_similarity_threshold=self._policy.auto_confirm_similarity_threshold,
+            note_suggestion_threshold=self._policy.note_suggestion_threshold,
         )
 
     def get_settings(self, user_id: str) -> IntentMemorySettings:
@@ -332,7 +374,119 @@ class IntentMemoryStore:
             suggestions_enabled=bool(
                 data.get("suggestions", self._default_settings.suggestions_enabled)
             ),
+            auto_classify_threshold=_coerce_threshold(
+                data.get("auto_classify_threshold"),
+                self._default_settings.auto_classify_threshold,
+            ),
+            auto_confirm_threshold=_coerce_threshold(
+                data.get("auto_confirm_threshold"),
+                self._default_settings.auto_confirm_threshold,
+            ),
+            auto_confirm_min_samples=_coerce_min_samples(
+                data.get("auto_confirm_min_samples"),
+                self._default_settings.auto_confirm_min_samples,
+            ),
+            auto_confirm_similarity_threshold=_coerce_threshold(
+                data.get("auto_confirm_similarity_threshold"),
+                self._default_settings.auto_confirm_similarity_threshold,
+            ),
+            note_suggestion_threshold=_coerce_threshold(
+                data.get("note_suggestion_threshold"),
+                self._default_settings.note_suggestion_threshold,
+            ),
         )
+
+    def update_settings(self, user_id: str, updates: dict[str, Any]) -> IntentMemorySettings:
+        current = self.get_settings(user_id)
+        updated = IntentMemorySettings(
+            enabled=updates["enabled"] if "enabled" in updates else current.enabled,
+            auto_classify_enabled=updates["auto_classify_enabled"]
+            if "auto_classify_enabled" in updates
+            else current.auto_classify_enabled,
+            auto_confirm_enabled=updates["auto_confirm_enabled"]
+            if "auto_confirm_enabled" in updates
+            else current.auto_confirm_enabled,
+            suggestions_enabled=updates["suggestions_enabled"]
+            if "suggestions_enabled" in updates
+            else current.suggestions_enabled,
+            auto_classify_threshold=updates["auto_classify_threshold"]
+            if "auto_classify_threshold" in updates
+            else current.auto_classify_threshold,
+            auto_confirm_threshold=updates["auto_confirm_threshold"]
+            if "auto_confirm_threshold" in updates
+            else current.auto_confirm_threshold,
+            auto_confirm_min_samples=updates["auto_confirm_min_samples"]
+            if "auto_confirm_min_samples" in updates
+            else current.auto_confirm_min_samples,
+            auto_confirm_similarity_threshold=updates["auto_confirm_similarity_threshold"]
+            if "auto_confirm_similarity_threshold" in updates
+            else current.auto_confirm_similarity_threshold,
+            note_suggestion_threshold=updates["note_suggestion_threshold"]
+            if "note_suggestion_threshold" in updates
+            else current.note_suggestion_threshold,
+        )
+        self._write_settings_file(user_id, updated)
+        return updated
+
+    def get_policy(self, user_id: str) -> IntentMemoryPolicy:
+        settings = self.get_settings(user_id)
+        return IntentMemoryPolicy(
+            auto_classify_threshold=settings.auto_classify_threshold,
+            auto_confirm_threshold=settings.auto_confirm_threshold,
+            auto_confirm_min_samples=settings.auto_confirm_min_samples,
+            auto_confirm_similarity_threshold=settings.auto_confirm_similarity_threshold,
+            note_suggestion_threshold=settings.note_suggestion_threshold,
+        )
+
+    def list_entries(
+        self,
+        *,
+        user_id: str,
+        workspace_id: str | int | None = None,
+        session_id: str | None = None,
+    ) -> list[MemoryEntry]:
+        return self._load_entries(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            session_id=session_id,
+        )
+
+    def get_entry(
+        self,
+        *,
+        user_id: str,
+        entry_id: str,
+        workspace_id: str | int | None = None,
+        session_id: str | None = None,
+    ) -> MemoryEntry | None:
+        entries = self._load_entries(
+            user_id=user_id,
+            workspace_id=workspace_id,
+            session_id=session_id,
+        )
+        for entry in entries:
+            if entry.entry_id == entry_id:
+                return entry
+        return None
+
+    def save_entry(self, *, user_id: str, entry: MemoryEntry, previous: MemoryEntry | None) -> None:
+        previous_path = self._entry_path(user_id=user_id, entry=previous) if previous else None
+        self._persist_entry(user_id, entry)
+        if previous_path and previous_path != self._entry_path(user_id=user_id, entry=entry):
+            if previous_path.exists():
+                previous_path.unlink()
+
+    def delete_entry(
+        self,
+        *,
+        user_id: str,
+        entry: MemoryEntry,
+    ) -> bool:
+        path = self._entry_path(user_id=user_id, entry=entry)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
 
     def match_routing(
         self,
@@ -342,13 +496,14 @@ class IntentMemoryStore:
         workspace_id: str | int | None = None,
         session_id: str | None = None,
     ) -> MemoryMatch | None:
+        policy = self.get_policy(user_id)
         return self._match_entries(
             usage=MemoryUsage.ROUTING,
             user_id=user_id,
             text=text,
             workspace_id=workspace_id,
             session_id=session_id,
-            threshold=self._policy.auto_classify_threshold,
+            threshold=policy.auto_classify_threshold,
         )
 
     def match_classification(
@@ -359,13 +514,14 @@ class IntentMemoryStore:
         workspace_id: str | int | None = None,
         session_id: str | None = None,
     ) -> MemoryMatch | None:
+        policy = self.get_policy(user_id)
         match = self._match_entries(
             usage=MemoryUsage.CLASSIFICATION,
             user_id=user_id,
             text=text,
             workspace_id=workspace_id,
             session_id=session_id,
-            threshold=self._policy.auto_classify_threshold,
+            threshold=policy.auto_classify_threshold,
         )
         if match is not None:
             return match
@@ -375,7 +531,7 @@ class IntentMemoryStore:
             text=text,
             workspace_id=workspace_id,
             session_id=session_id,
-            threshold=self._policy.auto_classify_threshold,
+            threshold=policy.auto_classify_threshold,
         )
 
     def suggest_for_note(
@@ -389,13 +545,14 @@ class IntentMemoryStore:
         settings = self.get_settings(user_id)
         if not settings.enabled or not settings.suggestions_enabled:
             return []
+        policy = self.get_policy(user_id)
         matches = self._match_entries(
             usage=MemoryUsage.NOTE_SUGGESTION,
             user_id=user_id,
             text=text,
             workspace_id=workspace_id,
             session_id=session_id,
-            threshold=self._policy.note_suggestion_threshold,
+            threshold=policy.note_suggestion_threshold,
             collect_all=True,
         )
         if not matches:
@@ -436,6 +593,7 @@ class IntentMemoryStore:
         settings = self.get_settings(user_id)
         if not settings.enabled or not settings.auto_confirm_enabled:
             return [], assumptions
+        policy = self.get_policy(user_id)
         confirmed: list[tuple[dict[str, Any], MemoryEntry]] = []
         remaining: list[dict[str, Any]] = []
         for assumption in assumptions:
@@ -450,14 +608,15 @@ class IntentMemoryStore:
                 category=category,
                 workspace_id=workspace_id,
                 session_id=session_id,
+                policy=policy,
             )
             if match is None:
                 remaining.append(assumption)
                 continue
-            if match.entry.stats.total < self._policy.auto_confirm_min_samples:
+            if match.entry.stats.total < policy.auto_confirm_min_samples:
                 remaining.append(assumption)
                 continue
-            if match.score < self._policy.auto_confirm_threshold:
+            if match.score < policy.auto_confirm_threshold:
                 remaining.append(assumption)
                 continue
             confirmed.append((assumption, match.entry))
@@ -696,6 +855,7 @@ class IntentMemoryStore:
         category: str,
         workspace_id: str | int | None,
         session_id: str | None,
+        policy: IntentMemoryPolicy,
     ) -> MemoryMatch | None:
         entries = self._load_entries(
             user_id=user_id,
@@ -706,7 +866,9 @@ class IntentMemoryStore:
         for entry in entries:
             if not entry.enabled or entry.usage != MemoryUsage.AUTO_CONFIRM:
                 continue
-            score = self._match_assumption_trigger(entry, assumption_text, category)
+            score = self._match_assumption_trigger(
+                entry, assumption_text, category, policy=policy
+            )
             if score is None:
                 continue
             score *= entry.confidence
@@ -738,6 +900,8 @@ class IntentMemoryStore:
         entry: MemoryEntry,
         assumption_text: str,
         category: str,
+        *,
+        policy: IntentMemoryPolicy,
     ) -> float | None:
         if entry.trigger_type == "category":
             return 1.0 if entry.trigger == category else None
@@ -746,7 +910,7 @@ class IntentMemoryStore:
                 _normalize_text(assumption_text),
                 _normalize_text(entry.trigger),
             )
-            if score is None or score < self._policy.auto_confirm_similarity_threshold:
+            if score is None or score < policy.auto_confirm_similarity_threshold:
                 return None
             return score
         return self._match_trigger(entry, assumption_text)
@@ -1027,21 +1191,51 @@ class IntentMemoryStore:
         settings_path = self._user_dir(user_id) / "settings.md"
         if settings_path.exists():
             return
+        self._write_settings_file(user_id, self._default_settings)
+
+    def _write_settings_file(self, user_id: str, settings: IntentMemorySettings) -> None:
+        settings_path = self._user_dir(user_id) / "settings.md"
+        body = None
+        if settings_path.exists():
+            try:
+                contents = settings_path.read_text(encoding="utf-8")
+                _data, body = _parse_frontmatter(contents)
+            except Exception:
+                body = None
+        if not body or not body.strip():
+            body = "\n".join(
+                [
+                    "",
+                    "# Intent Memory Settings",
+                    "",
+                    "Toggle intent memory behaviors by editing the frontmatter values.",
+                    "",
+                ]
+            )
+        frontmatter = {
+            "enabled": settings.enabled,
+            "auto_classify": settings.auto_classify_enabled,
+            "auto_confirm": settings.auto_confirm_enabled,
+            "suggestions": settings.suggestions_enabled,
+            "auto_classify_threshold": settings.auto_classify_threshold,
+            "auto_confirm_threshold": settings.auto_confirm_threshold,
+            "auto_confirm_min_samples": settings.auto_confirm_min_samples,
+            "auto_confirm_similarity_threshold": settings.auto_confirm_similarity_threshold,
+            "note_suggestion_threshold": settings.note_suggestion_threshold,
+        }
+        lines = ["---"]
+        for key, value in frontmatter.items():
+            lines.append(f"{key}: {_serialize_value(value)}")
+        lines.append("---")
         settings_path.parent.mkdir(parents=True, exist_ok=True)
-        lines = [
-            "---",
-            f"enabled: {_serialize_value(self._default_settings.enabled)}",
-            f"auto_classify: {_serialize_value(self._default_settings.auto_classify_enabled)}",
-            f"auto_confirm: {_serialize_value(self._default_settings.auto_confirm_enabled)}",
-            f"suggestions: {_serialize_value(self._default_settings.suggestions_enabled)}",
-            "---",
-            "",
-            "# Intent Memory Settings",
-            "",
-            "Toggle intent memory behaviors by editing the frontmatter values.",
-            "",
-        ]
-        settings_path.write_text("\n".join(lines), encoding="utf-8")
+        payload = "\n".join(lines)
+        if not body.startswith("\n"):
+            payload = f"{payload}\n{body}"
+        else:
+            payload = f"{payload}{body}"
+        if not payload.endswith("\n"):
+            payload = f"{payload}\n"
+        settings_path.write_text(payload, encoding="utf-8")
 
     def _user_dir(self, user_id: str) -> Path:
         return self._base_path / "users" / _sanitize_component(user_id)

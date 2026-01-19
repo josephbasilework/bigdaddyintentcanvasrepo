@@ -10,6 +10,7 @@ import { EventsViewPanel } from "@/components/EventsView";
 import { HooksPanel } from "@/components/Hooks";
 import { WheelViewPanel } from "@/components/WheelView";
 import { MCPInstallPanel } from "@/components/MCP";
+import { IntentMemoryPanel } from "@/components/IntentMemory";
 import { AssumptionsPanel } from "@/components/Assumptions";
 import {
   canExecuteProposal,
@@ -51,6 +52,8 @@ import {
   useOfflineQueueStore,
 } from "@/state/offlineQueueStore";
 import { setLastSyncedTurnSequence } from "@/utils/turnSequence";
+import { buildNodeContextFromNode, resolveNodeTypeId } from "@/nodeTypes";
+import { normalizeEdgeRelationType } from "@/components/Canvas/edgeRelations";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -61,14 +64,6 @@ const getWebSocketUrl = (): string => {
   return `${protocol}//${url.host}/ws`;
 };
 const WS_URL = getWebSocketUrl();
-const EDGE_RELATION_TYPES: Set<CanvasEdgeRelationType> = new Set([
-  "depends_on",
-  "references",
-  "supports",
-  "conflicts",
-  "derived_from",
-  "critiques",
-]);
 
 const blobToBase64 = (blob: Blob): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -138,18 +133,7 @@ const buildNodeContext = (
     .map((id) => {
       const node = nodeById.get(id);
       if (!node) return null;
-      const context: NodeContext = {
-        id: node.id,
-        title: node.title,
-        node_type: node.type,
-      };
-      if (node.content) {
-        context.content = node.content;
-      }
-      if (node.metadata) {
-        context.metadata = node.metadata;
-      }
-      return context;
+      return buildNodeContextFromNode(node);
     })
     .filter((ctx): ctx is NodeContext => ctx !== null);
 };
@@ -434,7 +418,7 @@ export default function Home() {
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [draftCommand, setDraftCommand] = useState("");
   const [activeView, setActiveView] = useState<
-    "chat" | "wheel" | "events" | "mcp" | "context" | "hooks" | null
+    "chat" | "wheel" | "events" | "mcp" | "context" | "hooks" | "memory" | null
   >(null);
   const canvasId = useCanvasStore((state) => state.canvasId);
   const nodes = useCanvasStore((state) => state.nodes);
@@ -685,6 +669,7 @@ export default function Home() {
           (nodePayload.type as string | undefined) ??
           (payload.type as string | undefined) ??
           "text";
+        const resolvedType = resolveNodeTypeId(nodeType);
         const metadata =
           (nodePayload.metadata as Record<string, unknown> | undefined) ??
           (nodePayload.node_metadata as Record<string, unknown> | undefined) ??
@@ -699,7 +684,7 @@ export default function Home() {
           addNode(
             {
               id: nodeId,
-              type: (nodeType as CanvasNode["type"]) || "text",
+              type: resolvedType,
               x: position.x ?? 0,
               y: position.y ?? 0,
               z: position.z ?? 0,
@@ -756,7 +741,9 @@ export default function Home() {
           (nodePayload.type as string | undefined) ??
           (payloadUpdates.type as string | undefined) ??
           (payload.type as string | undefined);
-        if (nextType !== undefined) updates.type = nextType as CanvasNode["type"];
+        if (nextType !== undefined) {
+          updates.type = resolveNodeTypeId(nextType, targetNode.type);
+        }
         const nextTitle =
           (nodePayload.title as string | undefined) ??
           (nodePayload.label as string | undefined) ??
@@ -822,17 +809,15 @@ export default function Home() {
           edgePayload.relation_type ??
           payload.relationType ??
           payload.relation_type;
-        const normalizedRelation =
-          relationType &&
-          EDGE_RELATION_TYPES.has(relationType as CanvasEdgeRelationType)
-          ? (relationType as CanvasEdgeRelationType)
-          : undefined;
+        const normalizedRelation = normalizeEdgeRelationType(
+          relationType as CanvasEdgeRelationType | string | null | undefined
+        );
         addEdge(
           {
             id: edgeId,
             sourceNodeId: String(sourceId),
             targetNodeId: String(targetId),
-            relationType: normalizedRelation,
+            relationType: normalizedRelation ?? undefined,
             label: (edgePayload.label as string | undefined) ?? (payload.label as string | undefined),
           },
           { source: "remote" }
@@ -851,15 +836,13 @@ export default function Home() {
           edgePayload.relation_type ??
           payload.relationType ??
           payload.relation_type;
-        const normalizedRelation =
-          relationType &&
-          EDGE_RELATION_TYPES.has(relationType as CanvasEdgeRelationType)
-            ? (relationType as CanvasEdgeRelationType)
-            : undefined;
+        const normalizedRelation = normalizeEdgeRelationType(
+          relationType as CanvasEdgeRelationType | string | null | undefined
+        );
         const label =
           (edgePayload.label as string | undefined) ?? (payload.label as string | undefined);
         const updates: { relationType?: CanvasEdgeRelationType; label?: string } = {};
-        if (normalizedRelation !== undefined) {
+        if (normalizedRelation) {
           updates.relationType = normalizedRelation;
         }
         if (label !== undefined) {
@@ -972,6 +955,7 @@ export default function Home() {
   const isMcpOpen = activeView === "mcp";
   const isContextOpen = activeView === "context";
   const isHooksOpen = activeView === "hooks";
+  const isMemoryOpen = activeView === "memory";
 
   const wheelFilters = useViewFiltersStore((state) => state.wheel);
   const eventsFilters = useViewFiltersStore((state) => state.events);
@@ -1381,10 +1365,11 @@ export default function Home() {
           metadata?: Record<string, unknown>;
         };
         const nodeId = String(nodePayload.id);
+        const resolvedType = resolveNodeTypeId(nodePayload.type, "audio");
         addNode(
           {
             id: nodeId,
-            type: (nodePayload.type as CanvasNode["type"]) || "audio",
+            type: resolvedType,
             x: nodePayload.position?.x ?? position.x,
             y: nodePayload.position?.y ?? position.y,
             z: nodePayload.position?.z ?? position.z,
@@ -1650,7 +1635,7 @@ export default function Home() {
   };
 
   const handleViewToggle = (
-    view: "chat" | "wheel" | "events" | "mcp" | "context" | "hooks"
+    view: "chat" | "wheel" | "events" | "mcp" | "context" | "hooks" | "memory"
   ) => {
     setActiveView((prev) => (prev === view ? null : view));
   };
@@ -1689,6 +1674,10 @@ export default function Home() {
     <HooksPanel id="hooks-panel" />
   ) : null;
 
+  const memoryPanel = isMemoryOpen ? (
+    <IntentMemoryPanel id="intent-memory-panel" />
+  ) : null;
+
   const wheelPanel = isWheelOpen ? (
     <WheelViewPanel
       id="wheel-view-panel"
@@ -1725,6 +1714,8 @@ export default function Home() {
       ? mcpPanel
       : isContextOpen
         ? contextPanel
+        : isMemoryOpen
+          ? memoryPanel
         : isWheelOpen
           ? wheelPanel
           : isEventsOpen
@@ -1827,6 +1818,12 @@ export default function Home() {
             isOpen: isContextOpen,
             onToggle: () => handleViewToggle("context"),
             ariaControls: "context-preview-panel",
+          },
+          {
+            label: "Memory",
+            isOpen: isMemoryOpen,
+            onToggle: () => handleViewToggle("memory"),
+            ariaControls: "intent-memory-panel",
           },
           {
             label: "Wheel",

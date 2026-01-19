@@ -331,3 +331,8 @@ def test_get_settings_returns_defaults_for_new_user(tmp_path) -> None:
     assert settings.auto_classify_enabled is True
     assert settings.auto_confirm_enabled is True
     assert settings.suggestions_enabled is True
+    assert settings.auto_classify_threshold == 0.7
+    assert settings.auto_confirm_threshold == 0.8
+    assert settings.auto_confirm_min_samples == 3
+    assert settings.auto_confirm_similarity_threshold == 0.85
+    assert settings.note_suggestion_threshold == 0.6

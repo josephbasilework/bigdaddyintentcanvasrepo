@@ -22,6 +22,7 @@ from app.api.edges import router as edges_router
 from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.api.hooks import router as hooks_router
+from app.api.intent_memory import router as intent_memory_router
 from app.api.jobs import router as jobs_router
 from app.api.mcp import router as mcp_router
 from app.api.nodes import router as nodes_router
@@ -249,6 +250,7 @@ def create_app() -> FastAPI:
     app.include_router(turns_router, tags=["turns"])
     app.include_router(events_router, tags=["events"])
     app.include_router(hooks_router, tags=["hooks"])
+    app.include_router(intent_memory_router, tags=["intent-memory"])
 
     # CopilotKit endpoint (PRD Section 9.3 EI-004)
     setup_copilotkit(app)
