@@ -29,9 +29,9 @@ from app.api.commands import router as commands_router
 from app.api.edges import router as edges_router
 from app.api.nodes import router as nodes_router
 from app.api.notifications import router as notifications_router
+from app.api.reminders import router as reminders_router
 from app.api.telemetry import router as telemetry_router
 from app.api.workspace import router as workspace_router
-from app.api.reminders import router as reminders_router
 from app.database import Base, get_async_db, get_db
 
 

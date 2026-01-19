@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -273,7 +273,7 @@ async def delete_audio_block(
 async def get_audio_block_content(
     block_id: int,
     db: AsyncSession = Depends(get_async_db),
-) -> FileResponse | RedirectResponse:
+) -> Response:
     """Retrieve raw audio content for playback."""
     repo = AudioBlockRepository(db)
     block = await repo.get_by_id(block_id)

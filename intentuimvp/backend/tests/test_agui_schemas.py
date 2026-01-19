@@ -22,6 +22,7 @@ from app.agui.schemas import (
     EventCreatedMessage,
     JobProgressMessage,
     NodeCreatedMessage,
+    TurnCreatedMessage,
     UICancelMessage,
     UICommandMessage,
     UIContext,
@@ -31,7 +32,6 @@ from app.agui.schemas import (
     UIContextWorkspace,
     UIResponseMessage,
     UIToAgentMessageType,
-    TurnCreatedMessage,
 )
 from app.schemas.event import EventResponse
 from app.schemas.turn import TurnResponse

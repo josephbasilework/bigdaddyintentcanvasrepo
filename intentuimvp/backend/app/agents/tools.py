@@ -154,7 +154,10 @@ class CanvasCreateNodeParams(BaseModel):
         if not isinstance(values, dict):
             return values
         if "type" in values:
-            values["type"] = normalize_node_type(values.get("type"))
+            normalized = normalize_node_type(values.get("type"))
+            if normalized not in {node_type.value for node_type in NodeType}:
+                raise ValueError(f"Invalid node type: {normalized}")
+            values["type"] = normalized
         return values
 
 

@@ -31,7 +31,6 @@ from app.mcp.capability_registry import (
     CapabilityRegistry,
     CapabilityStats,
     CapabilityType,
-    UnavailableCapability,
 )
 from app.mcp.manifest import SecurityCategory, SecurityLevel
 from app.mcp.models import MCPExecutionLog, MCPServer

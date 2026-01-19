@@ -87,7 +87,7 @@ class CanvasRepository(BaseRepository[Canvas, Any, Any]):
         stmt = (
             select(Canvas)
             .where(Canvas.user_id == user_id)
-            .order_by(Canvas.updated_at.desc())
+            .order_by(Canvas.updated_at.desc(), Canvas.id.desc())
             .offset(offset)
             .limit(limit)
         )
