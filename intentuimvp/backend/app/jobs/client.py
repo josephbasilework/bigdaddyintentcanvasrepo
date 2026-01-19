@@ -48,6 +48,56 @@ class JobEnqueueError(Exception):
     pass
 
 
+def _coerce_origin_node_id(value: Any) -> int | None:
+    """Coerce possible node identifiers into integers."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if value.is_integer():
+            return int(value)
+        return None
+    if isinstance(value, str):
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        try:
+            return int(trimmed)
+        except ValueError:
+            return None
+    return None
+
+
+def _derive_origin_node_id(
+    job_payload: dict[str, Any], metadata_payload: dict[str, Any]
+) -> int | None:
+    """Resolve a best-effort origin node ID for job routing."""
+    raw_origin = metadata_payload.get("origin_node_id")
+    if raw_origin is None:
+        raw_origin = metadata_payload.get("originNodeId")
+
+    payload_origin = job_payload.pop("origin_node_id", None)
+    if payload_origin is None:
+        payload_origin = job_payload.pop("originNodeId", None)
+    if raw_origin is None:
+        raw_origin = payload_origin
+
+    resolved = _coerce_origin_node_id(raw_origin)
+    if resolved is not None:
+        return resolved
+
+    input_refs = job_payload.get("input_refs")
+    if input_refs is None:
+        input_refs = job_payload.get("inputRefs")
+    if isinstance(input_refs, list | tuple):
+        for ref in input_refs:
+            resolved_ref = _coerce_origin_node_id(ref)
+            if resolved_ref is not None:
+                return resolved_ref
+    return None
+
+
 async def enqueue_job(
     job_type: JobType,
     job_data: dict[str, Any],
@@ -84,6 +134,10 @@ async def enqueue_job(
         metadata_payload["result_destinations"] = result_destinations
     elif result_destination is not None:
         metadata_payload["result_destination"] = result_destination
+
+    origin_node_id = _derive_origin_node_id(job_payload, metadata_payload)
+    if origin_node_id is not None and metadata_payload.get("origin_node_id") is None:
+        metadata_payload["origin_node_id"] = origin_node_id
 
     logger.info(f"Enqueueing job {job_id}: type={job_type}, data={job_payload}")
 

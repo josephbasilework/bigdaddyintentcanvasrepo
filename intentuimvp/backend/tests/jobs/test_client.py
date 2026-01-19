@@ -199,6 +199,56 @@ class TestEnqueueJob:
         }
         assert create_kwargs["job_metadata"]["result_destination"] == {"type": "user_storage"}
 
+    async def test_enqueue_job_sets_origin_node_from_input_refs(self) -> None:
+        """Should derive origin_node_id from input_refs for origin node routing."""
+        mock_redis = MagicMock()
+        mock_redis.enqueue_job = AsyncMock(return_value="redis-job")
+        mock_redis.close = AsyncMock()
+
+        with patch("app.jobs.client.create_pool", new_callable=AsyncMock) as mock_create_pool:
+            mock_create_pool.return_value = mock_redis
+            with patch(
+                "app.jobs.client.progress_tracker.create_job",
+                new_callable=AsyncMock,
+            ) as mock_create_job:
+                await enqueue_job(
+                    job_type=JobType.DEEP_RESEARCH,
+                    job_data={
+                        "query": "Test",
+                        "depth": 1,
+                        "input_refs": ["12", 7],
+                    },
+                )
+
+        create_kwargs = mock_create_job.call_args.kwargs
+        assert create_kwargs["parameters"]["input_refs"] == ["12", 7]
+        assert create_kwargs["job_metadata"]["origin_node_id"] == 12
+
+    async def test_enqueue_job_respects_explicit_origin_node(self) -> None:
+        """Should keep explicit origin_node_id metadata when provided."""
+        mock_redis = MagicMock()
+        mock_redis.enqueue_job = AsyncMock(return_value="redis-job")
+        mock_redis.close = AsyncMock()
+
+        with patch("app.jobs.client.create_pool", new_callable=AsyncMock) as mock_create_pool:
+            mock_create_pool.return_value = mock_redis
+            with patch(
+                "app.jobs.client.progress_tracker.create_job",
+                new_callable=AsyncMock,
+            ) as mock_create_job:
+                await enqueue_job(
+                    job_type=JobType.DEEP_RESEARCH,
+                    job_data={
+                        "query": "Test",
+                        "depth": 1,
+                        "input_refs": [1, 2],
+                    },
+                    job_metadata={"origin_node_id": 99},
+                )
+
+        create_kwargs = mock_create_job.call_args.kwargs
+        assert create_kwargs["job_metadata"]["origin_node_id"] == 99
+
 
 @pytest.mark.asyncio
 class TestGetJobStatus:
