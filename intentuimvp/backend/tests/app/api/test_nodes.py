@@ -230,6 +230,11 @@ class TestNodeEndpoints:
         list_data = list_response.json()
         assert list_data["count"] == 2
         assert all(node["canvas_id"] == canvas_id for node in list_data["nodes"])
+        positions = {
+            (node["position"]["x"], node["position"]["y"], node["position"]["z"])
+            for node in list_data["nodes"]
+        }
+        assert len(positions) == list_data["count"]
 
         node_id = list_data["nodes"][0]["id"]
         delete_response = client.delete(f"/api/nodes/{node_id}")

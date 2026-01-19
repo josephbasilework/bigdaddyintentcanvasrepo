@@ -82,11 +82,14 @@ async def create_node(
     """
     try:
         repo = NodeRepository(db)
+        position = None
+        if "position" in payload.model_fields_set and payload.position is not None:
+            position = payload.position.model_dump()
         node = await repo.create_node(
             canvas_id=payload.canvas_id,
             label=payload.label,
             type=normalize_node_type(payload.type),
-            position=payload.position.model_dump(),
+            position=position,
             content=payload.content,
             node_metadata=payload.metadata,
         )

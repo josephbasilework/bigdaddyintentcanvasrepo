@@ -15,6 +15,49 @@ from app.repositories.base import BaseRepository
 
 logger = getLogger(__name__)
 
+POSITION_OFFSET_STEP = 48.0
+POSITION_OFFSET_MAX_ATTEMPTS = 49
+
+
+def _coerce_position_value(value: Any) -> float:
+    try:
+        if value is None:
+            return 0.0
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _iter_position_candidates(
+    base: dict[str, float],
+    *,
+    step: float = POSITION_OFFSET_STEP,
+    max_attempts: int = POSITION_OFFSET_MAX_ATTEMPTS,
+) -> list[dict[str, float]]:
+    """Return candidate positions in expanding rings around the base."""
+    candidates: list[dict[str, float]] = [base]
+    ring = 1
+    attempts = 1
+    while attempts < max_attempts:
+        for dx in range(-ring, ring + 1):
+            for dy in range(-ring, ring + 1):
+                if abs(dx) != ring and abs(dy) != ring:
+                    continue
+                candidates.append(
+                    {
+                        "x": base["x"] + (dx * step),
+                        "y": base["y"] + (dy * step),
+                        "z": base["z"],
+                    }
+                )
+                attempts += 1
+                if attempts >= max_attempts:
+                    break
+            if attempts >= max_attempts:
+                break
+        ring += 1
+    return candidates
+
 
 class DuplicatePositionError(ValueError):
     """Raised when a node position conflicts with an existing node in the same canvas.
@@ -60,6 +103,24 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
         """Return the Node model."""
         return Node
 
+    @staticmethod
+    def _normalize_position(position: dict[str, Any]) -> dict[str, float]:
+        return {
+            "x": _coerce_position_value(position.get("x")),
+            "y": _coerce_position_value(position.get("y")),
+            "z": _coerce_position_value(position.get("z")),
+        }
+
+    @staticmethod
+    def _position_json_variants(position: dict[str, float]) -> list[str]:
+        variants = {json.dumps(position)}
+        int_position = {
+            key: int(value) if float(value).is_integer() else value
+            for key, value in position.items()
+        }
+        variants.add(json.dumps(int_position))
+        return list(variants)
+
     async def _validate_position_unique(
         self, canvas_id: int, position: dict, exclude_node_id: int | None = None
     ) -> None:
@@ -75,10 +136,11 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
         Raises:
             DuplicatePositionError: If another node already has this position
         """
-        position_json = json.dumps(position)
+        normalized_position = self._normalize_position(position)
+        position_variants = self._position_json_variants(normalized_position)
         stmt = select(Node).where(
             Node.canvas_id == canvas_id,
-            Node.position == position_json,
+            Node.position.in_(position_variants),
         )
         if exclude_node_id is not None:
             stmt = stmt.where(Node.id != exclude_node_id)
@@ -88,6 +150,20 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
 
         if existing is not None:
             raise DuplicatePositionError(canvas_id=canvas_id, position=position)
+
+    async def _resolve_default_position(self, canvas_id: int) -> dict[str, float]:
+        base_position = {"x": 0.0, "y": 0.0, "z": 0.0}
+        last_error: DuplicatePositionError | None = None
+        for candidate in _iter_position_candidates(base_position):
+            try:
+                await self._validate_position_unique(canvas_id, candidate)
+            except DuplicatePositionError as exc:
+                last_error = exc
+                continue
+            return candidate
+        raise last_error or DuplicatePositionError(
+            canvas_id=canvas_id, position=base_position
+        )
 
     async def get_with_edges(self, node_id: int) -> Node | None:
         """Get node with all edges preloaded.
@@ -119,10 +195,11 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
         Returns:
             Node if found, None otherwise
         """
-        position_json = json.dumps(position)
+        normalized_position = self._normalize_position(position)
+        position_variants = self._position_json_variants(normalized_position)
         stmt = select(Node).where(
             Node.canvas_id == canvas_id,
-            Node.position == position_json,
+            Node.position.in_(position_variants),
         )
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
@@ -181,10 +258,12 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
         Raises:
             DuplicatePositionError: If another node in the canvas has this position (CI-001)
         """
-        position = position or {"x": 0, "y": 0, "z": 0}
-
-        # Enforce CI-001: Node position must be unique within Canvas
-        await self._validate_position_unique(canvas_id, position)
+        if position is None:
+            position = await self._resolve_default_position(canvas_id)
+        else:
+            position = self._normalize_position(position)
+            # Enforce CI-001: Node position must be unique within Canvas
+            await self._validate_position_unique(canvas_id, position)
 
         position_json = json.dumps(position)
         metadata_json = json.dumps(node_metadata) if node_metadata else None
@@ -221,9 +300,14 @@ class NodeRepository(BaseRepository[Node, Any, Any]):
 
         # Enforce CI-001: Node position must be unique within Canvas
         # Exclude current node from the uniqueness check
-        await self._validate_position_unique(node.canvas_id, position, exclude_node_id=node_id)
+        normalized_position = self._normalize_position(position)
+        await self._validate_position_unique(
+            node.canvas_id,
+            normalized_position,
+            exclude_node_id=node_id,
+        )
 
-        return await self.update(node_id, position=json.dumps(position))
+        return await self.update(node_id, position=json.dumps(normalized_position))
 
     async def update_metadata(self, node_id: int, metadata: dict) -> Node | None:
         """Update node metadata.
