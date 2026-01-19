@@ -381,16 +381,18 @@ export function EventsViewPanel({
     }
 
     const filtered = typeFilters.filter((type) => eventTypeOptions.includes(type));
-    if (filtered.length === eventTypeOptions.length) {
-      setEventsTypeFilters([]);
-      return;
-    }
     if (filtered.length !== typeFilters.length) {
       setEventsTypeFilters(filtered);
     }
   }, [eventTypeOptions, typeFilters, setEventsTypeFilters]);
 
-  const activeTypeFilters = typeFilters.length > 0 ? typeFilters : eventTypeOptions;
+  const activeTypeFilters = useMemo(() => {
+    if (typeFilters.length === 0) {
+      return eventTypeOptions;
+    }
+    const filtered = typeFilters.filter((type) => eventTypeOptions.includes(type));
+    return filtered.length > 0 ? filtered : eventTypeOptions;
+  }, [eventTypeOptions, typeFilters]);
 
   const filteredEvents = useMemo(() => {
     const actorSet = new Set(actorFilters);

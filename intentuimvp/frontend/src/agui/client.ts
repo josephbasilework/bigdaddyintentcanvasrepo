@@ -767,8 +767,17 @@ export class AGUIClient {
       },
     };
 
+    if (
+      this.outboundQueue.some(
+        (message) => message.type === "state.sync_request"
+      )
+    ) {
+      console.info("Requested state sync");
+      return;
+    }
+
     try {
-      this.sendPayload(JSON.stringify(syncRequest), { allowDuringSync: true });
+      this.send(syncRequest);
       console.info("Requested state sync");
     } catch (error) {
       console.error("Failed to request state sync:", error);
@@ -878,24 +887,6 @@ export class AGUIClient {
     }
 
     this.isFlushingQueue = false;
-  }
-
-  /**
-   * Send payload directly or queue if not connected
-   */
-  private sendPayload(
-    payload: string,
-    options?: { allowDuringSync?: boolean }
-  ): void {
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-      if (!options?.allowDuringSync) {
-        throw new Error("WebSocket is not connected");
-      }
-      // Queue the message for later
-      return;
-    }
-
-    this.ws.send(payload);
   }
 
   private isAgentMessage(message: unknown): message is AgentToUIMessageType {
