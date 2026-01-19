@@ -211,6 +211,15 @@ class ConnectionManager:
                 connections.append(ws)
         return connections
 
+    def get_connections_by_user(self, user_id: str) -> list[WebSocket]:
+        """Get all WebSocket connections for a given user ID."""
+        connections = []
+        for ws in self.active_connections:
+            ctx = self.get_session_context(ws)
+            if ctx and ctx.user_id == user_id:
+                connections.append(ws)
+        return connections
+
     async def connect(self, websocket: WebSocket) -> None:
         """Accept and register a new WebSocket connection.
 

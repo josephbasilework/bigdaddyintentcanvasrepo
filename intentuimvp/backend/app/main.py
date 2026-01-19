@@ -26,7 +26,9 @@ from app.api.intent_memory import router as intent_memory_router
 from app.api.jobs import router as jobs_router
 from app.api.mcp import router as mcp_router
 from app.api.nodes import router as nodes_router
+from app.api.notifications import router as notifications_router
 from app.api.preferences import router as preferences_router
+from app.api.reminders import router as reminders_router
 from app.api.runs import router as runs_router
 from app.api.telemetry import router as telemetry_router
 from app.api.turns import router as turns_router
@@ -241,6 +243,8 @@ def create_app() -> FastAPI:
     app.include_router(audio_router, tags=["audio"])
     app.include_router(attachments_router, tags=["attachments"])
     app.include_router(preferences_router, tags=["preferences"])
+    app.include_router(notifications_router, tags=["notifications"])
+    app.include_router(reminders_router, tags=["reminders"])
     app.include_router(dashboard_subscriptions_router, tags=["dashboard"])
     app.include_router(dashboard_external_router, tags=["dashboard"])
     app.include_router(backup_router, tags=["backup"])

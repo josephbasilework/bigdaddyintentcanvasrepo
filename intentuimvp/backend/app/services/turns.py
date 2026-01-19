@@ -428,6 +428,14 @@ def log_turn_with_session_id_sync(
             return turn
         _persist_turn_snapshot_sync(db, session_id, turn)
         event = _emit_event_for_turn_sync(db, turn)
+        try:
+            from app.services.notifications import maybe_create_notification_for_turn_sync
+
+            maybe_create_notification_for_turn_sync(db, turn)
+        except Exception:
+            logger.warning(
+                "Failed to create notification for turn %s", turn.id, exc_info=True
+            )
         turn_response = _build_turn_response(turn)
         event_response = _build_event_response(event) if event else None
         turn_payload = turn.get_payload()
@@ -536,6 +544,14 @@ async def log_turn_with_session_id_async(
             return turn
         await _persist_turn_snapshot_async(db, session_id, turn)
         event = await _emit_event_for_turn_async(db, turn)
+        try:
+            from app.services.notifications import maybe_create_notification_for_turn_async
+
+            await maybe_create_notification_for_turn_async(db, turn)
+        except Exception:
+            logger.warning(
+                "Failed to create notification for turn %s", turn.id, exc_info=True
+            )
         turn_response = _build_turn_response(turn)
         event_response = _build_event_response(event) if event else None
         turn_payload = turn.get_payload()

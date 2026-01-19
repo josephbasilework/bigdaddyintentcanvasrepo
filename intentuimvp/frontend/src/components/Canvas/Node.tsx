@@ -19,6 +19,7 @@ import { DocumentBlock } from "./DocumentBlock";
 import { MarkdownPreview } from "./MarkdownPreview";
 import { CalendarSyncDialog } from "./CalendarSyncDialog";
 import { PerspectiveRerunDialog } from "./PerspectiveRerunDialog";
+import { ReminderDialog } from "./ReminderDialog";
 import {
   CalendarApprovalDialog,
   type PendingCalendarAction,
@@ -125,6 +126,7 @@ export function Node({
   } | null>(null);
   const [isPerspectiveRerunOpen, setIsPerspectiveRerunOpen] = useState(false);
   const [isJobRoutingOpen, setIsJobRoutingOpen] = useState(false);
+  const [isReminderOpen, setIsReminderOpen] = useState(false);
   const nodeRef = useRef<HTMLDivElement>(null);
   const focusFromPointerRef = useRef(false);
   const skipTitleCommitRef = useRef(false);
@@ -1116,6 +1118,7 @@ export function Node({
           onConnect={onStartConnect ? handleConnect : undefined}
           onAnnotate={node.type === "graph" ? handleEditAnnotation : undefined}
           onEditDependencies={handleEditDependencies}
+          onSetReminder={() => setIsReminderOpen(true)}
         />
       )}
 
@@ -1143,6 +1146,13 @@ export function Node({
         pendingAction={pendingCalendarApproval?.pendingAction ?? null}
         onCancel={handleCalendarApprovalClose}
         onConfirm={handleCalendarApprovalConfirm}
+      />
+
+      <ReminderDialog
+        isOpen={isReminderOpen}
+        nodeId={node.id}
+        nodeTitle={node.title}
+        onCancel={() => setIsReminderOpen(false)}
       />
 
       {/* Edit modal */}

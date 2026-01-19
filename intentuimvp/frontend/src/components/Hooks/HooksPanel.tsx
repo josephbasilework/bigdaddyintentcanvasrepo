@@ -87,7 +87,11 @@ export function HooksPanel({ id = "hooks-panel" }: HooksPanelProps) {
     hookType: "event",
     eventType: "node.created",
     intervalSeconds: 900,
+    actionType: "command",
     command: "/clear",
+    notificationTitle: "",
+    notificationMessage: "",
+    notificationLevel: "info",
     enabled: true,
   });
 
@@ -113,15 +117,29 @@ export function HooksPanel({ id = "hooks-panel" }: HooksPanelProps) {
   }, [fetchHooks]);
 
   const isSchedule = formState.hookType === "schedule";
+  const isNotification = formState.actionType === "notification";
   const trimmedCommand = formState.command.trim();
+  const trimmedNotificationTitle = formState.notificationTitle.trim();
+  const trimmedNotificationMessage = formState.notificationMessage.trim();
   const canSubmit = useMemo(() => {
     if (!formState.name.trim()) return false;
-    if (!trimmedCommand) return false;
+    if (isNotification) {
+      if (!trimmedNotificationTitle || !trimmedNotificationMessage) return false;
+    } else if (!trimmedCommand) {
+      return false;
+    }
     if (isSchedule) {
       return formState.intervalSeconds > 0;
     }
     return Boolean(formState.eventType);
-  }, [formState, isSchedule, trimmedCommand]);
+  }, [
+    formState,
+    isSchedule,
+    trimmedCommand,
+    trimmedNotificationTitle,
+    trimmedNotificationMessage,
+    isNotification,
+  ]);
 
   const handleFieldChange = (
     key: keyof typeof formState,
@@ -136,14 +154,23 @@ export function HooksPanel({ id = "hooks-panel" }: HooksPanelProps) {
     setIsSubmitting(true);
     setError(null);
 
+    const action = isNotification
+      ? {
+          type: "notification",
+          title: trimmedNotificationTitle,
+          message: trimmedNotificationMessage,
+          level: formState.notificationLevel,
+        }
+      : {
+          type: "command",
+          command: trimmedCommand,
+        };
+
     const payload: Record<string, unknown> = {
       name: formState.name.trim(),
       description: formState.description.trim() || null,
       hookType: formState.hookType,
-      action: {
-        type: "command",
-        command: trimmedCommand,
-      },
+      action,
       enabled: formState.enabled,
     };
 
@@ -247,6 +274,16 @@ export function HooksPanel({ id = "hooks-panel" }: HooksPanelProps) {
                 <option value="schedule">Scheduled interval</option>
               </select>
             </label>
+            <label className="hooks-field">
+              <span>Action</span>
+              <select
+                value={formState.actionType}
+                onChange={(event) => handleFieldChange("actionType", event.target.value)}
+              >
+                <option value="command">Run command</option>
+                <option value="notification">Send notification</option>
+              </select>
+            </label>
             {!isSchedule ? (
               <label className="hooks-field">
                 <span>Event Type</span>
@@ -277,14 +314,53 @@ export function HooksPanel({ id = "hooks-panel" }: HooksPanelProps) {
                 />
               </label>
             )}
-            <label className="hooks-field hooks-command">
-              <span>Command</span>
-              <input
-                value={formState.command}
-                onChange={(event) => handleFieldChange("command", event.target.value)}
-                placeholder="/analyze summarize the research job"
-              />
-            </label>
+            {!isNotification ? (
+              <label className="hooks-field hooks-command">
+                <span>Command</span>
+                <input
+                  value={formState.command}
+                  onChange={(event) => handleFieldChange("command", event.target.value)}
+                  placeholder="/analyze summarize the research job"
+                />
+              </label>
+            ) : (
+              <>
+                <label className="hooks-field">
+                  <span>Notification title</span>
+                  <input
+                    value={formState.notificationTitle}
+                    onChange={(event) =>
+                      handleFieldChange("notificationTitle", event.target.value)
+                    }
+                    placeholder="Reminder ready"
+                  />
+                </label>
+                <label className="hooks-field">
+                  <span>Notification level</span>
+                  <select
+                    value={formState.notificationLevel}
+                    onChange={(event) =>
+                      handleFieldChange("notificationLevel", event.target.value)
+                    }
+                  >
+                    <option value="info">Info</option>
+                    <option value="success">Success</option>
+                    <option value="warning">Warning</option>
+                  </select>
+                </label>
+                <label className="hooks-field hooks-command">
+                  <span>Notification message</span>
+                  <textarea
+                    value={formState.notificationMessage}
+                    onChange={(event) =>
+                      handleFieldChange("notificationMessage", event.target.value)
+                    }
+                    rows={2}
+                    placeholder="Summarize completed jobs in the timeline."
+                  />
+                </label>
+              </>
+            )}
           </div>
           <div className="hooks-form-actions">
             <label className="hooks-toggle">
@@ -423,13 +499,18 @@ export function HooksPanel({ id = "hooks-panel" }: HooksPanelProps) {
         }
 
         .hooks-field input,
-        .hooks-field select {
+        .hooks-field select,
+        .hooks-field textarea {
           border-radius: 0.6rem;
           border: 1px solid rgba(148, 163, 184, 0.3);
           padding: 0.55rem 0.7rem;
           background: rgba(15, 23, 42, 0.6);
           color: #e2e8f0;
           font-size: 0.85rem;
+        }
+
+        .hooks-field textarea {
+          resize: vertical;
         }
 
         .hooks-command {

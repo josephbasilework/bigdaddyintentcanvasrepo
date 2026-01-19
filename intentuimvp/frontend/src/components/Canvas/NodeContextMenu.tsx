@@ -13,6 +13,7 @@ interface ContextMenuProps {
   onAnnotate?: () => void;
   onEditDependencies?: () => void;
   onExportDoc?: () => void;
+  onSetReminder?: () => void;
 }
 
 /**
@@ -37,6 +38,7 @@ export function NodeContextMenu({
   onAnnotate,
   onEditDependencies,
   onExportDoc,
+  onSetReminder,
 }: ContextMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null);
   const positionComputedRef = useRef(false);
@@ -146,6 +148,11 @@ export function NodeContextMenu({
         {onExportDoc && (
           <MenuItem label="Export documentation" onClick={() => handleAction(onExportDoc)}>
             📄 Export doc...
+          </MenuItem>
+        )}
+        {onSetReminder && (
+          <MenuItem label="Set reminder" onClick={() => handleAction(onSetReminder)}>
+            ⏰ Reminder...
           </MenuItem>
         )}
         <div

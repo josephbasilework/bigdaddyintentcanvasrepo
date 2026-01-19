@@ -30,8 +30,9 @@ HOOK_TYPE_SCHEDULE = "schedule"
 
 SCHEDULE_TYPE_INTERVAL = "interval"
 SCHEDULE_TYPE_CRON = "cron"
+SCHEDULE_TYPE_DATE = "date"
 
-SUPPORTED_SCHEDULE_TYPES = {SCHEDULE_TYPE_INTERVAL, SCHEDULE_TYPE_CRON}
+SUPPORTED_SCHEDULE_TYPES = {SCHEDULE_TYPE_INTERVAL, SCHEDULE_TYPE_CRON, SCHEDULE_TYPE_DATE}
 
 HOOK_TURN_TYPES = {TurnType.HOOK_FIRED, TurnType.HOOK_FAILED}
 
@@ -110,6 +111,14 @@ def compute_next_run_at(
         if last_fired_at is None and start_at is not None and start_at > now:
             return start_at
         return base + delta
+
+    if schedule_type == SCHEDULE_TYPE_DATE:
+        run_at = _parse_datetime(trigger.get("run_at") or trigger.get("runAt"))
+        if run_at is None:
+            return None
+        if last_fired_at is not None:
+            return None
+        return run_at
 
     cron_fields = {
         key: trigger.get(key)
@@ -197,6 +206,15 @@ def _coerce_id(value: Any) -> str | None:
         trimmed = value.strip()
         return trimmed or None
     return None
+
+
+def _coerce_int_id(value: Any) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
 
 
 def _matches_trigger(
@@ -308,6 +326,61 @@ async def _execute_hook_action(
             "result": result,
         }
 
+    if action_type == "notification":
+        title_template = action.get("title") or action.get("name") or "Notification"
+        message_template = action.get("message") or action.get("text") or ""
+        if not isinstance(message_template, str) or not message_template.strip():
+            raise ValueError("Hook action missing notification message")
+        title = (
+            _render_template(title_template, context).strip()
+            if isinstance(title_template, str)
+            else "Notification"
+        )
+        message = _render_template(message_template, context).strip()
+        level = action.get("level") if isinstance(action.get("level"), str) else "info"
+        metadata = action.get("metadata") if isinstance(action.get("metadata"), dict) else {}
+        if "duration" in action:
+            metadata["duration"] = action.get("duration")
+        if "actions" in action:
+            metadata["actions"] = action.get("actions")
+        if not metadata:
+            metadata = None
+        related_node = _coerce_int_id(
+            action.get("related_node_id") or action.get("relatedNodeId")
+        )
+        if related_node is None:
+            related_node = _coerce_int_id(
+                context.get("related_node_id") or context.get("relatedNodeId")
+            )
+        related_edge = _coerce_int_id(
+            action.get("related_edge_id") or action.get("relatedEdgeId")
+        )
+        if related_edge is None:
+            related_edge = _coerce_int_id(
+                context.get("related_edge_id") or context.get("relatedEdgeId")
+            )
+        workspace_id = _coerce_int_id(hook.workspace_id)
+
+        from app.services.notifications import create_notification_async
+
+        await create_notification_async(
+            user_id=hook.user_id or "default_user",
+            workspace_id=workspace_id,
+            session_id=hook.session_id,
+            level=level,
+            title=title,
+            message=message,
+            source=action.get("source") if isinstance(action.get("source"), str) else "hook",
+            related_node_id=related_node,
+            related_edge_id=related_edge,
+            metadata=metadata,
+        )
+        return {
+            "title": title,
+            "message": message,
+            "level": level,
+        }
+
     raise ValueError(f"Unsupported hook action type: {action_type}")
 
 
@@ -375,6 +448,8 @@ async def _fire_hook_async(
         payload={
             "hook_id": hook.id,
             "hook_name": hook.name,
+            "hook_type": hook.hook_type,
+            "schedule_type": hook.schedule_type,
             "event_type": event_type,
             "trigger": hook.trigger or {},
             "action": hook.action or {},
@@ -408,6 +483,8 @@ async def _fire_hook_async(
             payload={
                 "hook_id": hook.id,
                 "hook_name": hook.name,
+                "hook_type": hook.hook_type,
+                "schedule_type": hook.schedule_type,
                 "error": error_message,
                 "event_type": event_type,
             },
@@ -449,6 +526,8 @@ def _fire_hook_sync(
         payload={
             "hook_id": hook.id,
             "hook_name": hook.name,
+            "hook_type": hook.hook_type,
+            "schedule_type": hook.schedule_type,
             "event_type": event_type,
             "trigger": hook.trigger or {},
             "action": hook.action or {},
@@ -486,6 +565,8 @@ def _fire_hook_sync(
             payload={
                 "hook_id": hook.id,
                 "hook_name": hook.name,
+                "hook_type": hook.hook_type,
+                "schedule_type": hook.schedule_type,
                 "error": error_message,
                 "event_type": event_type,
             },

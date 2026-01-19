@@ -17,8 +17,10 @@ import app.models.backup  # noqa: F401
 import app.models.canvas  # noqa: F401
 import app.models.dashboard_subscription  # noqa: F401
 import app.models.edge  # noqa: F401
+import app.models.hook  # noqa: F401
 import app.models.job  # noqa: F401
 import app.models.node  # noqa: F401
+import app.models.notification  # noqa: F401
 import app.models.preferences  # noqa: F401
 import app.models.session  # noqa: F401
 import app.models.telemetry_event  # noqa: F401
@@ -26,8 +28,10 @@ import app.models.turn  # noqa: F401
 from app.api.commands import router as commands_router
 from app.api.edges import router as edges_router
 from app.api.nodes import router as nodes_router
+from app.api.notifications import router as notifications_router
 from app.api.telemetry import router as telemetry_router
 from app.api.workspace import router as workspace_router
+from app.api.reminders import router as reminders_router
 from app.database import Base, get_async_db, get_db
 
 
@@ -95,6 +99,8 @@ def app_client(async_session_maker) -> testclient.TestClient:
     app.include_router(commands_router)
     app.include_router(edges_router)
     app.include_router(nodes_router)
+    app.include_router(notifications_router)
+    app.include_router(reminders_router)
     app.include_router(telemetry_router)
     app.include_router(workspace_router)
 

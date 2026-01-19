@@ -8,6 +8,7 @@ import {
 import { ChatViewPanel } from "@/components/ChatView";
 import { EventsViewPanel } from "@/components/EventsView";
 import { HooksPanel } from "@/components/Hooks";
+import { NotificationToasts, NotificationsPanel } from "@/components/Notifications";
 import { WheelViewPanel } from "@/components/WheelView";
 import { MCPInstallPanel } from "@/components/MCP";
 import { IntentMemoryPanel } from "@/components/IntentMemory";
@@ -32,6 +33,7 @@ import {
 } from "@/state/canvasStore";
 import { useConversationStore } from "@/state/conversationStore";
 import { useViewFiltersStore } from "@/state/viewFiltersStore";
+import { useNotificationsStore } from "@/state/notificationsStore";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useChatTurns } from "@/hooks/useChatTurns";
 import { useTurns } from "@/hooks/useTurns";
@@ -418,7 +420,15 @@ export default function Home() {
   const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [draftCommand, setDraftCommand] = useState("");
   const [activeView, setActiveView] = useState<
-    "chat" | "wheel" | "events" | "mcp" | "context" | "hooks" | "memory" | null
+    | "chat"
+    | "wheel"
+    | "events"
+    | "mcp"
+    | "context"
+    | "hooks"
+    | "memory"
+    | "notifications"
+    | null
   >(null);
   const canvasId = useCanvasStore((state) => state.canvasId);
   const nodes = useCanvasStore((state) => state.nodes);
@@ -437,6 +447,9 @@ export default function Home() {
   const conversationScope = useConversationStore((state) => state.scope);
   const setNodeScope = useConversationStore((state) => state.setNodeScope);
   const setGlobalScope = useConversationStore((state) => state.setGlobalScope);
+  const enqueueNotificationToast = useNotificationsStore(
+    (state) => state.enqueueToastFromPayload
+  );
   const selectionIds = useMemo(
     () => getSelectionIds(selectedNodeIds, selectedNodeId),
     [selectedNodeIds, selectedNodeId]
@@ -579,6 +592,13 @@ export default function Home() {
         const jobCount = nodes.filter((node) => node.type === "job").length;
         return { x: 120, y: 80 + jobCount * 200, z: 0 };
       };
+
+      if (message.type === "notification") {
+        if (isRecord(message.payload)) {
+          enqueueNotificationToast(message.payload);
+        }
+        return;
+      }
 
       if (message.type === "job.progress" && message.payload) {
         const payload = asRecord(message.payload);
@@ -876,6 +896,7 @@ export default function Home() {
       selectNode,
       selectedNodeId,
       selectedNodeIds,
+      enqueueNotificationToast,
     ]
   );
 
@@ -956,6 +977,7 @@ export default function Home() {
   const isContextOpen = activeView === "context";
   const isHooksOpen = activeView === "hooks";
   const isMemoryOpen = activeView === "memory";
+  const isNotificationsOpen = activeView === "notifications";
 
   const wheelFilters = useViewFiltersStore((state) => state.wheel);
   const eventsFilters = useViewFiltersStore((state) => state.events);
@@ -1635,7 +1657,15 @@ export default function Home() {
   };
 
   const handleViewToggle = (
-    view: "chat" | "wheel" | "events" | "mcp" | "context" | "hooks" | "memory"
+    view:
+      | "chat"
+      | "wheel"
+      | "events"
+      | "mcp"
+      | "context"
+      | "hooks"
+      | "memory"
+      | "notifications"
   ) => {
     setActiveView((prev) => (prev === view ? null : view));
   };
@@ -1672,6 +1702,10 @@ export default function Home() {
 
   const hooksPanel = isHooksOpen ? (
     <HooksPanel id="hooks-panel" />
+  ) : null;
+
+  const notificationsPanel = isNotificationsOpen ? (
+    <NotificationsPanel id="notifications-panel" />
   ) : null;
 
   const memoryPanel = isMemoryOpen ? (
@@ -1719,9 +1753,11 @@ export default function Home() {
         : isWheelOpen
           ? wheelPanel
           : isEventsOpen
-            ? eventsPanel
-            : isHooksOpen
-              ? hooksPanel
+          ? eventsPanel
+          : isHooksOpen
+            ? hooksPanel
+            : isNotificationsOpen
+              ? notificationsPanel
             : null;
 
   const panelContent =
@@ -1779,6 +1815,7 @@ export default function Home() {
           </div>
         )}
       </Canvas>
+      <NotificationToasts />
       <OfflineQueuePanel
         connectionState={wsConnectionState}
         queuedEvents={queuedEvents}
@@ -1836,6 +1873,12 @@ export default function Home() {
             isOpen: isEventsOpen,
             onToggle: () => handleViewToggle("events"),
             ariaControls: "events-view-panel",
+          },
+          {
+            label: "Notifications",
+            isOpen: isNotificationsOpen,
+            onToggle: () => handleViewToggle("notifications"),
+            ariaControls: "notifications-panel",
           },
           {
             label: "Hooks",
