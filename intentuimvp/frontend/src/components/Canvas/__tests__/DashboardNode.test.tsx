@@ -237,7 +237,13 @@ describe("DashboardNode", () => {
     expect(screen.getByText("Poll interval (ms)")).toBeInTheDocument();
   });
 
-  it("clears polling interval when unmounted", () => {
+  it("clears polling interval when unmounted", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "application/json" }),
+      json: vi.fn().mockResolvedValue({}),
+      text: vi.fn().mockResolvedValue("{}"),
+    } as unknown as Response);
     const setIntervalSpy = vi.spyOn(window, "setInterval");
     const clearIntervalSpy = vi.spyOn(window, "clearInterval");
 
@@ -251,25 +257,43 @@ describe("DashboardNode", () => {
           z: 0,
           title: "Dashboard",
           metadata: {
-            dashboardConfig: { type: "api", pollIntervalMs: 5000, endpoint: "" },
+            dashboardConfig: {
+              type: "api",
+              pollIntervalMs: 5000,
+              endpoint: "https://example.com/metrics",
+            },
           },
         },
       ],
     });
 
-    const { unmount } = render(<DashboardNode nodeId="dash" />);
+    let renderResult: ReturnType<typeof render> | null = null;
+    await act(async () => {
+      renderResult = render(<DashboardNode nodeId="dash" />);
+      await Promise.resolve();
+    });
+    if (!renderResult) {
+      throw new Error("Expected render to return a result");
+    }
 
     expect(setIntervalSpy).toHaveBeenCalled();
 
-    unmount();
+    renderResult.unmount();
 
     expect(clearIntervalSpy).toHaveBeenCalled();
 
+    fetchSpy.mockRestore();
     setIntervalSpy.mockRestore();
     clearIntervalSpy.mockRestore();
   });
 
-  it("uses the configured poll interval for external polling", () => {
+  it("uses the configured poll interval for external polling", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      headers: new Headers({ "content-type": "application/json" }),
+      json: vi.fn().mockResolvedValue({}),
+      text: vi.fn().mockResolvedValue("{}"),
+    } as unknown as Response);
     const setIntervalSpy = vi.spyOn(window, "setInterval");
 
     useCanvasStore.setState({
@@ -282,16 +306,24 @@ describe("DashboardNode", () => {
           z: 0,
           title: "Dashboard",
           metadata: {
-            dashboardConfig: { type: "api", pollIntervalMs: 12000, endpoint: "" },
+            dashboardConfig: {
+              type: "api",
+              pollIntervalMs: 12000,
+              endpoint: "https://example.com/metrics",
+            },
           },
         },
       ],
     });
 
-    render(<DashboardNode nodeId="dash" />);
+    await act(async () => {
+      render(<DashboardNode nodeId="dash" />);
+      await Promise.resolve();
+    });
 
     expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 12000);
 
+    fetchSpy.mockRestore();
     setIntervalSpy.mockRestore();
   });
 });
