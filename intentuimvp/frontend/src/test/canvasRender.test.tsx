@@ -104,6 +104,13 @@ describe('workspace canvas', () => {
     });
   };
 
+  const waitForCanvasReady = async () => {
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByTestId('canvas-container')).toBeInTheDocument()
+    );
+  };
+
   beforeEach(() => {
     consoleErrorSpies = [];
     const consoleTargets = new Set([console]);
@@ -173,7 +180,7 @@ describe('workspace canvas', () => {
   it('renders the canvas container on initial load', async () => {
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     expect(screen.getByTestId('canvas-container')).toBeInTheDocument();
   });
@@ -181,7 +188,7 @@ describe('workspace canvas', () => {
   it('shows an empty state message for first-time users', async () => {
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     expect(screen.getByTestId('empty-canvas-state')).toBeInTheDocument();
     expect(screen.getByText('Your canvas is empty')).toBeInTheDocument();
@@ -190,7 +197,7 @@ describe('workspace canvas', () => {
   it('renders the floating command input', async () => {
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     expect(screen.getByRole('textbox', { name: /command input/i })).toBeInTheDocument();
   });
@@ -198,7 +205,8 @@ describe('workspace canvas', () => {
   it('closes view panels when the close-all command is submitted', async () => {
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
+    await waitFor(() => expect(wsMessageHandler.current).toBeDefined());
 
     const chatToggle = screen.getByRole('button', { name: 'Chat' });
     fireEvent.click(chatToggle);
@@ -217,7 +225,8 @@ describe('workspace canvas', () => {
   it('opens the chat panel from a show chat command without routing', async () => {
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
+    await waitFor(() => expect(wsMessageHandler.current).toBeDefined());
 
     const commandInput = screen.getByRole('textbox', { name: /command input/i });
     fireEvent.change(commandInput, { target: { value: 'show chat' } });
@@ -234,7 +243,8 @@ describe('workspace canvas', () => {
   it('clears selection when the clear selection command is submitted', async () => {
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
+    await waitFor(() => expect(wsMessageHandler.current).toBeDefined());
 
     act(() => {
       useCanvasStore.setState({
@@ -286,7 +296,8 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
+    await waitFor(() => expect(wsMessageHandler.current).toBeDefined());
 
     const commandInput = screen.getByRole('textbox', { name: /command input/i });
     fireEvent.change(commandInput, { target: { value: 'Outline next sprint' } });
@@ -340,7 +351,8 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
+    await waitFor(() => expect(wsMessageHandler.current).toBeDefined());
 
     const commandInput = screen.getByRole('textbox', { name: /command input/i });
     fireEvent.change(commandInput, { target: { value: '/plan Build Q1 roadmap' } });
@@ -395,7 +407,8 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
+    await waitFor(() => expect(wsMessageHandler.current).toBeDefined());
 
     const commandInput = screen.getByRole('textbox', { name: /command input/i });
     fireEvent.change(commandInput, { target: { value: '/dashboard Sales KPIs' } });
@@ -474,7 +487,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     const commandInput = screen.getByRole('textbox', { name: /command input/i });
     fireEvent.change(commandInput, { target: { value: 'Capture metrics' } });
@@ -533,7 +546,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     const commandInput = screen.getByRole('textbox', { name: /command input/i });
     fireEvent.change(commandInput, { target: { value: 'Capture metrics' } });
@@ -572,7 +585,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
     await waitFor(() => expect(draggableProps.current).not.toBeNull());
 
     expect(draggableProps.current?.scale).toBe(1.6);
@@ -586,7 +599,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     expect(screen.getByTestId('empty-canvas-state')).toBeInTheDocument();
   });
@@ -609,7 +622,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     expect(screen.queryByTestId('empty-canvas-state')).not.toBeInTheDocument();
   });
@@ -617,7 +630,7 @@ describe('workspace canvas', () => {
   it('pans the canvas with arrow keys when the workspace is focused', async () => {
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     const workspace = screen.getByRole('region', { name: /canvas workspace/i });
     workspace.focus();
@@ -630,7 +643,7 @@ describe('workspace canvas', () => {
   it('zooms the canvas with keyboard shortcuts', async () => {
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     const workspace = screen.getByRole('region', { name: /canvas workspace/i });
     workspace.focus();
@@ -658,7 +671,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     const node = screen.getByRole('button', { name: /first node text node/i });
     fireEvent.focus(node);
@@ -688,7 +701,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     const node = screen.getByRole('button', { name: /first node text node/i });
     expect(screen.queryByText('Hello world')).not.toBeInTheDocument();
@@ -723,7 +736,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     fireEvent.doubleClick(screen.getByText('First node'));
 
@@ -759,7 +772,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     const firstNode = screen.getByRole('button', { name: /first node text node/i });
     const secondNode = screen.getByRole('button', { name: /second node text node/i });
@@ -802,7 +815,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     const workspace = screen.getByTestId('canvas-workspace');
     const firstNode = screen.getByRole('button', { name: /first node text node/i });
@@ -857,7 +870,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     const workspace = screen.getByTestId('canvas-workspace');
     const firstNode = screen.getByRole('button', { name: /first node text node/i });
@@ -918,7 +931,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     const firstNode = screen.getByRole('button', { name: /first node text node/i });
     const secondNode = screen.getByRole('button', { name: /second node text node/i });
@@ -959,7 +972,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     const sourceNode = screen.getByRole('button', { name: /first node text node/i });
     fireEvent.contextMenu(sourceNode);
@@ -1016,7 +1029,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
 
     const sourceNode = screen.getByRole('button', { name: /first node text node/i });
     fireEvent.contextMenu(sourceNode);
@@ -1075,7 +1088,7 @@ describe('workspace canvas', () => {
 
     render(<Home />);
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitForCanvasReady();
     await waitFor(() => expect(useCanvasStore.getState().edges).toHaveLength(1));
 
     const sourceNode = screen.getByRole('button', { name: /first node text node/i });

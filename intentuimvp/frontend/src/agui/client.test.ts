@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { waitFor } from '@testing-library/react';
 import { AGUIClient } from './client';
 import { AGUI_PROTOCOL_VERSION, computeChecksum } from './protocol';
 
@@ -115,6 +116,12 @@ const flushMicrotasks = async (): Promise<void> => {
   }
 };
 
+const waitForSocketCount = async (count: number): Promise<void> => {
+  await waitFor(() => {
+    expect(MockWebSocket.instances.length).toBe(count);
+  });
+};
+
 const hasStateSyncRequest = (messages: string[]): boolean => {
   return messages.some((message) => {
     try {
@@ -144,6 +151,7 @@ describe('AGUIClient reconnection', () => {
   afterEach(() => {
     MockWebSocket.reset();
     global.WebSocket = OriginalWebSocket;
+    vi.useRealTimers();
   });
 
   it('reconnects with exponential backoff and caps at 30s', async () => {
@@ -236,6 +244,7 @@ describe('AGUIClient reconnection', () => {
 
 describe('AGUIClient outbound queue', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
     MockWebSocket.reset();
   });
@@ -255,6 +264,7 @@ describe('AGUIClient outbound queue', () => {
 
     client.connect();
     await flushMicrotasks();
+    await waitForSocketCount(1);
 
     const ws = MockWebSocket.instances[0];
 
@@ -297,6 +307,7 @@ describe('AGUIClient outbound queue', () => {
 
 describe('AGUIClient state sync', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
     MockWebSocket.reset();
   });
@@ -314,6 +325,7 @@ describe('AGUIClient state sync', () => {
 
     client.connect();
     await flushMicrotasks();
+    await waitForSocketCount(1);
 
     const snapshotState = { canvas: { nodes: { n1: { id: 'n1' } } } };
     const checksum = await computeChecksum(snapshotState);
@@ -346,6 +358,7 @@ describe('AGUIClient state sync', () => {
 
     client.connect();
     await flushMicrotasks();
+    await waitForSocketCount(1);
 
     const checksum = await computeChecksum([{ op: 'add', path: '/test', value: 'data' }]);
 
@@ -387,6 +400,7 @@ describe('AGUIClient state sync', () => {
 
     client.connect();
     await flushMicrotasks();
+    await waitForSocketCount(1);
 
     const checksum = await computeChecksum([{ op: 'add', path: '/test', value: 'data' }]);
 
@@ -456,6 +470,7 @@ describe('AGUIClient state sync', () => {
 
     client.connect();
     await flushMicrotasks();
+    await waitForSocketCount(1);
 
     const checksum = await computeChecksum([{ op: 'add', path: '/test', value: 'data' }]);
     const gapChecksum = await computeChecksum([{ op: 'add', path: '/test2', value: 'data2' }]);
@@ -496,10 +511,13 @@ describe('AGUIClient state sync', () => {
 
     ws.triggerMessage(JSON.stringify(update3));
     await flushMicrotasks();
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(snapshotRequest).toHaveBeenCalledWith({ lastSequence: 1 });
-    expect(client.getState().stateSync.lastSequence).toBe(2);
+    await waitFor(() => {
+      expect(snapshotRequest).toHaveBeenCalledWith({ lastSequence: 1 });
+    });
+    await waitFor(() => {
+      expect(client.getState().stateSync.lastSequence).toBe(2);
+    });
   });
 
   it('applies sequential state updates in order', async () => {
@@ -509,6 +527,7 @@ describe('AGUIClient state sync', () => {
 
     client.connect();
     await flushMicrotasks();
+    await waitForSocketCount(1);
 
     const checksum1 = await computeChecksum([{ op: 'add', path: '/key1', value: 'value1' }]);
     const checksum2 = await computeChecksum([{ op: 'add', path: '/key2', value: 'value2' }]);
@@ -606,6 +625,7 @@ describe('AGUIClient state sync', () => {
 
 describe('AGUIClient dashboard streaming', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
     MockWebSocket.reset();
   });
@@ -622,6 +642,7 @@ describe('AGUIClient dashboard streaming', () => {
 
     client.connect();
     await flushMicrotasks();
+    await waitForSocketCount(1);
 
     const handler = vi.fn();
     client.onDashboardUpdate(42, handler);
@@ -659,6 +680,7 @@ describe('AGUIClient dashboard streaming', () => {
 
     client.connect();
     await flushMicrotasks();
+    await waitForSocketCount(1);
 
     const handler = vi.fn();
     client.onDashboardSubscribed(7, handler);
@@ -692,6 +714,7 @@ describe('AGUIClient dashboard streaming', () => {
 
     client.connect();
     await flushMicrotasks();
+    await waitForSocketCount(1);
 
     client.subscribeToDashboard(12, 34);
 
