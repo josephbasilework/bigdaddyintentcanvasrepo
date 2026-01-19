@@ -41,12 +41,16 @@ const toMarker = (value: unknown): AudioMarker | null => {
   return { id, time, label };
 };
 
-const isAudioMarker = (value: AudioMarker | null): value is AudioMarker =>
-  value !== null;
-
 export const toMarkers = (value: unknown): AudioMarker[] => {
   if (!Array.isArray(value)) return [];
-  return value.map(toMarker).filter(isAudioMarker);
+  const markers: AudioMarker[] = [];
+  for (const entry of value) {
+    const marker = toMarker(entry);
+    if (marker) {
+      markers.push(marker);
+    }
+  }
+  return markers;
 };
 
 const formatDurationSeconds = (seconds: number): string => {
