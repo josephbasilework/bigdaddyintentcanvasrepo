@@ -9,6 +9,7 @@ interface ContextMenuProps {
   onEdit: () => void;
   onDelete: () => void;
   onDuplicate?: () => void;
+  onCreateContainer?: () => void;
   onConnect?: () => void;
   onAnnotate?: () => void;
   onEditDependencies?: () => void;
@@ -34,6 +35,7 @@ export function NodeContextMenu({
   onEdit,
   onDelete,
   onDuplicate,
+  onCreateContainer,
   onConnect,
   onAnnotate,
   onEditDependencies,
@@ -128,6 +130,11 @@ export function NodeContextMenu({
         {onDuplicate && (
           <MenuItem label="Duplicate node" onClick={() => handleAction(onDuplicate)}>
             📋 Duplicate
+          </MenuItem>
+        )}
+        {onCreateContainer && (
+          <MenuItem label="Create container" onClick={() => handleAction(onCreateContainer)}>
+            🧺 Create container
           </MenuItem>
         )}
         {onConnect && (

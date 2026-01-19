@@ -69,6 +69,13 @@ const STYLE_BY_TYPE: Record<string, NodeTypeStyle> = {
     shadowColor: "rgba(0, 0, 0, 0.3)",
     selectedShadowColor: "rgba(244, 114, 182, 0.3)",
   },
+  container: {
+    backgroundColor: "rgba(20, 30, 48, 0.6)",
+    borderColor: "rgba(148, 163, 184, 0.35)",
+    selectedBorderColor: "rgba(56, 189, 248, 0.8)",
+    shadowColor: "rgba(15, 23, 42, 0.3)",
+    selectedShadowColor: "rgba(56, 189, 248, 0.35)",
+  },
 };
 
 const buildBaseContext = (node: CanvasNode): NodeContext => ({
@@ -408,6 +415,26 @@ const BUILTIN_NODE_DEFINITIONS: NodeTypeDefinition<CanvasNode>[] = [
       label: "Job",
       description: "Background processing job.",
       buildDefaults: () => ({ title: "New job" }),
+    },
+  },
+  {
+    type: "container",
+    label: "Container",
+    description: "Group related nodes inside a collapsible container.",
+    icon: "🧺",
+    style: STYLE_BY_TYPE.container,
+    schema: {
+      fields: [
+        { key: "title", type: "string", required: true, description: "Container title." },
+        { key: "metadata.container.collapsed", type: "boolean", description: "Collapse children." },
+      ],
+    },
+    buildContext: buildBaseContext,
+    serialize: defaultSerialize,
+    creation: {
+      label: "Container",
+      description: "Organize nodes into a collapsible group.",
+      buildDefaults: () => ({ title: "New container" }),
     },
   },
 ];

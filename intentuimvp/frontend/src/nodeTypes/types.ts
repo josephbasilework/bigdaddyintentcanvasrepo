@@ -7,6 +7,7 @@ export const BUILTIN_NODE_TYPES = [
   "dag",
   "dashboard",
   "job",
+  "container",
 ] as const;
 
 export type BuiltinNodeType = (typeof BUILTIN_NODE_TYPES)[number];

@@ -8,6 +8,7 @@ import {
 import { setLastSyncedTurnSequence } from '../utils/turnSequence';
 import { serializeCanvasNode } from "../nodeTypes/registry";
 import type { CanvasNodeType } from "../nodeTypes/types";
+import { DEFAULT_NODE_DIMENSIONS, getNodeDimensions } from "../utils/nodeDimensions";
 import {
   computeLayoutPositions,
   type LayoutDirection,
@@ -15,6 +16,16 @@ import {
   type LayoutSpacing,
   type LayoutType,
 } from "../utils/layoutEngine";
+import {
+  buildHierarchyIndex,
+  findContainerParentId,
+  getDescendantIds,
+  getNodeOffset,
+  getNodeParentId,
+  isContainerNode,
+  updateContainerMetadata,
+  type ContainerMetadataUpdates,
+} from "../utils/canvasHierarchy";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const SESSION_ID_STORAGE_KEY = "intentui_workspace_session_id";
@@ -33,6 +44,7 @@ type CanvasActionContext = {
   source?: CanvasActionSource;
   log?: boolean;
   recordHistory?: boolean;
+  resolveContainerParent?: boolean;
 };
 
 /**
@@ -87,11 +99,6 @@ export interface CanvasNode {
   createdByTurnId?: number | null;
 }
 
-type NodeDimensions = {
-  width: number;
-  height: number;
-};
-
 export type { LayoutType, LayoutDirection };
 
 export type LayoutMetadata = {
@@ -109,24 +116,9 @@ export type LayoutRegionInfo = {
   direction?: LayoutDirection;
 };
 
-const DEFAULT_NODE_DIMENSIONS: NodeDimensions = { width: 240, height: 140 };
-const NODE_DIMENSIONS_BY_TYPE: Record<string, NodeDimensions> = {
-  text: { width: 240, height: 140 },
-  document: { width: 260, height: 160 },
-  audio: { width: 300, height: 180 },
-  graph: { width: 280, height: 170 },
-  plan: { width: 320, height: 200 },
-  dag: { width: 360, height: 220 },
-  dashboard: { width: 360, height: 220 },
-  job: { width: 300, height: 180 },
-};
-
 const AUTO_EXPAND_PADDING = 24;
 export const AUTO_EXPAND_ANIMATION_MS = 240;
 export const AUTO_LAYOUT_ANIMATION_MS = 320;
-
-const getNodeDimensions = (node: { type: CanvasNodeType }): NodeDimensions =>
-  NODE_DIMENSIONS_BY_TYPE[node.type] ?? DEFAULT_NODE_DIMENSIONS;
 
 const LAYOUT_PADDING: LayoutSpacing = { x: 80, y: 60 };
 const LAYOUT_TYPE_VALUES: Set<LayoutType> = new Set([
@@ -320,10 +312,36 @@ const resolveAutoExpansion = (
   nodes: CanvasNode[],
   newNode: CanvasNode
 ): { nodes: CanvasNode[]; didExpand: boolean } => {
+  if (newNode.type === "container") {
+    return { nodes, didExpand: false };
+  }
+  const parentById = new Map(nodes.map((node) => [node.id, getNodeParentId(node)]));
+  const shouldSkipExpansion = (existingNodeId: string): boolean => {
+    const parentId = getNodeParentId(newNode);
+    if (!parentId) {
+      return false;
+    }
+    let current: string | null = parentId;
+    const visited = new Set<string>();
+    while (current) {
+      if (visited.has(current)) {
+        break;
+      }
+      visited.add(current);
+      if (current === existingNodeId) {
+        return true;
+      }
+      current = parentById.get(current) ?? null;
+    }
+    return false;
+  };
   const newBounds = buildNodeBounds(newNode);
   let didExpand = false;
 
   const expandedNodes = nodes.map((node) => {
+    if (shouldSkipExpansion(node.id)) {
+      return node;
+    }
     const bounds = buildNodeBounds(node);
     if (!boundsOverlap(newBounds, bounds)) {
       return node;
@@ -552,6 +570,33 @@ const extractSequenceNumber = (payload: unknown): number | null => {
   return null;
 };
 
+const ensureContainerOffsets = (nodes: CanvasNode[]): CanvasNode[] => {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  let didUpdate = false;
+  const nextNodes = nodes.map((node) => {
+    const parentId = getNodeParentId(node);
+    if (!parentId) {
+      return node;
+    }
+    if (getNodeOffset(node)) {
+      return node;
+    }
+    const parent = nodeById.get(parentId);
+    if (!parent) {
+      return node;
+    }
+    didUpdate = true;
+    return {
+      ...node,
+      metadata: updateContainerMetadata(node.metadata, {
+        offset: { x: node.x - parent.x, y: node.y - parent.y },
+      }),
+    };
+  });
+
+  return didUpdate ? nextNodes : nodes;
+};
+
 const logCanvasAction = (
   action: CanvasActionType,
   payload: Record<string, unknown>,
@@ -767,10 +812,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     addNode: (node, context) => {
       const { recordHistory, shouldLog } = resolveActionContext(context);
       const id = node.id ?? `node-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      const newNode: CanvasNode = {
+      let newNode: CanvasNode = {
         ...node,
         id,
       };
+      const parentId = getNodeParentId(newNode);
+      if (parentId && !getNodeOffset(newNode)) {
+        const parentNode = get().nodes.find((existing) => existing.id === parentId);
+        if (parentNode) {
+          newNode = {
+            ...newNode,
+            metadata: updateContainerMetadata(newNode.metadata, {
+              offset: { x: newNode.x - parentNode.x, y: newNode.y - parentNode.y },
+            }),
+          };
+        }
+      }
       let didExpand = false;
       applyUpdate((state) => {
         const expansion = resolveAutoExpansion(state.nodes, newNode);
@@ -831,8 +888,22 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
         if (nextSelectedNodeId === nodeId) {
           nextSelectedNodeId = nextSelectedIds.length > 0 ? nextSelectedIds[0] : null;
         }
+        const nextNodes = state.nodes
+          .filter((node) => node.id !== nodeId)
+          .map((node) => {
+            if (getNodeParentId(node) !== nodeId) {
+              return node;
+            }
+            return {
+              ...node,
+              metadata: updateContainerMetadata(node.metadata, {
+                parentId: null,
+                offset: null,
+              }),
+            };
+          });
         return {
-          nodes: state.nodes.filter((node) => node.id !== nodeId),
+          nodes: nextNodes,
           edges: state.edges.filter(
             (edge) => edge.sourceNodeId !== nodeId && edge.targetNodeId !== nodeId
           ),
@@ -875,8 +946,23 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
         if (!nextSelectedNodeId && nextSelectedIds.length > 0) {
           nextSelectedNodeId = nextSelectedIds[0];
         }
+        const nextNodes = state.nodes
+          .filter((node) => !idsToRemove.has(node.id))
+          .map((node) => {
+            const parentId = getNodeParentId(node);
+            if (!parentId || !idsToRemove.has(parentId)) {
+              return node;
+            }
+            return {
+              ...node,
+              metadata: updateContainerMetadata(node.metadata, {
+                parentId: null,
+                offset: null,
+              }),
+            };
+          });
         return {
-          nodes: state.nodes.filter((node) => !idsToRemove.has(node.id)),
+          nodes: nextNodes,
           edges: state.edges.filter(
             (edge) => !idsToRemove.has(edge.sourceNodeId) && !idsToRemove.has(edge.targetNodeId)
           ),
@@ -907,22 +993,87 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
     updateNodePosition: (nodeId, x, y, z, context) => {
       const { recordHistory, shouldLog } = resolveActionContext(context);
       const existingNode = get().nodes.find((node) => node.id === nodeId);
+      if (!existingNode) {
+        return;
+      }
+      const nodes = get().nodes;
       const nextZ = z ?? existingNode?.z ?? 0;
+      const dx = x - existingNode.x;
+      const dy = y - existingNode.y;
+      const parentId = getNodeParentId(existingNode);
+      let resolvedParentId = parentId;
+      let resolvedParentNode = parentId
+        ? nodes.find((node) => node.id === parentId)
+        : null;
+      let metadataUpdates: ContainerMetadataUpdates | null = null;
+
+      if (context?.resolveContainerParent) {
+        const candidateNode = { ...existingNode, x, y, z: nextZ };
+        resolvedParentId = findContainerParentId(candidateNode, nodes);
+        resolvedParentNode = resolvedParentId
+          ? nodes.find((node) => node.id === resolvedParentId)
+          : null;
+        metadataUpdates = {
+          parentId: resolvedParentId ?? null,
+          offset: resolvedParentNode
+            ? { x: x - resolvedParentNode.x, y: y - resolvedParentNode.y }
+            : null,
+        };
+      } else if (resolvedParentNode) {
+        metadataUpdates = {
+          offset: { x: x - resolvedParentNode.x, y: y - resolvedParentNode.y },
+        };
+      }
+
+      const nextMetadata = metadataUpdates
+        ? updateContainerMetadata(existingNode.metadata, metadataUpdates)
+        : existingNode.metadata;
+      const descendants = isContainerNode(existingNode)
+        ? new Set(getDescendantIds(nodeId, buildHierarchyIndex(nodes)))
+        : null;
+
       applyUpdate((state) => ({
-        nodes: state.nodes.map((node) =>
-          node.id === nodeId
-            ? { ...node, x, y, ...(z !== undefined && { z }) }
-            : node
-        ),
+        nodes: state.nodes.map((node) => {
+          if (node.id === nodeId) {
+            return {
+              ...node,
+              x,
+              y,
+              ...(z !== undefined && { z }),
+              ...(metadataUpdates ? { metadata: nextMetadata } : {}),
+            };
+          }
+          if (descendants && descendants.has(node.id)) {
+            return {
+              ...node,
+              x: node.x + dx,
+              y: node.y + dy,
+            };
+          }
+          return node;
+        }),
       }), recordHistory);
       if (shouldLog && existingNode) {
-        const nextNode = { ...existingNode, x, y, z: nextZ };
+        const nextNode = metadataUpdates
+          ? { ...existingNode, x, y, z: nextZ, metadata: nextMetadata }
+          : { ...existingNode, x, y, z: nextZ };
         logCanvasAction(
           "node_updated",
           {
             node: buildNodePayload(nextNode),
-            updates: { position: { x, y, z: nextZ }, x, y, z: nextZ },
-            previous: { x: existingNode.x, y: existingNode.y, z: existingNode.z },
+            updates: {
+              position: { x, y, z: nextZ },
+              x,
+              y,
+              z: nextZ,
+              ...(metadataUpdates ? { metadata: nextMetadata } : {}),
+            },
+            previous: {
+              x: existingNode.x,
+              y: existingNode.y,
+              z: existingNode.z,
+              ...(metadataUpdates ? { metadata: existingNode.metadata } : {}),
+            },
           },
           { summary: "Node moved", workspaceId: get().canvasId }
         );
@@ -1165,9 +1316,10 @@ export const useCanvasStore = create<CanvasState>((set, get) => {
 
     // Set all nodes (for bulk loading) - doesn't record history
     setNodes: (nodes) => {
+      const normalizedNodes = ensureContainerOffsets(nodes);
       set((state) => ({
-        nodes,
-        documents: syncDocumentsWithNodes(nodes, state.documents),
+        nodes: normalizedNodes,
+        documents: syncDocumentsWithNodes(normalizedNodes, state.documents),
       }));
     },
 

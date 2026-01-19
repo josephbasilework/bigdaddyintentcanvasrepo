@@ -276,7 +276,13 @@ export function Edge({ edge, sourceNode, targetNode, onAnnotate }: EdgeProps) {
  * Uses an SVG overlay to draw connections between nodes.
  * Edges are rendered below nodes (z-index wise) so nodes appear on top.
  */
-export function EdgesLayer({ onAnnotate }: { onAnnotate?: (edgeId: string) => void }) {
+export function EdgesLayer({
+  onAnnotate,
+  hiddenNodeIds,
+}: {
+  onAnnotate?: (edgeId: string) => void;
+  hiddenNodeIds?: Set<string>;
+}) {
   const { edges, nodes } = useCanvasStore();
 
   // Create a map of nodes for quick lookup
@@ -288,10 +294,16 @@ export function EdgesLayer({ onAnnotate }: { onAnnotate?: (edgeId: string) => vo
 
   // Filter edges to only those where both nodes exist
   const validEdges = useMemo(() => {
-    return edges.filter(
-      (edge) => nodeMap.has(edge.sourceNodeId) && nodeMap.has(edge.targetNodeId)
-    );
-  }, [edges, nodeMap]);
+    return edges.filter((edge) => {
+      if (!nodeMap.has(edge.sourceNodeId) || !nodeMap.has(edge.targetNodeId)) {
+        return false;
+      }
+      if (hiddenNodeIds?.has(edge.sourceNodeId) || hiddenNodeIds?.has(edge.targetNodeId)) {
+        return false;
+      }
+      return true;
+    });
+  }, [edges, hiddenNodeIds, nodeMap]);
 
   if (validEdges.length === 0) {
     return null;

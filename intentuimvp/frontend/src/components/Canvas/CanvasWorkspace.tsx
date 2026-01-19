@@ -34,6 +34,12 @@ import {
 } from "../../utils/dependencyCycles";
 import { useAutoSave } from "../../hooks/useAutoSave";
 import { SaveStatusIndicator } from "./SaveStatusIndicator";
+import {
+  buildHierarchyIndex,
+  buildHiddenNodeSet,
+  getNodeDepth,
+  isContainerNode,
+} from "../../utils/canvasHierarchy";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -545,6 +551,31 @@ export function CanvasWorkspace() {
     width: number;
     height: number;
   } | null>(null);
+  const hierarchyIndex = useMemo(() => buildHierarchyIndex(nodes), [nodes]);
+  const hiddenNodeIds = useMemo(
+    () => buildHiddenNodeSet(nodes, hierarchyIndex),
+    [nodes, hierarchyIndex]
+  );
+  const visibleNodes = useMemo(
+    () => nodes.filter((node) => !hiddenNodeIds.has(node.id)),
+    [nodes, hiddenNodeIds]
+  );
+  const orderedNodes = useMemo(() => {
+    const parentById = hierarchyIndex.parentById;
+    return [...visibleNodes].sort((a, b) => {
+      const depthA = getNodeDepth(a.id, parentById);
+      const depthB = getNodeDepth(b.id, parentById);
+      if (depthA !== depthB) {
+        return depthA - depthB;
+      }
+      const aContainer = isContainerNode(a);
+      const bContainer = isContainerNode(b);
+      if (aContainer !== bContainer) {
+        return aContainer ? -1 : 1;
+      }
+      return a.z - b.z;
+    });
+  }, [hierarchyIndex.parentById, visibleNodes]);
 
   const scheduleSkipClickReset = useCallback(() => {
     if (typeof window === "undefined") {
@@ -1324,8 +1355,8 @@ export function CanvasWorkspace() {
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {loadStatusMessage}
       </div>
-      <EdgesLayer onAnnotate={handleAnnotateEdge} />
-      {nodes.map((node) => (
+      <EdgesLayer onAnnotate={handleAnnotateEdge} hiddenNodeIds={hiddenNodeIds} />
+      {orderedNodes.map((node) => (
         <Node
           key={node.id}
           node={node}

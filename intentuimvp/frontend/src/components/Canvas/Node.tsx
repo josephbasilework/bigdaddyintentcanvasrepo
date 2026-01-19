@@ -33,6 +33,18 @@ import {
   type CalendarSyncCandidate,
 } from "../../utils/calendarSync";
 import { getNodeTypeDefinition, type NodeRendererProps } from "../../nodeTypes";
+import { getNodeDimensions } from "../../utils/nodeDimensions";
+import {
+  DEFAULT_CONTAINER_HEADER_HEIGHT,
+  DEFAULT_CONTAINER_PADDING,
+  buildContainerFrame,
+  computeNodesBounds,
+  getContainerSize,
+  getNodeParentId,
+  isContainerCollapsed,
+  isContainerNode,
+  updateContainerMetadata,
+} from "../../utils/canvasHierarchy";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -100,6 +112,7 @@ export function Node({
   const showCalendarSyncButton = isSelected && hasCalendarSuggestions;
   const isTextNode = node.type === "text";
   const isDocumentNode = node.type === "document";
+  const isContainerNodeType = isContainerNode(node);
   const nodeTypeDefinition = getNodeTypeDefinition(node.type);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -155,6 +168,21 @@ export function Node({
     metadataKeys.length > 0 ? `Metadata keys: ${metadataKeys.join(", ")}.` : null,
   ].filter(Boolean);
   const descriptionText = descriptionParts.join(" ");
+  const selectionIds = selectedNodeIds.length > 0
+    ? selectedNodeIds
+    : selectedNodeId
+      ? [selectedNodeId]
+      : [];
+  const containerChildren = useMemo(
+    () => allNodes.filter((candidate) => getNodeParentId(candidate) === node.id),
+    [allNodes, node.id]
+  );
+  const containerChildCount = containerChildren.length;
+  const containerCollapsed = isContainerNodeType && isContainerCollapsed(node);
+  const containerSize = isContainerNodeType
+    ? getContainerSize(node) ?? getNodeDimensions({ type: node.type })
+    : null;
+  const canCreateContainer = selectionIds.length > 1 && selectionIds.includes(node.id);
 
 
   const handleDragStart = () => {
@@ -171,7 +199,10 @@ export function Node({
 
   const handleDragStop = (e: unknown, data: DraggableData) => {
     // Final position update when drag stops
-    updateNodePosition(node.id, data.x, data.y, undefined, { log: true });
+    updateNodePosition(node.id, data.x, data.y, undefined, {
+      log: true,
+      resolveContainerParent: true,
+    });
     setIsDragging(false);
   };
 
@@ -334,6 +365,17 @@ export function Node({
     [handleContentClose, isExpanded, openExpanded]
   );
 
+  const handleContainerToggle = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      const nextCollapsed = !containerCollapsed;
+      updateNode(node.id, {
+        metadata: updateContainerMetadata(node.metadata, { collapsed: nextCollapsed }),
+      });
+    },
+    [containerCollapsed, node.id, node.metadata, updateNode]
+  );
+
   const handleDocumentOpen = useCallback((event?: React.MouseEvent<HTMLButtonElement>) => {
     if (event) {
       event.stopPropagation();
@@ -400,6 +442,58 @@ export function Node({
       metadata: node.metadata,
     };
     addNode(newNode);
+  };
+
+  const handleCreateContainer = () => {
+    if (!canCreateContainer) return;
+    const selectedNodes = allNodes.filter((candidate) => selectionIds.includes(candidate.id));
+    const bounds = computeNodesBounds(selectedNodes);
+    if (!bounds) {
+      return;
+    }
+    const minSize = getNodeDimensions({ type: "container" });
+    const frame = buildContainerFrame(bounds, {
+      padding: DEFAULT_CONTAINER_PADDING,
+      headerHeight: DEFAULT_CONTAINER_HEADER_HEIGHT,
+      minSize,
+    });
+    const parentIds = new Set(
+      selectedNodes.map((candidate) => getNodeParentId(candidate)).filter(Boolean)
+    );
+    const commonParentId = parentIds.size === 1 ? Array.from(parentIds)[0] : null;
+    const parentNode = commonParentId
+      ? allNodes.find((candidate) => candidate.id === commonParentId)
+      : null;
+    const containerMetadata = updateContainerMetadata(undefined, {
+      collapsed: false,
+      padding: DEFAULT_CONTAINER_PADDING,
+      size: { width: frame.width, height: frame.height },
+      ...(commonParentId && parentNode
+        ? {
+            parentId: commonParentId,
+            offset: { x: frame.x - parentNode.x, y: frame.y - parentNode.y },
+          }
+        : {}),
+    });
+    const minZ = Math.min(...selectedNodes.map((candidate) => candidate.z ?? 0), 0);
+    const containerId = addNode({
+      type: "container",
+      x: frame.x,
+      y: frame.y,
+      z: minZ - 1,
+      title: "New container",
+      metadata: containerMetadata,
+    });
+    selectedNodes.forEach((child) => {
+      const offset = { x: child.x - frame.x, y: child.y - frame.y };
+      updateNode(child.id, {
+        metadata: updateContainerMetadata(child.metadata, {
+          parentId: containerId,
+          offset,
+        }),
+      });
+    });
+    selectNode(containerId);
   };
 
   const handleCancelDelete = () => {
@@ -725,14 +819,23 @@ export function Node({
       userSelect: "none",
       transition,
     };
-
+    const containerStyle: CSSProperties =
+      isContainerNodeType && containerSize
+        ? {
+            ...baseStyle,
+            width: `${containerSize.width}px`,
+            height: `${containerSize.height}px`,
+            maxWidth: "none",
+            boxSizing: "border-box",
+          }
+        : baseStyle;
     const nodeStyle = nodeTypeDefinition.style;
     if (!nodeStyle) {
-      return baseStyle;
+      return containerStyle;
     }
 
     return {
-      ...baseStyle,
+      ...containerStyle,
       backgroundColor: nodeStyle.backgroundColor,
       border: isSelected
         ? `2px solid ${nodeStyle.selectedBorderColor}`
@@ -740,12 +843,25 @@ export function Node({
       boxShadow: isSelected
         ? `0 0 20px ${nodeStyle.selectedShadowColor}`
         : `0 4px 6px ${nodeStyle.shadowColor}`,
+      ...(isContainerNodeType ? { borderStyle: "dashed" } : {}),
     };
   };
 
   const getIconForType = () => nodeTypeDefinition.icon ?? "📦";
 
   const renderDefaultContent = () => {
+    if (isContainerNodeType) {
+      return (
+        <div style={{ fontSize: "12px", color: "#94a3b8" }}>
+          {containerChildCount > 0
+            ? `${containerChildCount} node${containerChildCount === 1 ? "" : "s"} ${
+                containerCollapsed ? "hidden" : "inside"
+              }`
+            : "Add nodes to organize them here."}
+        </div>
+      );
+    }
+
     if (isDocumentNode) {
       return documentPreview ? (
         <div
@@ -995,6 +1111,28 @@ export function Node({
                 {isExpanded ? "Collapse" : "Expand"}
               </button>
             )}
+            {isContainerNodeType && (
+              <button
+                type="button"
+                onClick={handleContainerToggle}
+                onMouseDown={(event) => event.stopPropagation()}
+                onTouchStart={(event) => event.stopPropagation()}
+                aria-label={`${containerCollapsed ? "Expand" : "Collapse"} ${node.title}`}
+                className="canvas-node__button"
+                style={{
+                  border: "1px solid rgba(148, 163, 184, 0.5)",
+                  backgroundColor: "rgba(15, 23, 42, 0.6)",
+                  color: "#e2e8f0",
+                  borderRadius: "999px",
+                  padding: "4px 10px",
+                  fontSize: "11px",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {containerCollapsed ? "Expand" : "Collapse"}
+              </button>
+            )}
             {isDocumentNode && (
               <button
                 type="button"
@@ -1115,6 +1253,7 @@ export function Node({
           onEdit={handleEdit}
           onDelete={handleDelete}
           onDuplicate={handleDuplicate}
+          onCreateContainer={canCreateContainer ? handleCreateContainer : undefined}
           onConnect={onStartConnect ? handleConnect : undefined}
           onAnnotate={node.type === "graph" ? handleEditAnnotation : undefined}
           onEditDependencies={handleEditDependencies}

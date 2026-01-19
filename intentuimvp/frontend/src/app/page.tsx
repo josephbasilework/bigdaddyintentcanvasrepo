@@ -56,6 +56,11 @@ import {
 import { setLastSyncedTurnSequence } from "@/utils/turnSequence";
 import { buildNodeContextFromNode, resolveNodeTypeId } from "@/nodeTypes";
 import { normalizeEdgeRelationType } from "@/components/Canvas/edgeRelations";
+import {
+  buildHierarchyIndex,
+  getDescendantIds,
+  isContainerNode,
+} from "@/utils/canvasHierarchy";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -131,7 +136,24 @@ const buildNodeContext = (
     return [];
   }
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  return selectionIds
+  const hierarchyIndex = buildHierarchyIndex(nodes);
+  const expandedIds: string[] = [];
+  const seen = new Set<string>();
+  const pushId = (id: string) => {
+    if (seen.has(id)) return;
+    seen.add(id);
+    expandedIds.push(id);
+  };
+
+  selectionIds.forEach((id) => {
+    pushId(id);
+    const node = nodeById.get(id);
+    if (node && isContainerNode(node)) {
+      getDescendantIds(id, hierarchyIndex).forEach((childId) => pushId(childId));
+    }
+  });
+
+  return expandedIds
     .map((id) => {
       const node = nodeById.get(id);
       if (!node) return null;

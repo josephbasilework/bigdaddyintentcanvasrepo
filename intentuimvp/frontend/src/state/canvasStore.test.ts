@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useCanvasStore } from './canvasStore';
+import { getContainerMetadata, updateContainerMetadata } from '../utils/canvasHierarchy';
 
 describe('canvasStore', () => {
   // Reset store state before each test
@@ -401,6 +402,199 @@ describe('canvasStore', () => {
       const node2 = result.current.nodes.find((n) => n.id === nodeId2);
       expect(node2?.x).toBe(100);
       expect(node2?.y).toBe(100);
+    });
+
+    it('moves container descendants when dragging a container', () => {
+      const { result } = renderHook(() => useCanvasStore());
+      let containerId = '';
+      let childId = '';
+
+      act(() => {
+        containerId = result.current.addNode({
+          type: 'container',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Container',
+        });
+        childId = result.current.addNode({
+          type: 'text',
+          x: 20,
+          y: 30,
+          z: 1,
+          title: 'Child',
+          metadata: updateContainerMetadata(undefined, {
+            parentId: containerId,
+            offset: { x: 20, y: 30 },
+          }),
+        });
+      });
+
+      act(() => {
+        result.current.updateNodePosition(containerId, 100, 120);
+      });
+
+      const child = useCanvasStore.getState().nodes.find((n) => n.id === childId);
+      expect(child?.x).toBe(120);
+      expect(child?.y).toBe(150);
+      const metadata = child?.metadata ? getContainerMetadata(child.metadata) : {};
+      expect(metadata.offset).toEqual({ x: 20, y: 30 });
+    });
+
+    it('updates child offset metadata when moving a child node', () => {
+      const { result } = renderHook(() => useCanvasStore());
+      let containerId = '';
+      let childId = '';
+
+      act(() => {
+        containerId = result.current.addNode({
+          type: 'container',
+          x: 10,
+          y: 15,
+          z: 0,
+          title: 'Container',
+        });
+        childId = result.current.addNode({
+          type: 'text',
+          x: 25,
+          y: 40,
+          z: 1,
+          title: 'Child',
+          metadata: updateContainerMetadata(undefined, {
+            parentId: containerId,
+            offset: { x: 15, y: 25 },
+          }),
+        });
+      });
+
+      act(() => {
+        result.current.updateNodePosition(childId, 60, 80);
+      });
+
+      const child = useCanvasStore.getState().nodes.find((n) => n.id === childId);
+      const metadata = child?.metadata ? getContainerMetadata(child.metadata) : {};
+      expect(metadata.offset).toEqual({ x: 50, y: 65 });
+    });
+
+    it('assigns a container parent when dropped inside a container', () => {
+      const { result } = renderHook(() => useCanvasStore());
+      let containerId = '';
+      let nodeId = '';
+
+      act(() => {
+        containerId = result.current.addNode({
+          type: 'container',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Container',
+        });
+        nodeId = result.current.addNode({
+          type: 'text',
+          x: 500,
+          y: 500,
+          z: 1,
+          title: 'Child',
+        });
+      });
+
+      act(() => {
+        result.current.updateNodePosition(nodeId, 40, 40, undefined, {
+          resolveContainerParent: true,
+        });
+      });
+
+      const child = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
+      const metadata = child?.metadata ? getContainerMetadata(child.metadata) : {};
+      expect(metadata.parentId).toBe(containerId);
+      expect(metadata.offset).toEqual({ x: 40, y: 40 });
+    });
+
+    it('clears container parent when dropped outside containers', () => {
+      const { result } = renderHook(() => useCanvasStore());
+      let containerId = '';
+      let nodeId = '';
+
+      act(() => {
+        containerId = result.current.addNode({
+          type: 'container',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Container',
+        });
+        nodeId = result.current.addNode({
+          type: 'text',
+          x: 20,
+          y: 30,
+          z: 1,
+          title: 'Child',
+          metadata: updateContainerMetadata(undefined, {
+            parentId: containerId,
+            offset: { x: 20, y: 30 },
+          }),
+        });
+      });
+
+      act(() => {
+        result.current.updateNodePosition(nodeId, 500, 500, undefined, {
+          resolveContainerParent: true,
+        });
+      });
+
+      const child = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
+      const metadata = child?.metadata ? getContainerMetadata(child.metadata) : {};
+      expect(metadata.parentId).toBeUndefined();
+      expect(metadata.offset).toBeUndefined();
+    });
+
+    it('prefers the deepest container when nested containers overlap', () => {
+      const { result } = renderHook(() => useCanvasStore());
+      let outerId = '';
+      let innerId = '';
+      let nodeId = '';
+
+      act(() => {
+        outerId = result.current.addNode({
+          type: 'container',
+          x: 0,
+          y: 0,
+          z: 0,
+          title: 'Outer',
+          metadata: updateContainerMetadata(undefined, {
+            size: { width: 500, height: 400 },
+          }),
+        });
+        innerId = result.current.addNode({
+          type: 'container',
+          x: 50,
+          y: 50,
+          z: 1,
+          title: 'Inner',
+          metadata: updateContainerMetadata(undefined, {
+            parentId: outerId,
+            offset: { x: 50, y: 50 },
+            size: { width: 200, height: 200 },
+          }),
+        });
+        nodeId = result.current.addNode({
+          type: 'text',
+          x: 600,
+          y: 600,
+          z: 2,
+          title: 'Child',
+        });
+      });
+
+      act(() => {
+        result.current.updateNodePosition(nodeId, 80, 80, undefined, {
+          resolveContainerParent: true,
+        });
+      });
+
+      const child = useCanvasStore.getState().nodes.find((n) => n.id === nodeId);
+      const metadata = child?.metadata ? getContainerMetadata(child.metadata) : {};
+      expect(metadata.parentId).toBe(innerId);
     });
   });
 
