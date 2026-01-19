@@ -90,7 +90,7 @@ describe("DashboardNode", () => {
     expect(screen.getByText("Edges")).toBeInTheDocument();
     expect(screen.getByText("Docs")).toBeInTheDocument();
     expect(screen.getByText("Selected")).toBeInTheDocument();
-    expect(screen.getByText("Depends On · 1")).toBeInTheDocument();
+    expect(screen.getByText("Dependency · 1")).toBeInTheDocument();
     expect(screen.getByText("Text · 1")).toBeInTheDocument();
     expect(screen.getByText("Plan · 1")).toBeInTheDocument();
   });
@@ -235,5 +235,37 @@ describe("DashboardNode", () => {
     fireEvent.click(configToggle);
     expect(screen.getByText("Source type")).toBeInTheDocument();
     expect(screen.getByText("Poll interval (ms)")).toBeInTheDocument();
+  });
+
+  it("clears polling interval when unmounted", () => {
+    const setIntervalSpy = vi.spyOn(window, "setInterval");
+    const clearIntervalSpy = vi.spyOn(window, "clearInterval");
+
+    useCanvasStore.setState({
+      nodes: [
+        {
+          id: "dash",
+          type: "dashboard",
+          x: 0,
+          y: 0,
+          z: 0,
+          title: "Dashboard",
+          metadata: {
+            dashboardConfig: { type: "api", pollIntervalMs: 5000, endpoint: "" },
+          },
+        },
+      ],
+    });
+
+    const { unmount } = render(<DashboardNode nodeId="dash" />);
+
+    expect(setIntervalSpy).toHaveBeenCalled();
+
+    unmount();
+
+    expect(clearIntervalSpy).toHaveBeenCalled();
+
+    setIntervalSpy.mockRestore();
+    clearIntervalSpy.mockRestore();
   });
 });
