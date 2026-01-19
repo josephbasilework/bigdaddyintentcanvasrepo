@@ -135,3 +135,55 @@ def test_persist_turn_and_artifact(tmp_path: Path) -> None:
     assert artifact_path.exists()
     artifact_contents = artifact_path.read_text(encoding="utf-8")
     assert "Originating turn: [[turn-0001]]" in artifact_contents
+
+
+def test_persist_workspace_snapshot_includes_edge_metadata(tmp_path: Path) -> None:
+    store = UserDataStore(base_path=str(tmp_path))
+
+    nodes = [
+        {"id": 1, "label": "Alpha", "type": "text", "x": 0, "y": 0},
+        {"id": 2, "label": "Beta", "type": "text", "x": 40, "y": 0},
+    ]
+    metadata = {
+        "annotation": {
+            "comment": "Edge note",
+            "tags": ["review", "priority"],
+            "status": "draft",
+        },
+        "confidence": 0.72,
+    }
+    edges = [
+        {
+            "id": 9,
+            "fromNodeId": 1,
+            "toNodeId": 2,
+            "relationType": "relates_to",
+            "label": "Relates",
+            "metadata": metadata,
+        }
+    ]
+
+    store.persist_workspace_snapshot(
+        user_id="user-2",
+        workspace_id="ws-2",
+        workspace_name="Workspace B",
+        nodes=nodes,
+        edges=edges,
+        documents=[],
+        timestamp="2026-01-18T02:00:00Z",
+    )
+
+    edges_path = (
+        tmp_path
+        / "users"
+        / "user-2"
+        / "workspaces"
+        / "ws-2"
+        / "edges.md"
+    )
+    edges_contents = edges_path.read_text(encoding="utf-8")
+    metadata_line = next(
+        line for line in edges_contents.splitlines() if "metadata=" in line
+    )
+    metadata_json = metadata_line.split("metadata=", 1)[1]
+    assert json.loads(metadata_json) == metadata

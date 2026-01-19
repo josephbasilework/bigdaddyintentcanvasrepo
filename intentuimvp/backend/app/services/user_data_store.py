@@ -149,6 +149,24 @@ def _edge_target(edge: Mapping[str, Any]) -> Any:
     )
 
 
+def _extract_edge_metadata(edge: Mapping[str, Any]) -> dict[str, Any] | None:
+    metadata = (
+        edge.get("metadata")
+        or edge.get("edge_metadata")
+        or edge.get("edgeMetadata")
+    )
+    if isinstance(metadata, Mapping) and metadata:
+        return dict(metadata)
+    return None
+
+
+def _serialize_edge_metadata(metadata: Mapping[str, Any]) -> str:
+    try:
+        return json.dumps(metadata, ensure_ascii=True, sort_keys=True)
+    except TypeError:
+        return json.dumps(str(metadata), ensure_ascii=True)
+
+
 def _extract_job_id(payload: Mapping[str, Any] | None) -> str | None:
     if not payload:
         return None
@@ -566,11 +584,14 @@ class UserDataStore:
             target = _edge_target(edge)
             relation = _edge_relation(edge)
             label = edge.get("label")
+            metadata = _extract_edge_metadata(edge)
             source_link = self._node_link(source) or str(source)
             target_link = self._node_link(target) or str(target)
             line = f"- {source_link} --{relation}--> {target_link}"
             if label:
                 line += f" ({label})"
+            if metadata:
+                line += f" | metadata={_serialize_edge_metadata(metadata)}"
             body_lines.append(line)
 
         frontmatter = [
