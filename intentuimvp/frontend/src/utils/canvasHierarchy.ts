@@ -290,7 +290,9 @@ export const findContainerParentId = (
     ? new Set(getDescendantIds(node.id, hierarchyIndex))
     : new Set<string>();
 
-  let best: { id: string; depth: number; area: number } | null = null;
+  let bestId: string | null = null;
+  let bestDepth = 0;
+  let bestArea = 0;
 
   nodes.forEach((candidate) => {
     if (!isContainerNode(candidate)) return;
@@ -300,12 +302,18 @@ export const findContainerParentId = (
     if (!isPointInsideBounds(center, bounds)) return;
     const depth = getNodeDepth(candidate.id, hierarchyIndex.parentById);
     const area = bounds.width * bounds.height;
-    if (!best || depth > best.depth || (depth === best.depth && area < best.area)) {
-      best = { id: candidate.id, depth, area };
+    if (
+      bestId === null ||
+      depth > bestDepth ||
+      (depth === bestDepth && area < bestArea)
+    ) {
+      bestId = candidate.id;
+      bestDepth = depth;
+      bestArea = area;
     }
   });
 
-  return best?.id ?? null;
+  return bestId;
 };
 
 export const computeNodesBounds = (nodes: CanvasNodeLike[]): NodeBounds | null => {
