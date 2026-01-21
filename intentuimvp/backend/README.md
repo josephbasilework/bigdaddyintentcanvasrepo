@@ -9,6 +9,10 @@ cd ~/bigdaddyintentcanvasrepo/intentuimvp/backend
 python3 scripts/bootstrap_test_tools.py
 ```
 
+**Why this matters:** system `python3` in some environments does **not** include `pytest`/`ruff`, and `pip`/`apt` may be unavailable.
+The bootstrap script creates a local `.venv`, runs `ensurepip`, and installs the pinned requirements so tooling is available without
+system package managers.
+
 ### Option B: manual setup
 
 ```bash
@@ -20,6 +24,15 @@ python3 -m venv .venv
 ```
 
 `requirements.txt` is fully pinned; `--no-deps` avoids resolver conflicts.
+
+### Tooling availability notes
+
+- Always run backend tooling from `.venv/bin/...` (not system Python).
+- If `pytest`/`ruff` are missing, re-run the bootstrap script or reinstall the venv requirements.
+- If `python3 -m venv` fails (missing `venv` module), install `python3-venv` or use a Python build that includes it.
+- You can sanity-check tooling with:
+  - `.venv/bin/python -m pytest --version`
+  - `.venv/bin/python -m ruff --version`
 
 ## Run quality gates
 

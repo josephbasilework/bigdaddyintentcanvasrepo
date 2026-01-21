@@ -105,6 +105,7 @@ cd ~/bigdaddyintentcanvasrepo/intentuimvp/backend
 python3 scripts/bootstrap_test_tools.py
 ```
 Then run tooling from the venv (example: `.venv/bin/python -m pytest`, `.venv/bin/python -m ruff check .`).
+This bootstrap path works even when system `pip`/`apt` aren't available because it uses `ensurepip` inside the venv.
 See `intentuimvp/backend/README.md` for full backend dev setup.
 
 **CORS_ORIGINS parse error:**
