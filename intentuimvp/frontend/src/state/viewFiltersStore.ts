@@ -50,13 +50,37 @@ const cloneEventsFilters = (): EventsFilters => ({
   nodeFilter: DEFAULT_EVENTS_FILTERS.nodeFilter,
 });
 
-const getSessionStorage = (): Storage => {
+const createMemoryStorage = (): Storage => {
+  const store = new Map<string, string>();
+
+  return {
+    get length() {
+      return store.size;
+    },
+    clear: () => {
+      store.clear();
+    },
+    getItem: (key: string) => {
+      if (!store.has(key)) {
+        return null;
+      }
+      return store.get(key) ?? null;
+    },
+    key: (index: number) => Array.from(store.keys())[index] ?? null,
+    removeItem: (key: string) => {
+      store.delete(key);
+    },
+    setItem: (key: string, value: string) => {
+      store.set(key, value);
+    },
+  };
+};
+
+const sessionStorageFallback = createMemoryStorage();
+
+export const getSessionStorage = (): Storage => {
   if (typeof window === "undefined") {
-    return {
-      getItem: () => null,
-      setItem: () => {},
-      removeItem: () => {},
-    } as Storage;
+    return sessionStorageFallback;
   }
   return window.sessionStorage;
 };
