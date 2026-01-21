@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act } from 'react';
+import { waitFor } from '@testing-library/react';
 import { usePreferencesStore } from './preferencesStore';
 
 // Mock fetch globally
@@ -255,17 +256,16 @@ describe('preferencesStore', () => {
         store.setTheme('dark');
       });
 
-      // Wait for auto-save
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      expect(mockFetch).toHaveBeenCalledWith(
-        expect.stringContaining('/api/preferences'),
-        expect.objectContaining({
-          method: 'PUT',
-          headers: expect.objectContaining({
-            'Content-Type': 'application/json',
-          }),
-        })
+      await waitFor(() =>
+        expect(mockFetch).toHaveBeenCalledWith(
+          expect.stringContaining('/api/preferences'),
+          expect.objectContaining({
+            method: 'PUT',
+            headers: expect.objectContaining({
+              'Content-Type': 'application/json',
+            }),
+          })
+        )
       );
     });
 

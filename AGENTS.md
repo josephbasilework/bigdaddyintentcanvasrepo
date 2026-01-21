@@ -73,6 +73,7 @@ bd sync               # Sync with git
 - 2026-01-11 04:46 EST: `git stash apply` after `bd sync` can reintroduce `.beads/issues.jsonl` changes; restore `.beads/issues.jsonl` to `HEAD` to keep the synced state.
 - 2026-01-11 05:12 EST: Pointer-driven focus can override multi-select; gate focus selection with a pointer-down flag so shift/ctrl clicks preserve selection.
 - 2026-01-11 07:06 EST: `npm test -- --run` in `intentuimvp/frontend` can take ~35s; allow longer timeouts.
+- 2026-01-21 09:52 EST: `npm test -- --run` in `intentuimvp/frontend` can take ~80s; allow 2+ minute timeouts.
 - 2026-01-11 07:38 EST: `npm run build` in `intentuimvp/frontend` can take ~90s; use longer timeouts.
 - 2026-01-11 07:42 EST: `git pull --rebase` fails if `.beads/issues.jsonl` is dirty; stash that file before pulling, then pop it before `bd sync`.
 - 2026-01-11 08:27 EST: Pre-commit aborts if `.pre-commit-config.yaml` is modified but unstaged; stash it (or stage it intentionally) before committing.

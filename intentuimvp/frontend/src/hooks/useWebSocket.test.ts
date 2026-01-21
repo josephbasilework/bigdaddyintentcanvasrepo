@@ -355,14 +355,18 @@ describe("useWebSocket", () => {
 
       await waitFor(() => expect(onOpen).toHaveBeenCalled());
 
+      vi.useFakeTimers();
       act(() => {
         result.current.disconnect();
       });
 
       expect(result.current.connectionState).toBe("closed");
 
-      // Wait a bit to ensure no reconnection
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Fast-forward timers to ensure no reconnection is scheduled.
+      await act(async () => {
+        vi.advanceTimersByTime(500);
+      });
+      vi.useRealTimers();
 
       expect(onOpen).toHaveBeenCalledTimes(1);
     });

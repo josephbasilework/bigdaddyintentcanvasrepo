@@ -3,7 +3,7 @@
  */
 
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { beforeEach, vi, describe, it, expect } from "vitest";
+import { beforeEach, afterEach, vi, describe, it, expect } from "vitest";
 import { useAutoSave } from "./useAutoSave";
 
 // Mock fetch
@@ -117,6 +117,15 @@ describe("useAutoSave", () => {
   });
 
   describe("retry logic", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    afterEach(() => {
+      vi.runOnlyPendingTimers();
+      vi.useRealTimers();
+    });
+
     it("should retry on failure when maxRetries > 0", async () => {
       let attemptCount = 0;
       mockFetch.mockImplementation(() => {
@@ -135,9 +144,9 @@ describe("useAutoSave", () => {
       );
 
       await act(async () => {
-        await result.current.saveNow();
-        // Wait for retries
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        const savePromise = result.current.saveNow();
+        await vi.runAllTimersAsync();
+        await savePromise;
       });
 
       expect(attemptCount).toBeGreaterThanOrEqual(2);
@@ -155,8 +164,9 @@ describe("useAutoSave", () => {
       );
 
       await act(async () => {
-        await result.current.saveNow();
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        const savePromise = result.current.saveNow();
+        await vi.runAllTimersAsync();
+        await savePromise;
       });
 
       // Should have attempted at least once and ended in error state
