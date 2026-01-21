@@ -25,9 +25,15 @@ describe("DAGNode", () => {
 
     render(<DAGNode dag={dag} />);
 
-    expect(screen.getByText("Setup project")).toBeInTheDocument();
-    expect(screen.getByText("Write tests")).toBeInTheDocument();
-    expect(screen.getByText("Deploy")).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /task: setup project/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /task: write tests/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /task: deploy/i })
+    ).toBeInTheDocument();
   });
 
   it("renders task descriptions when provided", () => {
@@ -230,9 +236,15 @@ describe("DAGNode", () => {
 
     render(<DAGNode dag={dag} />);
 
-    expect(screen.getByText("First Task")).toBeInTheDocument();
-    expect(screen.getByText("Second Task")).toBeInTheDocument();
-    expect(screen.getByText("Third Task")).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /task: first task/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /task: second task/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: /task: third task/i })
+    ).toBeInTheDocument();
   });
 
   it("renders connections for dependencies", () => {

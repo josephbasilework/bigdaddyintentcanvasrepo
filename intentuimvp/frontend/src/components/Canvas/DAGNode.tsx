@@ -18,8 +18,11 @@ interface DAGNodeProps {
  * - Priority indicators
  * - Click interaction for task details
  */
+const EMPTY_DEPENDENCIES: NonNullable<DAGData["dependencies"]> = [];
+
 export function DAGNode({ dag, onTaskClick, onTaskStatusChange }: DAGNodeProps) {
-  const { tasks, dependencies = [] } = dag;
+  const tasks = dag.tasks;
+  const dependencies = dag.dependencies ?? EMPTY_DEPENDENCIES;
 
   const STATUS_CYCLE: DAGTask["status"][] = [
     "pending",
