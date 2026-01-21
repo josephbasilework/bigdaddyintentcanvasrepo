@@ -118,6 +118,7 @@ class GatewayClient:
         self._http_client: httpx.AsyncClient | None = None
         self._providers: dict[str, Any] = {}
         self._models: dict[tuple[str, str], GoogleModel] = {}
+        self._warned_legacy_model_format = False
 
     async def close(self) -> None:
         """Close the HTTP client."""
@@ -172,6 +173,17 @@ class GatewayClient:
         """Split model into route and model name."""
         if "/" in model:
             route, model_name = model.split("/", 1)
+            if not self._warned_legacy_model_format:
+                logger.warning(
+                    "Legacy gateway model format detected; set GATEWAY_ROUTE and use model name only.",
+                    extra={
+                        "event": "gateway_legacy_model_format",
+                        "model": model,
+                        "route": route,
+                        "model_name": model_name,
+                    },
+                )
+                self._warned_legacy_model_format = True
             return route, model_name
         return self.route, model
 

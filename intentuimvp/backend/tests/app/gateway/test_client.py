@@ -7,6 +7,7 @@ Tests cover:
 - PII warning integration (NFR-PRIV-004)
 """
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -47,6 +48,39 @@ class TestGatewayClientAPIKeyValidation:
         client = GatewayClient(api_key="explicit-key", base_url="https://explicit.gateway.com")
         assert client.api_key == "explicit-key"
         assert client.base_url == "https://explicit.gateway.com"
+
+
+class TestGatewayClientProvider:
+    """Test Gateway provider setup."""
+
+    def test_gateway_provider_normalizes_base_url(self):
+        """Ensure base URLs are normalized with /proxy."""
+        client = GatewayClient(api_key="test-key", base_url="https://gateway.pydantic.dev")
+
+        with patch.object(client, "_get_http_client", return_value="http-client"):
+            with patch("app.gateway.client.gateway_provider", return_value=object()) as mock_provider:
+                client._get_provider("vertex-test")
+
+        _, kwargs = mock_provider.call_args
+        assert kwargs["base_url"] == "https://gateway.pydantic.dev/proxy"
+        assert kwargs["route"] == "vertex-test"
+        assert kwargs["api_key"] == "test-key"
+        assert kwargs["http_client"] == "http-client"
+
+    def test_legacy_model_format_warns_once(self, caplog):
+        """Warn once when legacy route/model format is used."""
+        client = GatewayClient(api_key="test-key", base_url="https://test.gateway.com")
+
+        caplog.set_level(logging.WARNING)
+        client._split_model("legacy-route/legacy-model")
+        client._split_model("legacy-route/legacy-model")
+
+        warnings = [
+            record
+            for record in caplog.records
+            if "Legacy gateway model format detected" in record.message
+        ]
+        assert len(warnings) == 1
 
 
 class TestGatewayClientBasicGeneration:
