@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.config import get_settings
+from app.jobs import client as jobs_client
 from app.jobs.artifact_storage import (
     ArtifactMetadata,
     StoredArtifact,
@@ -52,6 +53,26 @@ async def get_async_db() -> AsyncGenerator[AsyncSession, None]:
     )
     async with async_session_maker() as session:
         yield session
+
+
+async def enqueue_perspective_analysis(
+    topic: str,
+    perspectives: list[str] | None = None,
+    user_id: str | None = None,
+    workspace_id: str | None = None,
+    input_refs: list[int | str | float] | None = None,
+) -> str:
+    """Proxy to enqueue a perspective analysis job.
+
+    Defined here so API tests can patch either this module or app.jobs.client.
+    """
+    return await jobs_client.enqueue_perspective_analysis(
+        topic=topic,
+        perspectives=perspectives,
+        user_id=user_id,
+        workspace_id=workspace_id,
+        input_refs=input_refs,
+    )
 
 
 # Response models
@@ -623,8 +644,6 @@ async def trigger_perspective_analysis(
     Raises:
         HTTPException: If enqueue fails (400) or server error (500)
     """
-    from app.jobs.client import enqueue_perspective_analysis
-
     # Default perspectives if none provided (FR-012)
     perspectives = request.perspectives or ["skeptic", "advocate", "synthesizer"]
 
@@ -644,6 +663,12 @@ async def trigger_perspective_analysis(
             status="queued",
         )
 
+    except JobEnqueueError as e:
+        logger.error(f"Failed to enqueue perspective analysis job: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to enqueue perspective analysis job: {str(e)}",
+        )
     except Exception as e:
         logger.error(f"Failed to enqueue perspective analysis job: {e}")
         raise HTTPException(
