@@ -303,6 +303,38 @@ describe('AGUIClient outbound queue', () => {
     expect(commandEnvelope?.messageId).toEqual(expect.any(String));
     expect(commandEnvelope?.timestamp).toEqual(expect.any(String));
   });
+
+  it('flushes queued messages even if readyState lags behind open', async () => {
+    MockWebSocket.autoOpen = false;
+
+    const client = new AGUIClient({
+      gatewayUrl: 'http://localhost:8000',
+    });
+
+    client.connect();
+    await flushMicrotasks();
+    await waitForSocketCount(1);
+
+    const ws = MockWebSocket.instances[0];
+
+    const commandMessage = {
+      source: 'ui',
+      target: 'agent',
+      type: 'command',
+      payload: {
+        command: 'ping',
+      },
+    };
+
+    expect(() => client.send(commandMessage)).not.toThrow();
+    expect(hasMessageType(ws.sentMessages, 'command')).toBe(false);
+
+    ws.readyState = MockWebSocket.CONNECTING;
+    ws.triggerOpen();
+    await flushMicrotasks();
+
+    expect(hasMessageType(ws.sentMessages, 'command')).toBe(true);
+  });
 });
 
 describe('AGUIClient state sync', () => {

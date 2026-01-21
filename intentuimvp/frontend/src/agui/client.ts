@@ -481,7 +481,7 @@ export class AGUIClient {
             if (this.snapshotSyncPending) {
               void this.requestSnapshotSync();
             }
-            this.flushQueuedMessages();
+            this.flushQueuedMessages(true);
             this.config.onConnect?.();
           };
 
@@ -867,7 +867,7 @@ export class AGUIClient {
   /**
    * Flush queued outbound messages
    */
-  private flushQueuedMessages(): void {
+  private flushQueuedMessages(forceSend = false): void {
     if (this.isFlushingQueue || this.outboundQueue.length === 0) {
       return;
     }
@@ -878,7 +878,11 @@ export class AGUIClient {
 
     for (const message of messages) {
       try {
-        this.send(message);
+        if (forceSend && this.ws) {
+          this.ws.send(JSON.stringify(message));
+        } else {
+          this.send(message);
+        }
       } catch (error) {
         console.error("Failed to send queued message:", error);
         // Re-queue on error
